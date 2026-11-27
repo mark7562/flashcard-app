@@ -495,6 +495,27 @@ function renderScores() {
 }
 function setScoreboard(show) { $('scoreboard').classList.toggle('hidden', !show); if (show) renderScores(); }
 
+// ---------- 版本檢查：網頁比伺服器舊（瀏覽器用了快取、或 App 從背景叫回來）就自動重新載入 ----------
+const MY_VERSION = document.querySelector('.ver')?.textContent.trim() || '';
+function checkVersion(v) {
+  if (!v || !MY_VERSION || v === MY_VERSION || playing) return false;
+  let tried = '';
+  try { tried = sessionStorage.getItem('ba-reload') || ''; } catch {}
+  if (tried === v) return false; // 同一個版本只自動重新載入一次，避免一直重整
+  try { sessionStorage.setItem('ba-reload', v); } catch {}
+  setStatus(`有新版本 ${v}，更新中…`);
+  location.replace(location.pathname + '?v=' + encodeURIComponent(v));
+  return true;
+}
+// 打開網頁、從背景切回來時都檢查一次（不在對戰中才會重新載入）
+function pollVersion() {
+  if (playing) return;
+  fetch('/api/version', { cache: 'no-store' }).then((r) => r.json()).then((d) => checkVersion(d.v)).catch(() => {});
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pollVersion(); });
+addEventListener('pageshow', (e) => { if (e.persisted) pollVersion(); }); // 瀏覽器「上一頁」快取叫回來的
+pollVersion();
+
 // ---------- 網路 ----------
 let room = null; // 目前所在房間（伺服器傳來的狀態）
 let helloed = false, kicked = false;
@@ -706,6 +727,7 @@ function updateMatchbar(now) {
 function handle(m) {
   switch (m.t) {
     case 'hello':
+      if (checkVersion(m.v)) return;
       me.id = m.id;
       helloed = true;
       setStatus('');

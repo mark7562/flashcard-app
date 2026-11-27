@@ -34,8 +34,14 @@ const MODES = ['tdm', 'elim'];
 const RULE_OPTIONS = { scoreLimit: [25, 50, 75, 100], timeLimit: [5, 10, 15], rounds: [3, 5, 7], map: MAP.order };
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
+// 目前的版本號（從 index.html 右下角的版本文字讀出來）：瀏覽器拿到的網頁比較舊就會自動重新載入
+const fs = require('fs');
+const VERSION = (fs.readFileSync(path.join(__dirname, 'public/index.html'), 'utf8').match(/class="ver">([^<]+)</) || [])[1] || 'dev';
+
 const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
+// 網頁和程式每次都先問伺服器有沒有新版（沒變就用瀏覽器存的，不會變慢）
+app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
+app.get('/api/version', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ v: VERSION }); });
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three/build')));
 app.get('/health', (_req, res) => res.send('ok'));
 app.get('/api/stats', (_req, res) => {
@@ -655,7 +661,7 @@ wss.on('connection', (ws) => {
       p.color = COLORS.includes(msg.color) ? msg.color : COLORS[p.id % COLORS.length];
       if (!p.hello) console.log(`[+] ${p.name} (#${p.id}) 上線，目前 ${clients.size} 人`);
       p.hello = true;
-      send(ws, { t: 'hello', id: p.id });
+      send(ws, { t: 'hello', id: p.id, v: VERSION });
       send(ws, { t: 'rooms', rooms: [...rooms.values()].map(roomSummary) });
       if (p.room) syncRoom(p.room);
       return;
