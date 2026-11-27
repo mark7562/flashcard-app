@@ -900,9 +900,11 @@ function bombObjective(p, b, r, nav, now) {
     }
     const atts = [...r.players.values()].filter((q) => q.alive && q.team !== p.team).length;
     // 來不及拆了（拆彈要 6 秒）：逃命
-    if (left < 6500 && !p.actKind) return { goal: map.teamSpawns[0][p.id % map.teamSpawns[0].length], look: [s.c[0], s.c[1]] };
+    const home = map.teamSpawns[0][p.id % map.teamSpawns[0].length]; // [x, y, z]
+    const homePt = [home[0], home[2]];
+    if (left < 6500 && !p.actKind) return { goal: homePt, look: [s.c[0], s.c[1]] };
     // 人數差太多（少 2 個以上）就不回防了：保命，讓炸彈爆
-    if (defs.length + 1 < atts && left > 5000) return { goal: map.teamSpawns[0][p.id % map.teamSpawns[0].length], look: [s.c[0], s.c[1]] };
+    if (defs.length + 1 < atts && left > 5000) return { goal: homePt, look: [s.c[0], s.c[1]] };
     const ready = defs.filter((q) => Math.hypot(q.x - b.rallyPt[0], q.z - b.rallyPt[1]) < 8).length;
     const wait = left > 22000 && now - (r.botPlan.plantedAt || (r.botPlan.plantedAt = now)) < 8000 && ready < Math.min(2, defs.length);
     if (wait) return { goal: b.rallyPt, look: [s.c[0], s.c[1]] };

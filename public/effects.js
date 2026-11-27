@@ -37,7 +37,29 @@ export function createEffects(scene, camera, sfx) {
   const smokes = []; // { id, x, y, z, at, gapUntil, group, puffs }
   const fires = []; // { id, x, y, z, at, until, group, flames, light }
   const flashes = []; // 一閃即逝的效果：{ obj, life, max, grow }
-  let bombObj = null, bombLight = null, bombState = null;
+  let bombObj = null, bombState = null;
+  // 燈光一開始就全部建好、一直留在場景裡（亮度 0 = 關）：
+  // three.js 場景裡的燈數量一變，所有材質都要重新編譯，畫面會卡一下（丟手榴彈卡頓的原因）
+  const lightPool = [];
+  for (let i = 0; i < 1; i++) { // 只留一盞：每多一盞燈，每一格畫面都要多算一次光
+    const l = new THREE.PointLight(0xffffff, 0, 1);
+    scene.add(l);
+    lightPool.push({ l, busy: false });
+  }
+  function grabLight(color, intensity, dist, steal = false) {
+    let e = lightPool.find((x) => !x.busy);
+    if (!e && steal) {
+      e = lightPool[0];
+      for (const f of fires) if (f.light === e) f.light = null;
+      for (let i = flashes.length - 1; i >= 0; i--) if (flashes[i].pool === e) flashes.splice(i, 1);
+    }
+    if (!e) return null;
+    e.busy = true;
+    e.l.color.setHex(color); e.l.intensity = intensity; e.l.distance = dist;
+    return e;
+  }
+  function freeLight(e) { if (e) { e.busy = false; e.l.intensity = 0; } }
+  const bombLight = { intensity: 0, position: new THREE.Vector3() }; // 炸彈紅燈只靠 LED 閃（不另外加燈）
 
   function nadeMesh(kind) {
     const L = NADE_LOOK[kind] || NADE_LOOK.frag;
@@ -83,10 +105,10 @@ export function createEffects(scene, camera, sfx) {
     flashes.push({ obj: s, life, max: life, grow, size });
   }
   function light(pos, color, intensity, dist, life) {
-    const l = new THREE.PointLight(color, intensity, dist);
-    l.position.copy(pos);
-    scene.add(l);
-    flashes.push({ obj: l, life, max: life, light: intensity });
+    const e = grabLight(color, intensity, dist, true);
+    if (!e) return;
+    e.l.position.copy(pos);
+    flashes.push({ obj: e.l, pool: e, life, max: life, light: intensity });
   }
   function ring(pos, color, r, life) {
     const m = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 40), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
@@ -130,9 +152,8 @@ export function createEffects(scene, camera, sfx) {
     scorch.rotation.x = -Math.PI / 2;
     scorch.position.y = 0.01;
     group.add(scorch);
-    const l = new THREE.PointLight(0xff7a20, 2.5, 12);
-    l.position.y = 1;
-    group.add(l);
+    const l = grabLight(0xff7a20, 2.5, 12);
+    if (l) l.l.position.set(x, y + 1, z);
     scene.add(group);
     fires.push({ id, at: now, until: now + life, group, flames, light: l, x, y, z });
   }
@@ -205,16 +226,14 @@ export function createEffects(scene, camera, sfx) {
   }
   function setBomb(b) {
     bombState = b && (b.st === 'dropped' || b.st === 'planted') ? b : null;
-    if (!bombState) { if (bombObj) bombObj.visible = false; return; }
+    if (!bombState) { if (bombObj) bombObj.visible = false; bombLight.intensity = 0; return; }
     if (!bombObj) {
       bombObj = bombMesh();
-      bombLight = new THREE.PointLight(0xff2020, 0, 4);
-      bombLight.position.y = 0.4;
-      bombObj.add(bombLight);
       scene.add(bombObj);
     }
     bombObj.visible = true;
     bombObj.position.set(b.x, b.y, b.z);
+    bombLight.position.set(b.x, b.y + 0.4, b.z);
   }
   function bombBoom(x, y, z) {
     const pos = new THREE.Vector3(x, y + 0.5, z);
@@ -224,6 +243,7 @@ export function createEffects(scene, camera, sfx) {
     const d = dist(pos);
     sfx('bigBoom', 0.9 / (1 + d * 0.02), d / 120);
     if (bombObj) bombObj.visible = false;
+    bombLight.intensity = 0;
     bombState = null;
     return { shake: Math.max(0.2, 1 - d / 40) };
   }
@@ -255,8 +275,10 @@ export function createEffects(scene, camera, sfx) {
     for (const id of [...nades.keys()]) removeNade(id);
     for (const s of smokes) scene.remove(s.group);
     smokes.length = 0;
-    for (const f of fires) scene.remove(f.group);
+    for (const f of fires) { scene.remove(f.group); freeLight(f.light); }
     fires.length = 0;
+    for (const fx of flashes) { if (fx.pool) freeLight(fx.pool); else scene.remove(fx.obj); }
+    flashes.length = 0;
     setBomb(null);
   }
 
@@ -290,7 +312,7 @@ export function createEffects(scene, camera, sfx) {
     for (let i = fires.length - 1; i >= 0; i--) {
       const f = fires[i];
       const left = f.until - now;
-      if (left <= -600) { scene.remove(f.group); fires.splice(i, 1); continue; }
+      if (left <= -600) { scene.remove(f.group); freeLight(f.light); fires.splice(i, 1); continue; }
       const k = Math.max(0, Math.min(1, left / 600)) * Math.min(1, (now - f.at) / 200);
       for (const fl of f.flames) {
         const h = fl.base * (0.75 + 0.35 * Math.sin(now * 0.012 + fl.ph * 7));
@@ -298,7 +320,7 @@ export function createEffects(scene, camera, sfx) {
         fl.s.position.y = h * 0.6;
         fl.s.material.opacity = 0.85 * k;
       }
-      f.light.intensity = (2 + Math.sin(now * 0.02) * 0.6) * k;
+      if (f.light) f.light.l.intensity = (2 + Math.sin(now * 0.02) * 0.6) * k;
       if (k > 0.5 && Math.random() < dt * 3 && dist(f.group.position) < 25) sfx('fire', 0.25 / (1 + dist(f.group.position) * 0.12));
     }
     // 一閃即逝的效果
@@ -309,7 +331,11 @@ export function createEffects(scene, camera, sfx) {
       if (fx.light !== undefined) fx.obj.intensity = fx.light * k;
       else if (fx.ring) { const r = fx.ring * (1 - k); fx.obj.scale.setScalar(r + 0.1); fx.obj.material.opacity = k * 0.8; }
       else { fx.obj.material.opacity = k; fx.obj.scale.setScalar(fx.size * (1 + (1 - k) * (fx.grow - 1))); }
-      if (fx.life <= 0) { scene.remove(fx.obj); fx.obj.material?.dispose?.(); fx.obj.geometry?.dispose?.(); flashes.splice(i, 1); }
+      if (fx.life <= 0) {
+        if (fx.pool) freeLight(fx.pool);
+        else { scene.remove(fx.obj); fx.obj.material?.dispose?.(); fx.obj.geometry?.dispose?.(); }
+        flashes.splice(i, 1);
+      }
     }
     // 炸彈：紅燈閃爍、嗶嗶聲（埋下後越來越快）
     if (bombObj && bombState) {
@@ -328,5 +354,24 @@ export function createEffects(scene, camera, sfx) {
   // 看某條視線有沒有被煙擋住（自己的閃光判斷用不到，留給之後）
   function smokeList() { return smokes; }
 
-  return { addNade, boom, setBomb, bombBoom, showArc, clear, update, smokeList, killFire };
+  // 先把會用到的材質編譯好（第一次出現時才編譯會卡一下）
+  function warm(renderer) {
+    const g = new THREE.Group();
+    g.add(sprite(TEX.smoke, 0xffffff, 1, 0.01), sprite(TEX.fire, 0xffffff, 1, 0.01, true));
+    for (const k of Object.keys(NADE_LOOK)) g.add(nadeMesh(k));
+    g.add(bombMesh());
+    const rg = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+    const sc = new THREE.Mesh(new THREE.CircleGeometry(1, 8), new THREE.MeshBasicMaterial({ color: 0x1a0d05, transparent: true, opacity: 0.6, depthWrite: false }));
+    g.add(rg, sc);
+    g.position.copy(camera.position);
+    scene.add(g);
+    const av = arcLine.visible, ev = arcEnd.visible;
+    arcLine.visible = arcEnd.visible = true;
+    try { renderer.compile(scene, camera); } catch (e) { /* 舊瀏覽器編譯失敗就算了 */ }
+    arcLine.visible = av; arcEnd.visible = ev;
+    scene.remove(g);
+    g.traverse((x) => x.geometry?.dispose()); // 材質不要 dispose：編譯好的程式會跟著被丟掉
+  }
+
+  return { addNade, boom, setBomb, bombBoom, showArc, clear, update, smokeList, killFire, warm };
 }

@@ -59,7 +59,12 @@ scene.add(camera);
 // 地圖、燈光、天空都在 world.js；curMap 是目前這場用的地圖
 const world = createWorld(scene);
 let curMap = MAP.get('arena');
-function setWorld(id, night) { curMap = world.use(id, night); }
+const warmed = new Set();
+function setWorld(id, night) {
+  curMap = world.use(id, night);
+  // 第一次進這張地圖：先把投擲物、炸彈的材質編譯好，免得第一次丟的時候卡一下
+  if (!warmed.has(id + night)) { warmed.add(id + night); setTimeout(() => effects.warm(renderer), 0); }
+}
 
 // ---------- 自己手上的武器（第一人稱模型與動畫在 viewmodel.js） ----------
 const views = createViewModels(camera, (name) => sfx(name, 0.45));
@@ -1057,6 +1062,9 @@ function updateMatchbar(now) {
   const score = room.mode === 'tdm' ? room.score : room.roundWins;
   $('mbScore0').textContent = score[0];
   $('mbScore1').textContent = score[1];
+  const goal = room.mode === 'tdm' ? 0 : room.rules?.rounds || 0;
+  $('mbGoal').classList.toggle('hidden', !goal);
+  if (goal) $('mbGoalN').textContent = goal;
   document.querySelector('.mb-team.t0').classList.toggle('mine', me.team === 0);
   document.querySelector('.mb-team.t1').classList.toggle('mine', me.team === 1);
   if (room.phase === 'loading') {
@@ -1261,6 +1269,7 @@ function handle(m) {
       if (m.victim === me.id) {
         me.alive = false;
         me.hp = 0;
+        specShown.hp = specShown.ammo = null;
         firing = false;
         me.heavyAt = 0;
         me.adsToggled = false;
@@ -1975,6 +1984,12 @@ function frame() {
       const r = spec[1];
       r.group.visible = false;
       camera.position.set(r.group.position.x, r.group.position.y + EYE, r.group.position.z);
+      // 別人跟被觀戰的人站在一起：會擋住整個畫面（從下面看到他的頭），先藏起來
+      for (const o of remotes.values()) {
+        if (o === r || !o.group.visible) continue;
+        const g = o.group.position;
+        if (Math.hypot(g.x - camera.position.x, g.z - camera.position.z) < 0.9 && Math.abs(g.y - r.group.position.y) < 2.2) o.group.visible = false;
+      }
       camera.rotation.set(r.pitch, r.yaw, 0);
       showSpectate(`觀戰中：${nameOf(spec[0])}（${IS_TOUCH ? '點畫面' : '點滑鼠'}切換）`);
     } else {
@@ -2004,10 +2019,11 @@ function frame() {
   if (spec) {
     const wid = spec[1].wid || 'rifle';
     if (viewOwner !== spec[0] || viewWeapon !== wid) {
+      if (viewOwner !== spec[0]) specShown.hp = specShown.ammo = null; // 換人了：血量、子彈要重新顯示
       showWeapon(spec[0], wid);
-      views.setTeamColor(MAP.teams[spec[1].team]?.color ?? MAP.teams[me.team].color); // 袖子是被觀戰的人那隊的顏色
       $('wname').textContent = `${WEAPONS[wid].icon} ${WEAPONS[wid].name}`;
     }
+    views.setTeamColor(MAP.teams[spec[1].team]?.color ?? MAP.teams[me.team].color); // 袖子是被觀戰的人那隊的顏色（房間更新也不會被蓋掉）
     // 觀戰：顯示被觀戰的人的血量和子彈
     const sr = spec[1], sw = WEAPONS[wid];
     if (sr.hp !== undefined && specShown.hp !== sr.hp) { specShown.hp = sr.hp; showHp(sr.hp); }
