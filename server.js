@@ -512,7 +512,10 @@ function pickSpawn(p) {
       if (o.id === p.id || !o.alive || o.team === p.team) continue;
       nearest = Math.min(nearest, Math.hypot(o.x - s[0], o.z - s[2]));
     }
-    const score = nearest + Math.random() * 3;
+    // 已經有人站在這個重生點（例如隊友剛在這裡重生）：盡量換一個，免得兩個人疊在一起
+    let crowd = 0;
+    for (const o of p.room.players.values()) if (o.id !== p.id && o.alive && Math.hypot(o.x - s[0], o.z - s[2]) < 1.5) crowd++;
+    const score = Math.min(nearest, 60) + Math.random() * 3 - crowd * 100;
     if (score > bestScore) { bestScore = score; best = s; }
   }
   return best;

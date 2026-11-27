@@ -2065,6 +2065,12 @@ function frame() {
     camera.position.set(me.x, me.y + EYE + (me.alive ? Math.sin(bob * 2) * 0.03 : -1.2), me.z);
     camera.rotation.set(me.pitch, me.yaw, 0);
     // 爆炸震動、震撼彈搖晃
+    // 有人跟你站在同一個位置（一起重生、從你身上穿過去）：他的頭會塞滿整個鏡頭（一大片青色面罩），先藏起來
+    for (const o of remotes.values()) {
+      if (!o.alive || !o.group.visible) continue;
+      const g = o.group.position;
+      if (Math.hypot(g.x - camera.position.x, g.z - camera.position.z) < 0.8 && camera.position.y > g.y - 0.3 && camera.position.y < g.y + 2.1) o.group.visible = false;
+    }
     if (shake > 0) { camera.rotation.x += (Math.random() - 0.5) * 0.04 * shake; camera.rotation.y += (Math.random() - 0.5) * 0.04 * shake; }
     if (now < me.stunUntil && me.alive) {
       const k = Math.min(1, (me.stunUntil - now) / 1500);
