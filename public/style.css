@@ -692,3 +692,24 @@ body.noxhair #crosshair { opacity: 0; }
   width: 14px; height: 14px; margin-top: 7px; border-left: 2px solid #ff6a2a; border-top: 2px solid #ff6a2a;
   transform: translate(-50%, -50%) rotate(45deg); filter: drop-shadow(0 0 2px #ff6a2a);
 }
+
+/* ===== 最佳擊殺回放 ===== */
+body.replaying #hud > :not(#replay):not(#killfeed):not(#hitmarker):not(#scope) { display: none !important; }
+#replay { position: absolute; inset: 0; pointer-events: none; }
+#replay.hidden { display: none; }
+#replay .rp-bar { position: absolute; left: 0; right: 0; height: 9vh; background: #000; }
+#replay .rp-bar.top { top: 0; } #replay .rp-bar.bottom { bottom: 0; }
+#replay .rp-head { position: absolute; top: calc(9vh + 14px); left: 50%; transform: translateX(-50%); text-align: center; text-shadow: 0 2px 8px #000; white-space: nowrap; }
+#replay .rp-tag { font-size: 14px; letter-spacing: 4px; color: #ffcf5c; font-weight: 800; animation: rpPulse 1.2s ease-in-out infinite; }
+#rpName { font-size: 30px; font-weight: 900; margin-top: 2px; }
+#rpInfo { font-size: 14px; color: #e8eefc; margin-top: 4px; }
+#rpSkip { position: absolute; right: max(18px, env(safe-area-inset-right)); bottom: calc(9vh + 14px); pointer-events: auto; }
+@keyframes rpPulse { 50% { opacity: 0.55; } }
+@media (max-height: 420px) { #rpName { font-size: 22px; } #replay .rp-head { top: calc(9vh + 6px); } }
+/* 被擊倒畫面：對方剩幾滴血 */
+#deathby .khp { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 8px; font-size: 18px; }
+#deathby .khp-bar { width: 140px; height: 10px; border-radius: 5px; background: rgba(255, 255, 255, 0.15); overflow: hidden; }
+#deathby .khp-bar i { display: block; height: 100%; background: #4ade80; }
+#deathby .khp.low .khp-bar i { background: #ff4d6d; }
+#deathby .khp b { color: #fff; }
+#deathby .khp.low b { color: #ff8fa3; }

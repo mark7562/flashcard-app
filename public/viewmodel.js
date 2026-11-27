@@ -717,11 +717,13 @@ function buildDeagle() {
         keys: [...base(1), [1.4, { ...T, b: 1 }], [1.46, { ...T, rx: 0.3, b: 0 }], [1.85, {}], [2.0, {}]],
         sounds: [[0.24, 'magOut'], [1.08, 'magIn'], [1.43, 'slide']],
       },
-      // 檢視：手腕一甩讓槍往上轉一圈，接著拉一下套筒
+      // 檢視：手不動，槍在手指上往前轉一圈；接著側過來看、拉一下套筒
       inspect: {
-        keys: [[0, {}], [0.25, { rx: 0.5, py: 0.04, lx: -0.12, ly: -0.25 }], [0.75, { rx: 0.5 - Math.PI * 2, py: 0.06, lx: -0.12, ly: -0.25 }],
-          [1.05, { rz: -1.2, ry: 0.4, px: -0.05, py: 0.03, lx: -0.12, ly: -0.25 }], [1.45, { rz: -1.25, ry: 0.45, px: -0.05, py: 0.04, lx: -0.12, ly: -0.25 }],
-          [1.65, { rz: 0.2, ry: -0.3, py: 0.02 }], [1.8, { rz: 0.2, ry: -0.3, py: 0.02, b: 0.6 }], [1.95, { rz: 0.2, ry: -0.3, py: 0.02, b: 0 }], [2.3, {}], [2.6, {}]],
+        keys: [[0, {}], [0.25, { py: 0.03, lx: -0.12, ly: -0.25 }], [0.8, { py: 0.03, lx: -0.12, ly: -0.25, gx: -Math.PI * 2 }],
+          [1.1, { rz: -1.0, ry: 0.35, px: -0.05, py: 0.03, lx: -0.12, ly: -0.25, gx: -Math.PI * 2 }],
+          [1.5, { rz: -1.05, ry: 0.4, px: -0.05, py: 0.04, rx: 0.06, lx: -0.12, ly: -0.25, gx: -Math.PI * 2 }],
+          [1.7, { rz: 0.2, ry: -0.3, py: 0.02, gx: -Math.PI * 2 }], [1.85, { rz: 0.2, ry: -0.3, py: 0.02, b: 0.6, gx: -Math.PI * 2 }],
+          [2.0, { rz: 0.2, ry: -0.3, py: 0.02, gx: -Math.PI * 2 }], [2.3, { gx: -Math.PI * 2 }], [2.6, { gx: -Math.PI * 2 }]],
         sounds: [[0.3, 'flip'], [1.77, 'check']],
       },
     },
@@ -906,6 +908,7 @@ export function createViewModels(camera, playSound) {
         cur.slide.position.z = cur.slideRest.z + travel * (cur.slideTravel || 0.04);
       }
       if (cur.knife) cur.knife.rotation.x = p('kr');
+      if (cur.gun) cur.gun.rotation.x = p('gx'); // 只有槍轉（手不動）
       // 槍口火光
       const fl = now < flashUntil && !!cur.flash;
       if (cur.flash) cur.flash.visible = fl;

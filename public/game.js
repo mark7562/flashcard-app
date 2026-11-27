@@ -644,6 +644,7 @@ function enterMatch() {
 }
 
 function exitMatch() {
+  if (replay) { replay.done = null; endReplay(); }
   playing = false;
   me.alive = false;
   firing = false;
@@ -685,7 +686,7 @@ function spectateNext() {
   spectateId = list[(i + 1) % list.length][0];
   uiClick();
 }
-function showResults(m) {
+function showResults(m, later = false) {
   firing = false;
   for (const id of ['paused', 'settings', 'death', 'spectate', 'scoreboard']) $(id).classList.add('hidden');
   if (document.pointerLockElement) document.exitPointerLock();
@@ -707,12 +708,121 @@ function showResults(m) {
   }
   const all = m.players.map((p) => ({ ...p, color: roster.get(p.id)?.color ?? 0xffffff }));
   $('resTables').replaceChildren(teamTable(0, all.filter((p) => p.team === 0)), teamTable(1, all.filter((p) => p.team === 1)));
-  resultsEnd = performance.now() + 12000;
-  $('results').classList.remove('hidden');
   $('touch').classList.add('hidden'); // 結算時收起觸控按鈕，免得蓋住表格
   $('scoreboard').classList.add('hidden');
-  const won = m.winner === me.team;
-  if (m.winner >= 0) [won ? 523 : 392, won ? 659 : 330, won ? 784 : 262].forEach((f, i) => beep(f, 0.25, 0.1, 'triangle', i * 0.15));
+  resultWinner = m.winner;
+  if (!later) revealResults();
+}
+let resultWinner = -1;
+function revealResults() {
+  resultsEnd = performance.now() + 12000;
+  $('results').classList.remove('hidden');
+  const won = resultWinner === me.team;
+  if (resultWinner >= 0) [won ? 523 : 392, won ? 659 : 330, won ? 784 : 262].forEach((f, i) => beep(f, 0.25, 0.1, 'triangle', i * 0.15));
+}
+
+// ---------- 最佳擊殺回放 ----------
+// 伺服器記下整場最精彩的一次擊殺（前後幾秒所有人的位置、開槍、揮刀），對戰結束時用擊殺者的視角重播
+let replay = null;
+function startReplay(best, done) {
+  if (document.pointerLockElement) document.exitPointerLock();
+  const ids = new Set();
+  for (const [, rows] of best.frames) for (const row of rows) ids.add(row[0]);
+  for (const r of remotes.values()) { clearCorpse(r); r.group.visible = false; }
+  for (const id of ids) if (!remotes.has(id) && roster.has(id)) makeRemote(id); // 自己也要有模型（被擊倒的可能是你）
+  replay = { best, done, t: 0, ev: 0, ended: false, adsK: 0, owner: 0 };
+  document.body.classList.add('replaying');
+  const kname = nameOf(best.killer), w = WEAPONS[best.w];
+  $('rpName').textContent = kname;
+  $('rpName').style.color = teamCss(best.killer);
+  $('rpInfo').textContent = [`${w ? w.icon + ' ' + w.name : ''}`, `擊倒 ${nameOf(best.victim)}`, ...(best.tags || [])].filter(Boolean).join(' · ');
+  $('replay').classList.remove('hidden');
+  firing = false;
+}
+function endReplay() {
+  if (!replay) return;
+  const done = replay.done;
+  replay = null;
+  document.body.classList.remove('replaying');
+  $('replay').classList.add('hidden');
+  $('scope').className = 'hidden';
+  camera.fov = settings.fov; camera.updateProjectionMatrix();
+  if (remotes.has(me.id)) removeRemote(me.id);
+  views.setTeamColor(MAP.teams[me.team].color);
+  done?.();
+}
+$('rpSkip').addEventListener('click', (e) => { e.stopPropagation(); uiClick(); endReplay(); });
+function updateReplay(dt, now) {
+  const R = replay, B = R.best, F = B.frames;
+  // 擊殺那一瞬間放慢
+  const slow = Math.abs(R.t - B.at) < 380 ? 0.35 : 1;
+  R.t += dt * 1000 * slow;
+  const end = F[F.length - 1][0];
+  if (R.t > end + 900) { endReplay(); return; }
+  const T = Math.min(R.t, end);
+  let i = 0;
+  while (i < F.length - 2 && F[i + 1][0] <= T) i++;
+  const [ta, A] = F[i], [tb, Bf] = F[Math.min(i + 1, F.length - 1)];
+  const k = tb > ta ? Math.min(1, Math.max(0, (T - ta) / (tb - ta))) : 0;
+  const byId = new Map(Bf.map((row) => [row[0], row]));
+  let killerPose = null;
+  for (const a of A) {
+    const r = remotes.get(a[0]);
+    if (!r) continue;
+    const b = byId.get(a[0]) || a;
+    let dyaw = b[4] - a[4]; dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+    const x = a[1] + (b[1] - a[1]) * k, y = a[2] + (b[2] - a[2]) * k, z = a[3] + (b[3] - a[3]) * k;
+    const yaw = a[4] + dyaw * k, pitch = a[5] + (b[5] - a[5]) * k;
+    if (a[7] >= 0) { r.wid = WPN.LIST[a[7]]; r.fig.setWeapon(r.wid); }
+    if (!r.corpse) {
+      r.alive = !!a[6];
+      r.group.visible = r.alive && a[0] !== B.killer;
+      r.group.position.set(x, y, z);
+      r.group.rotation.y = yaw;
+      r.yaw = yaw; r.pitch = pitch;
+    }
+    if (a[0] === B.killer) killerPose = { x, y, z, yaw, pitch, wid: r.wid || 'rifle', ads: !!a[8], team: r.team };
+  }
+  // 事件：開槍、揮刀、擊殺
+  while (R.ev < B.events.length && B.events[R.ev].t <= R.t) {
+    const e = B.events[R.ev++];
+    const r = remotes.get(e.id ?? e.victim);
+    if (e.k === 'shot') {
+      const o = new THREE.Vector3();
+      if (e.id === B.killer) { views.fire(now); views.muzzleWorld(o); } else if (r) r.arm.getWorldPosition(o);
+      for (const end2 of e.es || [e.e]) { const pe = new THREE.Vector3().fromArray(end2); addTracer(o, pe); addSpark(pe); }
+      const d = Math.hypot(o.x - camera.position.x, o.z - camera.position.z);
+      sfx(WEAPONS[e.w] && !WEAPONS[e.w].melee ? e.w : 'rifle', 0.45 / (1 + d * 0.06), d / 70);
+    } else if (e.k === 'swing') {
+      if (e.id === B.killer) { if (e.v === 3) views.strike(now); else views.swing(now, e.v); } else if (r) { r.swingAt = now; r.swingV = e.v; }
+      sfx(e.v === 3 ? 'heavy' : 'swish' + Math.min(2, e.v), 0.4);
+    } else if (e.k === 'kill') {
+      const v = remotes.get(e.victim);
+      if (v && !v.corpse) { v.alive = false; v.group.visible = true; startCorpse(v, e.kx, e.kz, e.head); }
+      if (e.killer === B.killer) { showHit(e.head, true); beep(1600, 0.12, 0.12, 'triangle', 0.06); }
+      feed(e.killer, e.victim, e.head, e.w);
+    }
+  }
+  // 鏡頭：擊殺者的眼睛
+  if (killerPose) {
+    camera.position.set(killerPose.x, killerPose.y + EYE, killerPose.z);
+    camera.rotation.set(killerPose.pitch, killerPose.yaw, 0);
+    if (R.owner !== B.killer || viewWeapon !== killerPose.wid) {
+      R.owner = B.killer;
+      showWeapon(B.killer, killerPose.wid);
+      views.setTeamColor(MAP.teams[killerPose.team].color);
+    }
+  }
+  const zw = WEAPONS[killerPose?.wid || 'rifle'];
+  const rate = zw.ads ? 1000 / zw.ads.ms : 10;
+  R.adsK = killerPose?.ads && zw.ads ? Math.min(1, R.adsK + rate * dt * slow) : Math.max(0, R.adsK - rate * 1.4 * dt * slow);
+  const ez = R.adsK * R.adsK * (3 - 2 * R.adsK);
+  const fov = settings.fov / (zw.ads ? 1 + (zw.ads.zoom - 1) * ez : 1);
+  if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
+  const scopeOn = !!zw.ads?.scope && R.adsK > 0.9;
+  const cls = scopeOn ? zw.ads.scope : 'hidden';
+  if ($('scope').className !== cls) $('scope').className = cls;
+  views.update(now, dt * slow, { visible: !!killerPose && !scopeOn, bob: 0, vy: 0, recoil: 0, ads: ez });
 }
 function updateMatchbar(now) {
   if (!room || room.state !== 'playing') return;
@@ -885,7 +995,19 @@ function handle(m) {
         me.adsToggled = false;
         kitOpen = true; // 死掉的時候可以換套裝
         updateHp();
-        $('deathby').textContent = `擊倒你的是：${nameOf(m.killer)}`;
+        // 擊倒你的人：名字、武器、還剩幾滴血
+        const kw = WEAPONS[m.w];
+        $('deathby').replaceChildren();
+        const kn = document.createElement('span'); kn.textContent = nameOf(m.killer); kn.style.color = teamCss(m.killer);
+        $('deathby').append('擊倒你的是：', kn, kw ? `（${kw.icon} ${kw.name}${m.head ? ' · 爆頭' : ''}）` : '');
+        if (m.khp !== undefined) {
+          const hp = document.createElement('div');
+          hp.className = 'khp' + (m.khp <= 30 ? ' low' : '');
+          hp.innerHTML = '<span class="khp-bar"><i></i></span><b></b>';
+          hp.querySelector('i').style.width = m.khp + '%';
+          hp.querySelector('b').textContent = `剩 ${m.khp} 血`;
+          $('deathby').append(hp);
+        }
         const elim = room?.mode === 'elim';
         $('death').classList.toggle('spec', elim);
         if (elim) {
@@ -924,7 +1046,8 @@ function handle(m) {
       break;
     }
     case 'matchEnd':
-      showResults(m);
+      if (m.best) { showResults(m, true); startReplay(m.best, () => revealResults()); } // 先播最佳擊殺再看結算
+      else showResults(m);
       break;
     case 'pong':
       rtt = performance.now() - m.c;
@@ -1057,7 +1180,7 @@ function onTouchStart(e) {
     // 暫停選單或設定開著的時候，讓按鈕和滑桿正常運作
     if (t.target.closest?.('.overlay')) continue;
     if (t.target.closest?.('#scoreboard')) { e.preventDefault(); setScoreboard(false); continue; }
-    if (t.target.closest?.('#kitChip, #kitPick, #results')) continue; // 讓按鈕正常點
+    if (t.target.closest?.('#kitChip, #kitPick, #results, #replay')) continue; // 讓按鈕正常點
     if (t.target.closest?.('#ammo')) { e.preventDefault(); doInspect(); continue; } // 點武器資訊＝檢視武器
     const btn = t.target.closest?.('.tbtn');
     if (btn) {
@@ -1479,6 +1602,14 @@ function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, clock.getDelta());
   const now = performance.now();
+  if (replay) {
+    updateReplay(dt, now);
+    updateCorpses(now);
+    updateRemotePoses(now);
+    updateFx(dt);
+    renderer.render(scene, camera);
+    return;
+  }
 
   if (!playing) {
     title.update(dt, camera);
@@ -1555,6 +1686,7 @@ function frame() {
     const wid = spec[1].wid || 'rifle';
     if (viewOwner !== spec[0] || viewWeapon !== wid) {
       showWeapon(spec[0], wid);
+      views.setTeamColor(MAP.teams[spec[1].team]?.color ?? MAP.teams[me.team].color); // 袖子是被觀戰的人那隊的顏色
       $('wname').textContent = `${WEAPONS[wid].icon} ${WEAPONS[wid].name}`;
     }
     // 觀戰：顯示被觀戰的人的血量和子彈
@@ -1569,6 +1701,7 @@ function frame() {
     }
   } else if (viewOwner !== me.id && playing) {
     showWeapon(me.id, me.kit[me.weapon]);
+    views.setTeamColor(MAP.teams[me.team].color);
     specShown.hp = specShown.ammo = null;
     updateAmmo();
     updateHp();
@@ -1608,7 +1741,11 @@ function frame() {
     ? { visible: !scopeOn, bob: 0, vy: 0, recoil: 0, ads: ez }
     : { visible: playing && me.alive && !scopeOn, bob, vy: me.onGround ? 0 : me.vy, recoil: me.recoil, ads: ez });
   updateRemotePoses(now);
-
+  updateFx(dt);
+  renderer.render(scene, camera);
+}
+// 子彈軌跡、火花慢慢消失
+function updateFx(dt) {
   for (let i = tracers.length - 1; i >= 0; i--) {
     const t = tracers[i];
     t.life -= dt;
@@ -1622,8 +1759,6 @@ function frame() {
     s.m.scale.setScalar(1 + (0.15 - s.life) * 6);
     if (s.life <= 0) { scene.remove(s.m); s.m.material.dispose(); sparks.splice(i, 1); }
   }
-
-  renderer.render(scene, camera);
 }
 const title = createTitleScene(scene);
 setWorld('arena', true);

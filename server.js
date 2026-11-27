@@ -29,6 +29,8 @@ const FREEZE_MS = 3000; // 回合開始前的準備時間
 const ROUND_MS = 120000; // 每回合 2 分鐘
 const ROUND_POST_MS = 4000; // 回合結束後等多久開下一回合
 const RESULTS_MS = 12000; // 結算畫面顯示多久
+const REC_MS = 7000; // 最佳擊殺回放：伺服器記住最近幾秒的位置和事件
+const CLIP_BEFORE = 2600, CLIP_AFTER = 800, CLIP_MAX = 6000; // 回放從擊殺前多久播到擊殺後多久（連殺最長 6 秒）
 const COLORS = MAP.colors;
 const MODES = ['tdm', 'elim'];
 const RULE_OPTIONS = { scoreLimit: [25, 50, 75, 100], timeLimit: [5, 10, 15], rounds: [3, 5, 7], map: MAP.order };
@@ -67,6 +69,45 @@ function toRoom(r, msg, exceptId) {
     if (p.id !== exceptId && p.ws.readyState === 1) p.ws.send(data);
   }
 }
+// ---------- 最佳擊殺回放 ----------
+// 每一格記錄所有人的位置；開槍、揮刀、擊殺也記下來，選出最精彩的一次擊殺，對戰結束時一起送出去
+function recEvent(r, ev) {
+  if (r.state !== 'playing') return;
+  ev.t = Date.now();
+  r.recEv.push(ev);
+}
+function pruneRec(r, now) {
+  while (r.rec.length && r.rec[0].t < now - REC_MS) r.rec.shift();
+  while (r.recEv.length && r.recEv[0].t < now - REC_MS) r.recEv.shift();
+}
+// 擊殺有多精彩：爆頭、遠距離、連殺、刀殺、盲狙、殘血反殺
+function rateKill(p, target, head, weapon, now) {
+  const w = WEAPONS[weapon] || {};
+  const dist = Math.hypot(p.x - target.x, p.z - target.z);
+  p.streak = (p.streak || []).filter((t) => now - t < 5000);
+  p.streak.push(now);
+  const n = p.streak.length;
+  const tags = [];
+  let score = 1;
+  if (head) { score += 1; tags.push('爆頭'); }
+  if (dist >= 25) { score += Math.min(dist, 60) / 20; tags.push(`${Math.round(dist)} 公尺`); }
+  if (n >= 2) { score += (n - 1) * 1.6; tags.push(`${n} 連殺`); }
+  if (w.melee) { score += 1.2; tags.push('刀殺'); }
+  if (w.hipCone && p.lastHip) { score += 2; tags.push('盲狙'); }
+  if (p.hp <= 30) { score += 0.8; tags.push('殘血反殺'); }
+  return { score, tags, n, start: Math.max(n >= 2 ? p.streak[0] - 1500 : now - CLIP_BEFORE, now + CLIP_AFTER - CLIP_MAX) };
+}
+function captureBest(r, now) {
+  const c = r.pendingBest;
+  if (!c) return;
+  r.pendingBest = null;
+  const frames = r.rec.filter((f) => f.t >= c.start && f.t <= now).map((f) => [f.t - c.start, f.p]);
+  const events = r.recEv.filter((e) => e.t >= c.start && e.t <= now).map((e) => ({ ...e, t: e.t - c.start }));
+  if (frames.length < 5) return;
+  r.best = { ...c, frames, events, at: c.at - c.start, start: undefined, score: undefined, captureAt: undefined };
+  r.bestScore = c.score;
+}
+
 function num(v, fallback = 0) {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 }
@@ -147,6 +188,7 @@ function createRoom(p, msg) {
     rules: { scoreLimit: 50, timeLimit: 10, rounds: 5, map: MAP.order.includes(msg.map) ? msg.map : MAP.defaultMap },
     hostId: p.id, state: 'lobby', players: new Map(),
     score: [0, 0], roundWins: [0, 0], round: 0, phase: null, phaseUntil: 0, endsAt: 0, resultsUntil: 0, pendingEnd: null,
+    rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null,
   };
   rooms.set(r.code, r);
   console.log(`[房] ${p.name} 建立房間 ${r.code}「${r.name}」`);
@@ -212,6 +254,7 @@ function startMatch(r) {
   r.roundWins = [0, 0];
   r.round = 0;
   r.pendingEnd = null;
+  r.rec = []; r.recEv = []; r.best = null; r.bestScore = 0; r.pendingBest = null;
   for (const p of r.players.values()) { p.kills = 0; p.deaths = 0; p.alive = false; p.respawnAt = 0; p.ready = !!p.bot; }
   console.log(`[房] ${r.code} 開戰（${r.mode === 'tdm' ? '團隊死鬥' : '回合殲滅'}，${mapOf(r).name}，${r.players.size} 人）`);
   // 先等大家載入地圖（最多 10 秒），再倒數 5 秒
@@ -258,15 +301,19 @@ function endRound(r, winner) {
 }
 
 function endMatch(r, winner, reason = '') {
+  if (r.pendingBest) captureBest(r, Date.now()); // 最後一殺直接結束比賽：用現有的畫面
   r.state = 'results';
   r.phase = null;
-  r.resultsUntil = Date.now() + RESULTS_MS;
+  const best = reason === 'forfeit' ? null : r.best;
+  r.resultsUntil = Date.now() + RESULTS_MS + (best ? best.frames.at(-1)[0] + 2500 : 0); // 先播回放再看結算
   for (const p of r.players.values()) { p.alive = false; p.resultsDone = false; }
   toRoom(r, {
     t: 'matchEnd', winner, mode: r.mode, reason,
     score: r.mode === 'tdm' ? r.score : r.roundWins,
     players: [...r.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, bot: !!p.bot })),
+    best,
   });
+  r.rec = []; r.recEv = []; r.best = null;
   syncRoom(r);
   console.log(`[房] ${r.code} 對戰結束，${winner < 0 ? '平手' : MAP.teams[winner].name + '獲勝'}`);
 }
@@ -422,7 +469,13 @@ function applyDamage(p, target, dmg, headshot, weapon, now) {
     target.respawnAt = now + RESPAWN_MS;
     r.score[p.team] += 1;
   }
-  toRoom(r, { t: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z });
+  toRoom(r, { t: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z, khp: p.hp });
+  recEvent(r, { k: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kx: p.x, kz: p.z });
+  // 精彩程度比目前最佳的高：過一下（記到倒地）再存起來
+  const rate = rateKill(p, target, headshot, weapon, now);
+  if (rate.score > r.bestScore && rate.score >= (r.pendingBest?.score ?? 0)) {
+    r.pendingBest = { killer: p.id, victim: target.id, team: p.team, w: weapon, tags: rate.tags, score: rate.score, start: rate.start, at: now, captureAt: now + CLIP_AFTER };
+  }
   if (r.mode === 'tdm' && r.score[p.team] >= r.rules.scoreLimit) endMatch(r, p.team);
   else checkTeams(r);
 }
@@ -496,6 +549,8 @@ function handleShoot(p, msg) {
   }
 
   toRoom(r, { t: 'shot', id: p.id, o, e: ends[0], es: ends.length > 1 ? ends : undefined, w: w.id }, p.id);
+  recEvent(r, { k: 'shot', id: p.id, e: ends[0], es: ends.length > 1 ? ends : undefined, w: w.id });
+  p.lastHip = !!(w.hipCone && (msg.h || !isScoped));
   for (const q of r.players.values()) if (q.bot && q.team !== p.team) BOT.hear(q, p, now);
   for (const [q, h] of dmgBy) if (q.alive) applyDamage(p, q, Math.round(h.dmg), h.head, w.id, now);
 }
@@ -538,6 +593,7 @@ function handleMelee(p, msg) {
   }
   const v = heavy ? 3 : Math.max(0, Math.min(2, num(msg.v, 0) | 0));
   toRoom(r, { t: 'swing', id: p.id, v }, p.id);
+  recEvent(r, { k: 'swing', id: p.id, v });
   if (!target) return;
   // 對方面向的方向跟「對方 → 我」相反，就是從背後砍
   const fx = -Math.sin(target.yaw), fz = -Math.cos(target.yaw);
@@ -763,6 +819,10 @@ setInterval(() => {
       list.push([p.id, +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(3), +p.pitch.toFixed(3), p.alive ? 1 : 0, WPN.LIST.indexOf(p.loadout[p.weapon]), p.adsSince ? 1 : 0, p.hp, p.ammoBy[p.weapon] ?? -1]);
     }
     toRoom(r, { t: 'snap', p: list });
+    // 回放記錄：只留位置、角度、活著沒、武器、開鏡
+    r.rec.push({ t: now, p: list.map((row) => row.slice(0, 9)) });
+    pruneRec(r, now);
+    if (r.pendingBest && now >= r.pendingBest.captureAt) captureBest(r, now);
   }
 }, TICK_MS);
 
