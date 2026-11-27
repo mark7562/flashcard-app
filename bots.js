@@ -523,7 +523,7 @@ function think(p, r, now, dt, api) {
       if (dist > 1.2) { mx += dx / dist; mz += dz / dist; }
       if (now >= b.reactAt && dist < W.range - 0.3 && Math.abs(angleDiff(lookYaw, p.yaw)) < 0.5 && now >= b.nextShotAt) {
         const cp = Math.cos(p.pitch);
-        api.melee(p, { d: [-Math.sin(p.yaw) * cp, Math.sin(p.pitch), -Math.cos(p.yaw) * cp], o: [p.x, eyeY, p.z] });
+        api.melee(p, { d: [-Math.sin(p.yaw) * cp, Math.sin(p.pitch), -Math.cos(p.yaw) * cp], o: [p.x, eyeY, p.z], v: (b.swingN = ((b.swingN || 0) + 1) % 3) });
         b.nextShotAt = now + W.fireMs + rand(0, 200);
       }
     } else if (now >= b.reactAt && aligned && now >= b.nextShotAt && ammo > 0 && !p.reloadUntil) {

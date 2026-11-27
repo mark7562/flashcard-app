@@ -39,17 +39,31 @@ export function makeFigure(color, name = null, opts = {}) {
   visor.position.set(0, 1.63, -0.2);
   const arm = new THREE.Group();
   arm.position.set(0.28, 1.3, -0.1);
-  // 手上的武器：步槍、手槍、刀（看得出對方拿什麼）
-  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.6), dark);
-  gun.position.z = -0.3;
-  const pistol = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.26), dark);
-  pistol.position.z = -0.16;
+  // 手上的武器：步槍、手槍、刀（看得出對方拿什麼，輪廓跟第一人稱一樣）
+  const part = (g, w, h, d, m, x, y, z, rx = 0) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); o.rotation.x = rx; o.castShadow = true; g.add(o); return o; };
+  const poly = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.7 });
+  const accent = new THREE.MeshStandardMaterial({ color: 0xffcf5c, roughness: 0.6 });
   const steel = new THREE.MeshStandardMaterial({ color: 0xd8dde6, roughness: 0.3, metalness: 0.6 });
-  const knife = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.06, 0.34), steel);
-  knife.position.z = -0.2;
+  const gun = new THREE.Group();
+  part(gun, 0.08, 0.1, 0.42, dark, 0, 0, -0.12); // 機匣
+  part(gun, 0.09, 0.09, 0.3, poly, 0, 0, -0.45); // 護木
+  part(gun, 0.03, 0.03, 0.22, dark, 0, 0, -0.7); // 槍管
+  part(gun, 0.06, 0.15, 0.07, dark, 0, -0.12, -0.2, 0.25); // 彈匣
+  part(gun, 0.05, 0.12, 0.06, poly, 0, -0.1, 0.02, -0.35); // 握把
+  part(gun, 0.06, 0.1, 0.16, poly, 0, -0.02, 0.18); // 槍托
+  part(gun, 0.05, 0.05, 0.09, dark, 0, 0.08, -0.12); // 瞄具
+  part(gun, 0.092, 0.02, 0.03, accent, 0, -0.03, -0.58);
+  const pistol = new THREE.Group();
+  part(pistol, 0.05, 0.055, 0.26, dark, 0, 0.02, -0.12); // 套筒
+  part(pistol, 0.045, 0.13, 0.07, poly, 0, -0.07, -0.02, -0.25); // 握把
+  part(pistol, 0.01, 0.012, 0.01, accent, 0, 0.055, -0.24);
+  const knife = new THREE.Group();
+  part(knife, 0.015, 0.06, 0.3, steel, 0, 0, -0.2); // 刀刃
+  part(knife, 0.025, 0.09, 0.02, dark, 0, 0, -0.04); // 護手
+  part(knife, 0.035, 0.045, 0.14, poly, 0, 0, 0.04); // 刀柄
   arm.add(gun, pistol, knife);
   const weapons = { rifle: gun, pistol, knife };
-  for (const m of [body, head, gun, pistol, knife]) m.castShadow = true;
+  for (const m of [body, head]) m.castShadow = true;
   group.add(body, head, visor, arm);
 
   const fig = {

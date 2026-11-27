@@ -4,7 +4,7 @@ export const IS_TOUCH = matchMedia('(pointer: coarse)').matches || (navigator.ma
 export const DEFAULT_KEYS = {
   forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
   jump: 'Space', reload: 'KeyR', fire: 'Mouse0', score: 'Tab',
-  w1: 'Digit1', w2: 'Digit2', w3: 'Digit3', kit: 'KeyB',
+  w1: 'Digit1', w2: 'Digit2', w3: 'Digit3', kit: 'KeyB', heavy: 'Mouse2', inspect: 'KeyF',
 };
 
 const DEFAULTS = {

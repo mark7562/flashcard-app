@@ -46,6 +46,77 @@ export function playShot(volume = 0.5) {
   src.start(t);
   src.stop(t + 0.2);
 }
+// ---------- 武器音效（每把武器、每個動作都不一樣） ----------
+// muffle：0 = 就在旁邊，1 = 很遠（聲音變悶、變小）
+function noise(t, dur, vol, type, f0, f1, q = 1, dest = sfxBus) {
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuf;
+  const filt = ctx.createBiquadFilter();
+  filt.type = type;
+  filt.Q.value = q;
+  filt.frequency.setValueAtTime(f0, t);
+  if (f1 && f1 !== f0) filt.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  src.connect(filt).connect(g).connect(dest);
+  src.start(t, Math.random() * 0.2);
+  src.stop(t + dur + 0.02);
+}
+function tone(t, dur, vol, type, f0, f1, dest = sfxBus) {
+  const o = ctx.createOscillator();
+  o.type = type;
+  o.frequency.setValueAtTime(f0, t);
+  if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(dest);
+  o.start(t);
+  o.stop(t + dur + 0.02);
+}
+const SFX = {
+  // 步槍：低沉的「碰」＋尾音
+  rifle(t, v, m) {
+    const top = 5200 * (1 - m * 0.8);
+    noise(t, 0.09, v * 0.9, 'lowpass', top, 600);
+    tone(t, 0.11, v * 0.8, 'sine', 140, 45);
+    noise(t + 0.02, 0.28, v * 0.22, 'bandpass', 900 * (1 - m * 0.5), 300, 0.8);
+  },
+  // 手槍：短、脆的「啪」
+  pistol(t, v, m) {
+    const top = 7000 * (1 - m * 0.8);
+    noise(t, 0.05, v * 0.8, 'bandpass', top * 0.45, 900, 0.9);
+    tone(t, 0.035, v * 0.35, 'square', 1900 * (1 - m * 0.5), 700);
+    tone(t, 0.07, v * 0.45, 'sine', 230, 80);
+    noise(t + 0.015, 0.14, v * 0.12, 'highpass', 1800 * (1 - m * 0.6), 1200);
+  },
+  dry(t, v) { tone(t, 0.02, v * 0.3, 'square', 2600, 2000); },
+  magOut(t, v) { noise(t, 0.04, v * 0.4, 'bandpass', 1600, 1200, 3); tone(t + 0.01, 0.05, v * 0.15, 'triangle', 900, 700); },
+  magIn(t, v) {
+    noise(t, 0.05, v * 0.5, 'bandpass', 1100, 800, 2); tone(t, 0.03, v * 0.25, 'square', 320, 200);
+    noise(t + 0.07, 0.03, v * 0.35, 'bandpass', 2400, 2000, 4);
+  },
+  bolt(t, v) {
+    noise(t, 0.1, v * 0.4, 'bandpass', 2200, 900, 2); tone(t, 0.03, v * 0.2, 'square', 1400, 900);
+    noise(t + 0.13, 0.05, v * 0.45, 'bandpass', 1800, 1400, 3); tone(t + 0.13, 0.04, v * 0.25, 'square', 700, 500);
+  },
+  slide(t, v) { noise(t, 0.05, v * 0.5, 'bandpass', 3000, 1800, 3); tone(t, 0.04, v * 0.25, 'square', 650, 450); },
+  check(t, v) { noise(t, 0.03, v * 0.25, 'bandpass', 2600, 2200, 4); noise(t + 0.18, 0.03, v * 0.25, 'bandpass', 2000, 1700, 4); },
+  // 刀：三種揮法的風切聲不一樣
+  swish0(t, v) { noise(t, 0.2, v * 0.5, 'bandpass', 900, 2600, 2.5); },
+  swish1(t, v) { noise(t, 0.18, v * 0.5, 'bandpass', 2200, 800, 2.5); },
+  swish2(t, v) { noise(t, 0.12, v * 0.55, 'bandpass', 1400, 3200, 3); },
+  heavy(t, v) { noise(t, 0.32, v * 0.6, 'bandpass', 500, 1800, 2); tone(t, 0.25, v * 0.12, 'sine', 160, 90); },
+  windup(t, v) { noise(t, 0.12, v * 0.2, 'bandpass', 3000, 2000, 4); },
+  stab(t, v) { noise(t, 0.08, v * 0.6, 'lowpass', 700, 200); tone(t, 0.1, v * 0.5, 'sine', 110, 60); },
+  clang(t, v) { tone(t, 0.18, v * 0.25, 'triangle', 2450, 2300); tone(t, 0.14, v * 0.18, 'triangle', 3170, 3000); noise(t, 0.04, v * 0.3, 'highpass', 3000, 3000); },
+  flip(t, v) { noise(t, 0.06, v * 0.2, 'bandpass', 2500, 3500, 3); },
+};
+export function sfx(name, volume = 0.5, muffle = 0, when = 0) {
+  if (!ctx || volume < 0.02 || !SFX[name]) return;
+  SFX[name](ctx.currentTime + when, volume, Math.max(0, Math.min(1, muffle)));
+}
 export function beep(freq, dur = 0.07, vol = 0.15, type = 'square', when = 0) {
   if (!ctx) return;
   const t = ctx.currentTime + when;

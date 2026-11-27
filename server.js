@@ -334,6 +334,8 @@ function resetKit(p) {
   for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[p.loadout[slot]]; if (w.mag) p.ammoBy[slot] = w.mag; }
   p.reloadUntil = 0;
   p.switchUntil = 0;
+  p.heavyAt = 0;
+  p.lastHeavy = false;
 }
 function finishReload(p, now) {
   if (p.reloadUntil && now >= p.reloadUntil) { p.ammoBy[p.weapon] = weaponOf(p).mag; p.reloadUntil = 0; }
@@ -341,12 +343,16 @@ function finishReload(p, now) {
 function startReload(p) {
   const w = weaponOf(p);
   if (!p.alive || p.reloadUntil || !w.mag || p.ammoBy[p.weapon] >= w.mag) return;
-  p.reloadUntil = Date.now() + w.reloadMs - RELOAD_SLACK;
+  // 子彈打光才換彈比較久（要多拉一次槍機）
+  const ms = p.ammoBy[p.weapon] <= 0 && w.reloadEmptyMs ? w.reloadEmptyMs : w.reloadMs;
+  p.reloadUntil = Date.now() + ms - RELOAD_SLACK;
+  toRoom(p.room, { t: 'reload', id: p.id, ms }, p.id); // 讓其他人看到、聽到你在換彈
 }
 function switchWeapon(p, slot) {
   if (!WPN.HAND_SLOTS.includes(slot) || p.weapon === slot) return;
   p.weapon = slot;
   p.reloadUntil = 0; // 換武器會中斷換彈
+  p.heavyAt = 0;
   p.switchUntil = Date.now() + SWITCH_MS;
 }
 // 現在能不能換套裝：死掉等重生、開場準備時間、剛復活 10 秒內而且還沒開過火
@@ -369,7 +375,8 @@ function readyToFire(p, now) {
   const r = p.room;
   if (!r || r.state !== 'playing' || !p.alive || r.phase !== 'live') return null;
   const w = weaponOf(p);
-  if (now < p.switchUntil || now - p.lastShot < w.fireMs * FIRE_SLACK) return null;
+  const cd = p.lastHeavy && w.heavy ? w.heavy.fireMs : w.fireMs; // 重擊之後要等比較久
+  if (now < p.switchUntil || now - p.lastShot < cd * FIRE_SLACK) return null;
   return w;
 }
 function applyDamage(p, target, dmg, headshot, weapon, now) {
@@ -443,15 +450,30 @@ function handleShoot(p, msg) {
   if (target) applyDamage(p, target, headshot ? w.head : w.body, headshot, w.id, now);
 }
 
+// 重擊開始舉刀：要舉滿 windMs 才能砍下去
+function handleHeavyStart(p) {
+  const now = Date.now();
+  const w = readyToFire(p, now);
+  if (!w || !w.heavy) return;
+  p.heavyAt = now;
+  p.firedSince = true;
+  toRoom(p.room, { t: 'swing', id: p.id, v: 4 }, p.id); // 讓別人看到舉刀
+}
 // 揮刀：前方一小段距離內的敵人；從背後砍一刀擊倒
+// msg.heavy = 重擊（傷害高、距離短）
 function handleMelee(p, msg) {
   const r = p.room;
   const now = Date.now();
-  const w = readyToFire(p, now);
-  if (!w || !w.melee) return;
+  const w0 = readyToFire(p, now);
+  if (!w0 || !w0.melee) return;
+  const heavy = !!msg.heavy && !!w0.heavy;
+  if (heavy && (!p.heavyAt || now - p.heavyAt < w0.heavy.windMs * 0.8)) return; // 沒舉刀或舉不夠久
+  const w = heavy ? { ...w0, ...w0.heavy } : w0;
   const d = aimDir(msg);
   if (!d) return;
   p.lastShot = now;
+  p.lastHeavy = heavy;
+  p.heavyAt = 0;
   p.firedSince = true;
   const o = eyeOrigin(p, msg);
   let best = w.range;
@@ -464,13 +486,14 @@ function handleMelee(p, msg) {
     const t = rayBox(o, d, [pos.x - 0.6, pos.y, pos.z - 0.6], [pos.x + 0.6, pos.y + 1.95, pos.z + 0.6]);
     if (t < best) { best = t; target = q; }
   }
-  toRoom(r, { t: 'swing', id: p.id }, p.id);
+  const v = heavy ? 3 : Math.max(0, Math.min(2, num(msg.v, 0) | 0));
+  toRoom(r, { t: 'swing', id: p.id, v }, p.id);
   if (!target) return;
   // 對方面向的方向跟「對方 → 我」相反，就是從背後砍
   const fx = -Math.sin(target.yaw), fz = -Math.cos(target.yaw);
   const ax = p.x - target.x, az = p.z - target.z, al = Math.hypot(ax, az) || 1;
   const back = (fx * ax + fz * az) / al < -0.3;
-  applyDamage(p, target, back ? w.back : w.body, false, w.id, now);
+  applyDamage(p, target, back ? w.back : w.body, false, w0.id, now);
 }
 
 function handleState(p, msg) {
@@ -597,6 +620,7 @@ wss.on('connection', (ws) => {
       case 'state': handleState(p, msg); break;
       case 'shoot': handleShoot(p, msg); break;
       case 'melee': handleMelee(p, msg); break;
+      case 'heavy': handleHeavyStart(p); break;
       case 'reload': finishReload(p, Date.now()); startReload(p); break;
       case 'weapon': if (p.alive) switchWeapon(p, msg.s); break;
       case 'loadout': handleLoadout(p, msg); break;

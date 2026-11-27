@@ -642,3 +642,5 @@ body.touch #wslots { display: none; }
 }
 #kitPick .kp-title { cursor: pointer; }
 #kitPick .kp-x { font-size: 13px; color: var(--muted); margin-left: 6px; }
+
+#ammo { pointer-events: auto; cursor: pointer; } /* 手機點這裡檢視武器 */
