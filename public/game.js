@@ -804,8 +804,12 @@ function updateReplay(dt, now) {
       feed(e.killer, e.victim, e.head, e.w);
     }
   }
-  // 鏡頭：擊殺者的眼睛
+  // 鏡頭：擊殺者的眼睛（貼在鏡頭旁邊的人先藏起來，免得擋住畫面）
   if (killerPose) {
+    for (const r of remotes.values()) {
+      const g = r.group.position;
+      if (r.alive && Math.hypot(g.x - killerPose.x, g.z - killerPose.z) < 0.9) r.group.visible = false;
+    }
     camera.position.set(killerPose.x, killerPose.y + EYE, killerPose.z);
     camera.rotation.set(killerPose.pitch, killerPose.yaw, 0);
     if (R.owner !== B.killer || viewWeapon !== killerPose.wid) {
