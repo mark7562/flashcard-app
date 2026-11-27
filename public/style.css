@@ -146,6 +146,12 @@ body.touch .desktop-only, body:not(.touch) .touch-only { display: none !importan
   display: flex; flex-direction: column; gap: 14px;
 }
 .npanel.wide { width: min(640px, 100%); }
+.npanel > * { flex-shrink: 0; } /* 畫面矮的時候讓面板捲動，不要把按鈕壓扁 */
+/* 底部按鈕固定在面板最下面，內容再多也看得到 */
+.npanel > .btnrow:last-child {
+  position: sticky; bottom: -22px; margin: 0 -22px -22px; padding: 12px 22px 22px;
+  background: linear-gradient(transparent, rgba(12, 8, 36, 0.96) 30%);
+}
 .npanel::before {
   content: ""; position: absolute; left: 0; top: 0; width: 60px; height: 3px;
   background: var(--pink); box-shadow: 0 0 10px var(--pink);
@@ -224,6 +230,13 @@ input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border: 0; bo
   .menu { margin-top: 8px; gap: 7px; }
   .nbtn { padding: 9px 16px; font-size: 15px; }
   .npanel { padding: 16px; gap: 10px; max-height: calc(100dvh - 24px); }
+  .npanel > .btnrow:last-child { bottom: -16px; margin: 0 -16px -16px; padding: 8px 16px 16px; }
+  .ninput, input#name { padding: 8px 12px; font-size: 15px; }
+  .ntitle { font-size: 19px; }
+  .lbl, .hint { font-size: 12px; }
+  .seg button { padding: 7px 10px; font-size: 14px; }
+  #createModeDesc { display: none; }
+  .nbtn.small { padding: 8px 14px; font-size: 15px; }
   .custom { grid-template-columns: 150px 1fr; }
   .preview { height: 180px; }
   .sets { gap: 10px; }

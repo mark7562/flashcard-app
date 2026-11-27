@@ -419,10 +419,6 @@ function connect() {
 // 標題畫面按「開始遊戲」→ 進大廳
 function openLobby() {
   initAudio();
-  if (IS_TOUCH) {
-    document.documentElement.requestFullscreen?.().catch(() => {});
-    screen.orientation?.lock?.('landscape').catch(() => {});
-  }
   if (ws && helloed) {
     send({ t: 'hello', name: profile.name.trim(), color: profile.color }); // 更新名字和顏色
     go(room ? 'scrRoom' : 'scrLobby');
@@ -778,8 +774,16 @@ function openPauseMenu() {
 // ---------- 手機操作 ----------
 const touches = new Map(); // identifier -> { role, x, y, ox, oy }
 const LOOK_SENS = 0.0065;
+// 手機：進入對戰後第一次點畫面才切全螢幕（選單要打字，全螢幕會一直被鍵盤打斷）
+function goFullscreen() {
+  if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+  document.documentElement.requestFullscreen({ navigationUI: 'hide' })
+    .then(() => screen.orientation?.lock?.('landscape').catch(() => {}))
+    .catch(() => {});
+}
 function onTouchStart(e) {
   if (!playing) return;
+  goFullscreen();
   for (const t of e.changedTouches) {
     // 暫停選單或設定開著的時候，讓按鈕和滑桿正常運作
     if (t.target.closest?.('.overlay')) continue;
