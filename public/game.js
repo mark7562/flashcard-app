@@ -560,6 +560,8 @@ function showResults(m) {
   $('resTables').replaceChildren(teamTable(0, all.filter((p) => p.team === 0)), teamTable(1, all.filter((p) => p.team === 1)));
   resultsEnd = performance.now() + 12000;
   $('results').classList.remove('hidden');
+  $('touch').classList.add('hidden'); // 結算時收起觸控按鈕，免得蓋住表格
+  $('scoreboard').classList.add('hidden');
   const won = m.winner === me.team;
   if (m.winner >= 0) [won ? 523 : 392, won ? 659 : 330, won ? 784 : 262].forEach((f, i) => beep(f, 0.25, 0.1, 'triangle', i * 0.15));
 }
