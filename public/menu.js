@@ -1,7 +1,7 @@
 // 標題畫面的選單：切換頁面、自訂角色、設定、線上人數
 import * as THREE from 'three';
 import { makeFigure, hex } from './figure.js';
-import { settings, setSetting, resetSettings, profile, saveProfile, IS_TOUCH } from './settings.js';
+import { settings, setSetting, resetSettings, profile, saveProfile, IS_TOUCH, DEFAULT_KEYS } from './settings.js';
 import { initAudio, uiHover, uiClick, uiBack, startMusic, stopMusic } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -116,13 +116,86 @@ const SLIDERS = [
   ['setFov', 'fov', (v) => v + '°'],
   ['setSfx', 'sfx', (v) => v + '%'],
   ['setMusic', 'music', (v) => v + '%'],
+  ['setVert', 'vert', (v) => v.toFixed(2) + 'x'],
+  ['setBtnScale', 'btnScale', (v) => Math.round(v * 100) + '%'],
 ];
+
+// ---------- 按鍵設定（電腦） ----------
+const ACTIONS = [
+  ['forward', '前進'], ['back', '後退'], ['left', '左移'], ['right', '右移'],
+  ['jump', '跳躍'], ['reload', '換彈'], ['fire', '開槍'], ['score', '計分板'],
+];
+export function keyName(code) {
+  if (!code) return '（未設定）';
+  const special = {
+    Mouse0: '滑鼠左鍵', Mouse1: '滑鼠中鍵', Mouse2: '滑鼠右鍵', Mouse3: '滑鼠側鍵 1', Mouse4: '滑鼠側鍵 2',
+    Space: '空白鍵', Tab: 'Tab', ShiftLeft: '左 Shift', ShiftRight: '右 Shift', ControlLeft: '左 Ctrl', ControlRight: '右 Ctrl',
+    AltLeft: '左 Alt', AltRight: '右 Alt', CapsLock: 'Caps Lock', Enter: 'Enter', Backspace: '退格',
+    ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+  };
+  if (special[code]) return special[code];
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code.startsWith('Numpad')) return '數字鍵 ' + code.slice(6);
+  return code;
+}
+let waitingAction = null;
+function renderKeys() {
+  const box = $('keyList');
+  box.replaceChildren();
+  for (const [action, label] of ACTIONS) {
+    const row = document.createElement('div');
+    row.className = 'keyrow';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const btn = document.createElement('button');
+    btn.className = 'keybtn' + (waitingAction === action ? ' wait' : '');
+    btn.textContent = waitingAction === action ? '請按新按鍵…' : keyName(settings.keys[action]);
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      waitingAction = action;
+      uiClick();
+      renderKeys();
+    });
+    row.append(name, btn);
+    box.append(row);
+  }
+}
+function bindKey(code) {
+  const keys = { ...settings.keys };
+  // 如果這個按鍵已經被別的動作用了，就互換
+  const other = Object.keys(keys).find((a) => keys[a] === code && a !== waitingAction);
+  if (other) keys[other] = keys[waitingAction];
+  keys[waitingAction] = code;
+  waitingAction = null;
+  setSetting('keys', keys);
+  uiClick();
+  renderKeys();
+}
+// 用 capture 階段攔截，避免按鍵同時觸發遊戲動作
+addEventListener('keydown', (e) => {
+  if (!waitingAction) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (e.code === 'Escape') { waitingAction = null; renderKeys(); return; }
+  bindKey(e.code);
+}, true);
+addEventListener('mousedown', (e) => {
+  if (!waitingAction || e.target.closest?.('.keybtn')) return;
+  if (e.button === 0 && e.target.closest?.('button')) { waitingAction = null; renderKeys(); return; } // 點到別的按鈕＝取消
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  bindKey('Mouse' + e.button);
+}, true);
 function syncSettingsUI() {
   for (const [id, key, fmt] of SLIDERS) {
     $(id).value = settings[key];
     $(id + 'Val').textContent = fmt(settings[key]);
   }
   for (const b of document.querySelectorAll('#setQuality button')) b.classList.toggle('on', b.dataset.q === settings.quality);
+  for (const b of document.querySelectorAll('#setInvert button')) b.classList.toggle('on', b.dataset.v === (settings.invertY ? '1' : '0'));
+  for (const b of document.querySelectorAll('#setAssist button')) b.classList.toggle('on', b.dataset.v === settings.aimAssist);
+  renderKeys();
   $('muteBtn').classList.toggle('off', !settings.musicOn);
 }
 let settingsReturn = null;
@@ -133,6 +206,7 @@ export function openSettings(onClose) {
   uiClick();
 }
 function closeSettings() {
+  waitingAction = null;
   $('settings').classList.add('hidden');
   uiBack();
   const fn = settingsReturn;
@@ -228,6 +302,28 @@ export function initMenu(handlers) {
   for (const b of document.querySelectorAll('#setQuality button')) {
     b.addEventListener('click', () => { setSetting('quality', b.dataset.q); syncSettingsUI(); uiClick(); });
   }
+  for (const b of document.querySelectorAll('#setInvert button')) {
+    b.addEventListener('click', () => { setSetting('invertY', b.dataset.v === '1'); syncSettingsUI(); uiClick(); });
+  }
+  for (const b of document.querySelectorAll('#setAssist button')) {
+    b.addEventListener('click', () => { setSetting('aimAssist', b.dataset.v); syncSettingsUI(); uiClick(); });
+  }
+  for (const b of document.querySelectorAll('#setTabs button')) {
+    b.addEventListener('click', () => {
+      uiClick();
+      waitingAction = null;
+      for (const o of document.querySelectorAll('#setTabs button')) {
+        o.classList.toggle('on', o === b);
+        $(o.dataset.tab).classList.toggle('hidden', o !== b);
+      }
+      renderKeys();
+    });
+  }
+  $('editLayout').addEventListener('click', () => {
+    $('settings').classList.add('hidden');
+    handlers.onEditLayout?.(() => { syncSettingsUI(); $('settings').classList.remove('hidden'); });
+  });
+
   $('muteBtn').addEventListener('click', () => {
     initAudio();
     setSetting('musicOn', !settings.musicOn);

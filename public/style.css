@@ -536,3 +536,25 @@ body.touch #hpbar { width: 120px; }
   position: fixed; z-index: 15; background: rgba(10, 6, 30, 0.97); pointer-events: auto;
   max-height: calc(100dvh - 24px); overflow-y: auto;
 }
+
+/* ================= 設定分頁 / 鍵位 ================= */
+.seg.tabs button { padding: 8px 10px; }
+.sets .hint { margin: 0; }
+.keybinds { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.keyrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
+.keybtn {
+  min-width: 92px; padding: 6px 10px; margin: 0; cursor: pointer; border-radius: 4px; font: 600 13px var(--zh);
+  color: var(--cyan); background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.5);
+}
+.keybtn.wait { color: #ffbe0b; border-color: #ffbe0b; animation: pulse 0.8s infinite; }
+.touchkeys { display: flex; flex-direction: column; gap: 10px; }
+.touchkeys label { display: grid; grid-template-columns: 96px 1fr 52px; align-items: center; gap: 12px; font-size: 15px; }
+#layoutBar {
+  position: fixed; z-index: 35; left: 50%; top: max(10px, env(safe-area-inset-top)); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 6px; white-space: nowrap;
+  background: rgba(10, 6, 30, 0.95); border: 1px solid rgba(0, 229, 255, 0.5); font-size: 14px;
+}
+#layoutBar .nbtn { width: auto; }
+body.editing #touch { z-index: 34; background: rgba(7, 4, 24, 0.88); }
+body.editing .tbtn { outline: 2px dashed rgba(255, 190, 11, 0.9); outline-offset: 3px; cursor: move; touch-action: none; }
+@media (max-width: 560px) { .keybinds { grid-template-columns: 1fr; } }

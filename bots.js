@@ -7,21 +7,23 @@ const { segmentBlocked } = require('./geom.js');
 // react：反應時間（毫秒）  turn：轉身速度（弧度/秒）  error：瞄準誤差（弧度）
 // track：瞄準修正速度  head：瞄頭的機率  burst / pause：連射幾發、停多久
 // strafe：交戰時左右閃的機率  retreatHp：血量低於多少會躲  hear：聽得到多遠的槍聲
+// reactPerM：距離每多 1 公尺，反應再慢幾毫秒  spray：連射時每發多散多少（倍率）
+// range：最遠看得到多遠  error 會隨距離變大（每 rangeFalloff 公尺多一倍誤差）
 const LEVELS = {
   easy: {
-    label: '新手', react: [850, 1300], turn: 2.6, error: 0.085, track: 0.6, head: 0.02,
-    burst: [2, 4], pause: [500, 900], strafe: 0, retreatHp: 0, hear: 0, flank: false,
-    fov: 1.0, range: 32, speed: 5.0,
+    label: '新手', react: [1000, 1500], reactPerM: 18, turn: 2.2, error: 0.11, track: 0.5, head: 0.01,
+    burst: [2, 3], pause: [650, 1100], spray: 0.25, strafe: 0, retreatHp: 0, hear: 0, flank: false,
+    fov: 0.9, range: 22, rangeFalloff: 15, speed: 4.8,
   },
   normal: {
-    label: '普通', react: [420, 650], turn: 5, error: 0.042, track: 1.4, head: 0.15,
-    burst: [3, 6], pause: [260, 480], strafe: 0.5, retreatHp: 30, hear: 26, flank: false,
-    fov: 1.3, range: 42, speed: 6.0,
+    label: '普通', react: [600, 900], reactPerM: 14, turn: 4, error: 0.06, track: 0.9, head: 0.08,
+    burst: [3, 5], pause: [380, 650], spray: 0.18, strafe: 0.4, retreatHp: 30, hear: 24, flank: false,
+    fov: 1.2, range: 30, rangeFalloff: 20, speed: 5.8,
   },
   hard: {
-    label: '老手', react: [190, 320], turn: 9, error: 0.02, track: 3, head: 0.4,
-    burst: [5, 9], pause: [130, 260], strafe: 1, retreatHp: 35, hear: 42, flank: true,
-    fov: 1.5, range: 55, speed: 6.4,
+    label: '老手', react: [320, 480], reactPerM: 8, turn: 7, error: 0.032, track: 2, head: 0.25,
+    burst: [4, 7], pause: [240, 420], spray: 0.12, strafe: 0.9, retreatHp: 35, hear: 40, flank: true,
+    fov: 1.4, range: 42, rangeFalloff: 28, speed: 6.3,
   },
 };
 
@@ -172,7 +174,7 @@ function randomPoint(biasTeam = -1) {
 function makeBrain(level) {
   return {
     level, cfg: LEVELS[level], state: 'patrol', path: null, pathIdx: 0, goal: null,
-    target: 0, reactAt: 0, aimOff: [0, 0], head: false, burstLeft: 0, nextShotAt: 0,
+    target: 0, reactAt: 0, aimOff: [0, 0], head: false, burstLeft: 0, nextShotAt: 0, sprayN: 0,
     strafeDir: 0, strafeUntil: 0, lastSeen: null, lastSeenAt: 0, holdUntil: 0, retreated: false,
     stuckCheckAt: 0, stuckPos: [0, 0], idleUntil: 0, alert: null,
   };
@@ -257,8 +259,9 @@ function think(p, r, now, dt, api) {
   if (seen) {
     if (b.target !== seen.id) {
       b.target = seen.id;
-      b.reactAt = now + rand(c.react[0], c.react[1]);
-      b.aimOff = [randn() * c.error * 2.5, randn() * c.error * 1.5];
+      b.reactAt = now + rand(c.react[0], c.react[1]) + bestD * c.reactPerM;
+      b.aimOff = [randn() * c.error * 3.5, randn() * c.error * 2];
+      b.sprayN = 0;
       b.head = Math.random() < c.head;
       b.burstLeft = randInt(c.burst[0], c.burst[1]);
     }
@@ -298,12 +301,16 @@ function think(p, r, now, dt, api) {
     lookPitch = Math.atan2(seen.y + (b.head ? 1.6 : 1.05) - eyeY, dist) + b.aimOff[1];
     const aligned = Math.abs(angleDiff(lookYaw, p.yaw)) < 0.12 && Math.abs(lookPitch - p.pitch) < 0.12;
     if (now >= b.reactAt && aligned && now >= b.nextShotAt && p.ammo > 0 && !p.reloadUntil) {
-      const jy = p.yaw + randn() * c.error * 0.6;
-      const jp = p.pitch + randn() * c.error * 0.6;
+      // 距離越遠越不準；連射越久越散（跟玩家一樣有後座力）
+      const err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray);
+      const jy = p.yaw + randn() * err;
+      const jp = p.pitch + randn() * err;
+      b.sprayN += 1;
       const cp = Math.cos(jp);
       api.shoot(p, { d: [-Math.sin(jy) * cp, Math.sin(jp), -Math.cos(jy) * cp], o: [p.x, eyeY, p.z] });
       b.burstLeft -= 1;
       if (b.burstLeft <= 0) {
+        b.sprayN = 0;
         b.nextShotAt = now + rand(c.pause[0], c.pause[1]);
         b.burstLeft = randInt(c.burst[0], c.burst[1]);
       } else {

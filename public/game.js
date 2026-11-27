@@ -1,7 +1,7 @@
 // 方塊戰場 Block Arena — 瀏覽器端
 import * as THREE from 'three';
 import { makeFigure } from './figure.js';
-import { settings, onSettingsChange, profile, IS_TOUCH } from './settings.js';
+import { settings, onSettingsChange, setSetting, profile, IS_TOUCH } from './settings.js';
 import { initAudio, setVolumes, playShot, beep, uiStart, uiClick } from './audio.js';
 import { initMenu, showTitle, hideTitle, setStatus, openSettings, updatePreview, go, currentScreen } from './menu.js';
 import { initLobby, renderRooms, renderRoom, lobbyError, rulesText } from './lobby.js';
@@ -25,6 +25,7 @@ const me = {
 const roster = new Map(); // id -> { name, color, kills, deaths }
 const remotes = new Map(); // id -> { group, buf: [...], alive }
 const keys = {};
+const TOUCH_BTNS = ['btnFire', 'btnJump', 'btnReload', 'btnScore', 'btnMenu']; // 可以調整位置的手機按鈕
 let ws = null, playing = false, firing = false, jumpQueued = false;
 let moveVec = { x: 0, y: 0 }; // 手機搖桿
 let rtt = 0, lastSend = 0, respawnAt = 0;
@@ -219,10 +220,10 @@ function moveAxis(axis, amount) {
 }
 function physics(dt) {
   let fx = 0, fz = 0;
-  if (keys.KeyW || keys.ArrowUp) fz -= 1;
-  if (keys.KeyS || keys.ArrowDown) fz += 1;
-  if (keys.KeyA || keys.ArrowLeft) fx -= 1;
-  if (keys.KeyD || keys.ArrowRight) fx += 1;
+  if (pressed('forward')) fz -= 1;
+  if (pressed('back')) fz += 1;
+  if (pressed('left')) fx -= 1;
+  if (pressed('right')) fx += 1;
   fx += moveVec.x; fz += moveVec.y;
   const len = Math.hypot(fx, fz);
   if (len > 1) { fx /= len; fz /= len; }
@@ -284,7 +285,7 @@ function shoot(now) {
   me.ammo -= 1;
   camera.getWorldDirection(camDir);
   const moving = Math.hypot(me.vx, me.vz) > 1;
-  const spread = (me.onGround ? (moving ? 0.018 : 0.006) : 0.04) + me.recoil * 0.25;
+  const spread = (me.onGround ? (moving ? 0.012 : 0.004) : 0.03) + me.recoil * 0.03;
   camDir.x += (Math.random() - 0.5) * spread;
   camDir.y += (Math.random() - 0.5) * spread;
   camDir.z += (Math.random() - 0.5) * spread;
@@ -297,8 +298,8 @@ function shoot(now) {
   addTracer(muzzle.clone(), end);
   addSpark(end);
   // 後座力
-  me.pitch = Math.min(1.5, me.pitch + 0.012);
-  me.yaw += (Math.random() - 0.5) * 0.006;
+  me.pitch = Math.min(1.5, me.pitch + 0.007);
+  me.yaw += (Math.random() - 0.5) * 0.004;
   me.recoil = Math.min(1, me.recoil + 0.18);
   flashUntil = now + 45;
   flash.rotation.z = Math.random() * Math.PI;
@@ -713,7 +714,23 @@ function handle(m) {
 }
 setInterval(() => send({ t: 'ping', c: performance.now(), rtt: Math.round(rtt) }), 2000);
 
-// ---------- 電腦操作 ----------
+// ---------- 電腦操作（按鍵可以在設定裡自訂） ----------
+function actionOf(code) {
+  for (const a in settings.keys) if (settings.keys[a] === code) return a;
+  return null;
+}
+function pressed(action) { return !!keys[settings.keys[action]]; }
+function onInput(code, down) {
+  keys[code] = down;
+  if (!playing && down) return false;
+  const a = actionOf(code);
+  if (!a) return false;
+  if (a === 'fire') firing = down;
+  if (a === 'jump' && down) jumpQueued = true;
+  if (a === 'reload' && down) startReload();
+  if (a === 'score') setScoreboard(down);
+  return true;
+}
 const canvas = renderer.domElement;
 function lockPointer() {
   if (IS_TOUCH) return;
@@ -731,29 +748,24 @@ document.addEventListener('pointerlockchange', () => {
 });
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
-  const k = 0.0022 * settings.mouse;
+  const k = 0.0022 * settings.mouse * aaSlow;
   me.yaw -= e.movementX * k;
-  me.pitch -= e.movementY * k;
+  me.pitch -= e.movementY * k * settings.vert * (settings.invertY ? -1 : 1);
+  lastLookAt = performance.now();
 });
 canvas.addEventListener('mousedown', (e) => {
   if (IS_TOUCH || !playing) return;
   if (document.pointerLockElement !== canvas) { lockPointer(); return; }
   if (!me.alive && room?.mode === 'elim') { spectateNext(); return; }
-  if (e.button === 0) firing = true;
+  onInput('Mouse' + e.button, true);
 });
-document.addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; });
+document.addEventListener('mouseup', (e) => onInput('Mouse' + e.button, false));
 document.addEventListener('keydown', (e) => {
-  if (!playing) return;
-  if (e.code === 'Tab') { e.preventDefault(); setScoreboard(true); return; }
-  keys[e.code] = true;
-  if (e.code === 'Space') { e.preventDefault(); jumpQueued = true; }
-  if (e.code === 'KeyR') startReload();
+  if (!playing || e.code === 'Escape') return;
+  if (onInput(e.code, true)) e.preventDefault();
 });
-document.addEventListener('keyup', (e) => {
-  keys[e.code] = false;
-  if (e.code === 'Tab') setScoreboard(false);
-});
-addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; });
+document.addEventListener('keyup', (e) => onInput(e.code, false));
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; setScoreboard(false); });
 function resume() {
   $('paused').classList.add('hidden');
   uiClick();
@@ -799,7 +811,7 @@ document.addEventListener('fullscreenchange', syncFullscreenButtons);
 syncFullscreenButtons();
 
 function onTouchStart(e) {
-  if (!playing) return;
+  if (!playing || document.body.classList.contains('editing')) return;
   for (const t of e.changedTouches) {
     // 暫停選單或設定開著的時候，讓按鈕和滑桿正常運作
     if (t.target.closest?.('.overlay')) continue;
@@ -845,8 +857,10 @@ function onTouchMove(e) {
       moveVec = { x: dx / max, y: dy / max };
       $('knob').style.transform = `translate(${dx}px, ${dy}px)`;
     } else if (s.role === 'look' || s.role === 'fire') {
-      me.yaw -= (t.clientX - s.x) * LOOK_SENS * settings.touch;
-      me.pitch -= (t.clientY - s.y) * LOOK_SENS * settings.touch;
+      const k = LOOK_SENS * settings.touch * aaSlow;
+      me.yaw -= (t.clientX - s.x) * k;
+      me.pitch -= (t.clientY - s.y) * k * settings.vert * (settings.invertY ? -1 : 1);
+      lastLookAt = performance.now();
       s.x = t.clientX; s.y = t.clientY;
     }
   }
@@ -876,6 +890,7 @@ function checkOrientation() {
 let lastQuality = null;
 onSettingsChange((s) => {
   setVolumes(s.sfx, s.music);
+  applyLayout();
   camera.fov = s.fov;
   camera.updateProjectionMatrix();
   if (s.quality !== lastQuality) {
@@ -894,6 +909,106 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   checkOrientation();
 });
+
+// ---------- 瞄準輔助 ----------
+// slow：準心在敵人身上時轉動變慢多少  pull：吸附速度（弧度/秒）  cone：多近才算「靠近敵人」
+const AIM_ASSIST = {
+  low: { slow: 0.75, pull: 0.5, cone: 0.07 },
+  high: { slow: 0.5, pull: 1.1, cone: 0.1 },
+};
+let aaSlow = 1, lastLookAt = 0;
+const aaEye = new THREE.Vector3(), aaDir = new THREE.Vector3();
+function lineClear(from, to) {
+  aaDir.subVectors(to, from);
+  const len = aaDir.length();
+  aaDir.normalize();
+  ray.set(from, aaDir);
+  for (const b of MAP.boxes) {
+    tmpBox.min.fromArray(b.min); tmpBox.max.fromArray(b.max);
+    if (ray.intersectBox(tmpBox, hitPoint) && hitPoint.distanceTo(from) < len - 0.1) return false;
+  }
+  return true;
+}
+function updateAimAssist(dt, now) {
+  aaSlow = 1;
+  const cfg = AIM_ASSIST[settings.aimAssist];
+  if (!cfg || !playing || !me.alive || frozen(now)) return;
+  aaEye.set(me.x, me.y + EYE, me.z);
+  let best = null;
+  const target = new THREE.Vector3();
+  for (const r of remotes.values()) {
+    if (!r.alive || r.team === me.team) continue;
+    const p = r.group.position;
+    const dx = p.x - me.x, dz = p.z - me.z, horiz = Math.hypot(dx, dz);
+    if (horiz > 45 || horiz < 0.5) continue;
+    const dyaw = Math.atan2(Math.sin(Math.atan2(-dx, -dz) - me.yaw), Math.cos(Math.atan2(-dx, -dz) - me.yaw));
+    const dp = Math.atan2(p.y + 1.15 - aaEye.y, horiz) - me.pitch;
+    const ang = Math.hypot(dyaw, dp);
+    const cone = cfg.cone + 0.5 / Math.max(horiz, 2); // 越近範圍越大
+    if (ang > cone || (best && ang >= best.ang)) continue;
+    if (!lineClear(aaEye, target.set(p.x, p.y + 1.15, p.z))) continue;
+    best = { dyaw, dp, ang, cone };
+  }
+  if (!best) return;
+  aaSlow = cfg.slow;
+  // 只有在玩家有動作時才吸附（開槍、移動、轉視角），站著不動不會自己瞄
+  const moving = Math.hypot(moveVec.x, moveVec.y) > 0.1 || pressed('forward') || pressed('back') || pressed('left') || pressed('right');
+  if (firing || moving || now - lastLookAt < 250) {
+    const k = cfg.pull * dt;
+    me.yaw += Math.max(-k, Math.min(k, best.dyaw));
+    me.pitch += Math.max(-k, Math.min(k, best.dp));
+  }
+}
+
+// ---------- 手機按鈕位置 / 大小 ----------
+function applyLayout() {
+  const sc = settings.btnScale;
+  for (const id of TOUCH_BTNS) {
+    const el = $(id);
+    const pos = settings.layout[id];
+    if (pos) {
+      Object.assign(el.style, { left: pos[0] + '%', top: pos[1] + '%', right: 'auto', bottom: 'auto', transform: `translate(-50%, -50%) scale(${sc})` });
+    } else {
+      Object.assign(el.style, { left: '', top: '', right: '', bottom: '', transform: `scale(${sc})` });
+    }
+  }
+}
+let layoutDone = null, dragBtn = null;
+function startLayoutEdit(done) {
+  layoutDone = done;
+  document.body.classList.add('editing');
+  $('touch').classList.remove('hidden');
+  $('layoutBar').classList.remove('hidden');
+}
+function finishLayoutEdit() {
+  document.body.classList.remove('editing');
+  $('layoutBar').classList.add('hidden');
+  if (!playing) $('touch').classList.add('hidden');
+  setSetting('layout', { ...settings.layout });
+  uiClick();
+  const fn = layoutDone;
+  layoutDone = null;
+  fn?.();
+}
+for (const id of TOUCH_BTNS) {
+  const el = $(id);
+  el.addEventListener('pointerdown', (e) => {
+    if (!document.body.classList.contains('editing')) return;
+    e.preventDefault();
+    dragBtn = el;
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (dragBtn !== el) return;
+    const x = Math.max(4, Math.min(96, e.clientX / innerWidth * 100));
+    const y = Math.max(6, Math.min(94, e.clientY / innerHeight * 100));
+    settings.layout = { ...settings.layout, [id]: [+x.toFixed(1), +y.toFixed(1)] };
+    applyLayout();
+  });
+  el.addEventListener('pointerup', () => { dragBtn = null; });
+}
+$('layoutDone').addEventListener('click', finishLayoutEdit);
+$('layoutReset').addEventListener('click', () => { setSetting('layout', {}); uiClick(); });
 
 // ---------- 主迴圈 ----------
 const clock = new THREE.Clock();
@@ -926,6 +1041,7 @@ function frame() {
     title.update(dt, camera);
     updatePreview(dt);
   } else {
+    updateAimAssist(dt, now);
     me.pitch = Math.max(-1.5, Math.min(1.5, me.pitch));
     if (me.alive) {
       if (frozen(now)) { me.vx = me.vz = 0; jumpQueued = false; } else physics(dt);
@@ -1007,7 +1123,7 @@ function frame() {
 }
 const title = createTitleScene(scene);
 setNight(true);
-initMenu({ onPlay: openLobby });
+initMenu({ onPlay: openLobby, onEditLayout: startLayoutEdit });
 initLobby({ send, myId: () => me.id });
 frame();
 setInterval(checkOrientation, 1000);
