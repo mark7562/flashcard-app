@@ -11,6 +11,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&display=swap" />
   <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <script type="importmap">
     { "imports": { "three": "/vendor/three/three.module.js" } }
   </script>
@@ -26,7 +29,10 @@
 
     <div class="topbar">
       <div id="online" class="online">正在喚醒伺服器…</div>
-      <button id="muteBtn" class="iconbtn" aria-label="背景音樂開關">♫</button>
+      <div class="topright">
+        <button id="fsBtn" class="pillbtn">⛶ 全螢幕</button>
+        <button id="muteBtn" class="iconbtn" aria-label="背景音樂開關">♫</button>
+      </div>
     </div>
 
     <!-- 主選單 -->
@@ -252,6 +258,7 @@
       <div class="menu">
         <button id="resume" class="nbtn primary"><span class="ic">▶</span>繼續</button>
         <button id="pauseSettings" class="nbtn"><span class="ic">⚙</span>設定</button>
+        <button id="pauseFs" class="nbtn"><span class="ic">⛶</span><span class="fslabel">全螢幕</span></button>
         <button id="leave" class="nbtn danger"><span class="ic">✕</span>離開房間</button>
       </div>
     </div>
@@ -282,10 +289,6 @@
       <div id="deathby"></div>
       <div id="respawn"></div>
     </div>
-    <div id="scoreboard" class="hidden">
-      <h3>計分板</h3>
-      <div id="scores"></div>
-    </div>
     <div id="results" class="hidden">
       <div class="res-card">
         <div id="resWinner" class="res-winner"></div>
@@ -295,6 +298,12 @@
         <div id="resBack" class="hint"></div>
       </div>
     </div>
+  </div>
+
+  <!-- ===== 計分板（放在最上層，蓋住觸控按鈕） ===== -->
+  <div id="scoreboard" class="hidden">
+      <h3>計分板</h3>
+      <div id="scores"></div>
   </div>
 
   <!-- ===== 手機觸控按鈕 ===== -->

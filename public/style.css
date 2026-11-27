@@ -523,3 +523,16 @@ body.touch #hpbar { width: 120px; }
 .slot .lv.normal { color: #ffbe0b; border-color: rgba(255, 190, 11, 0.5); }
 .slot .lv.hard { color: #ff6b8a; border-color: rgba(255, 77, 109, 0.6); }
 @media (max-height: 520px) { .lvl { padding: 7px 12px; } .lvl span { display: none; } }
+
+/* ================= 全螢幕按鈕 / 計分板層級 ================= */
+.topright { display: flex; align-items: center; gap: 10px; }
+.pillbtn {
+  height: 34px; padding: 0 14px; border-radius: 999px; cursor: pointer; font: 600 13px var(--zh); color: var(--cyan);
+  background: rgba(7, 4, 24, 0.6); border: 1px solid rgba(0, 229, 255, 0.5); white-space: nowrap;
+}
+.pillbtn.on { color: var(--muted); border-color: rgba(143, 155, 196, 0.35); }
+.nofs #fsBtn, .nofs #pauseFs { display: none; }
+#scoreboard {
+  position: fixed; z-index: 15; background: rgba(10, 6, 30, 0.97); pointer-events: auto;
+  max-height: calc(100dvh - 24px); overflow-y: auto;
+}

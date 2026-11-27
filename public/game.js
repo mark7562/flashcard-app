@@ -510,7 +510,7 @@ function exitMatch() {
 }
 
 // ---------- 回合橫幅 / 觀戰 / 結算 ----------
-let bannerTimer = 0;
+let bannerTimer = 0, deathTimer = 0;
 function banner(big, small = '', cls = '', ms = 2200) {
   const el = $('banner');
   $('bannerBig').textContent = big;
@@ -675,6 +675,8 @@ function handle(m) {
         if (elim) {
           $('respawn').textContent = '等待下一回合…';
           spectateId = 0;
+          clearTimeout(deathTimer);
+          deathTimer = setTimeout(() => { if (!me.alive) $('death').classList.add('hidden'); }, 2500);
         } else {
           respawnAt = performance.now() + 3000;
         }
@@ -695,6 +697,7 @@ function handle(m) {
       if (room) room.roundWins = m.wins;
       const cls = m.winner === 0 ? 'blue' : m.winner === 1 ? 'red' : '';
       const big = m.winner < 0 ? '這回合平手' : `${MAP.teams[m.winner].name}拿下這回合`;
+      $('death').classList.add('hidden');
       banner(big, m.last ? '比賽結束！' : `藍隊 ${m.wins[0]} : ${m.wins[1]} 紅隊`, cls, 3500);
       if (m.winner >= 0) beep(m.winner === me.team ? 880 : 330, 0.3, 0.1, 'triangle');
       break;
@@ -774,19 +777,33 @@ function openPauseMenu() {
 // ---------- 手機操作 ----------
 const touches = new Map(); // identifier -> { role, x, y, ox, oy }
 const LOOK_SENS = 0.0065;
-// 手機：進入對戰後第一次點畫面才切全螢幕（選單要打字，全螢幕會一直被鍵盤打斷）
-function goFullscreen() {
-  if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+// ---------- 全螢幕（只在玩家按按鈕時切換，瀏覽器的提示就只會在那時出現） ----------
+const canFullscreen = !!document.documentElement.requestFullscreen && !matchMedia('(display-mode: fullscreen)').matches;
+if (!canFullscreen) document.body.classList.add('nofs');
+function toggleFullscreen() {
+  uiClick();
+  if (document.fullscreenElement) { document.exitFullscreen?.().catch(() => {}); return; }
   document.documentElement.requestFullscreen({ navigationUI: 'hide' })
-    .then(() => screen.orientation?.lock?.('landscape').catch(() => {}))
+    .then(() => { if (IS_TOUCH) screen.orientation?.lock?.('landscape').catch(() => {}); })
     .catch(() => {});
 }
+function syncFullscreenButtons() {
+  const on = !!document.fullscreenElement;
+  $('fsBtn').textContent = on ? '⛶ 離開全螢幕' : '⛶ 全螢幕';
+  $('fsBtn').classList.toggle('on', on);
+  document.querySelector('#pauseFs .fslabel').textContent = on ? '離開全螢幕' : '全螢幕';
+}
+$('fsBtn').addEventListener('click', toggleFullscreen);
+$('pauseFs').addEventListener('click', toggleFullscreen);
+document.addEventListener('fullscreenchange', syncFullscreenButtons);
+syncFullscreenButtons();
+
 function onTouchStart(e) {
   if (!playing) return;
-  goFullscreen();
   for (const t of e.changedTouches) {
     // 暫停選單或設定開著的時候，讓按鈕和滑桿正常運作
     if (t.target.closest?.('.overlay')) continue;
+    if (t.target.closest?.('#scoreboard')) { e.preventDefault(); setScoreboard(false); continue; }
     const btn = t.target.closest?.('.tbtn');
     if (btn) {
       e.preventDefault();
