@@ -354,9 +354,37 @@ function canSee(p, q, boxes) {
   const eye = [p.x, p.y + 1.6, p.z];
   const dx = q.x - p.x, dz = q.z - p.z, l = Math.hypot(dx, dz) || 1;
   const sx = -dz / l * 0.3, sz = dx / l * 0.3; // 往對方左右兩邊各 0.3 公尺
-  const pts = [[0, 1.2, 0], [0, 1.6, 0], [sx, 1.2, sz], [-sx, 1.2, -sz], [0, 0.4, 0]];
+  const pts = [[0, 1.05, 0], [0, 1.6, 0], [sx, 1.2, sz], [-sx, 1.2, -sz], [0, 0.4, 0]];
   for (const [ox, oy, oz] of pts) if (!segmentBlocked(eye, [q.x + ox, q.y + oy, q.z + oz], boxes)) return true;
   return false;
+}
+// 要瞄哪裡：看得到的部位（想爆頭又看得到頭就瞄頭；身體被矮牆擋住就瞄露出來的地方）
+function aimPoint(p, q, boxes, wantHead) {
+  const eye = [p.x, p.y + 1.6, p.z];
+  const dx = q.x - p.x, dz = q.z - p.z, l = Math.hypot(dx, dz) || 1;
+  const sx = -dz / l * 0.22, sz = dx / l * 0.22;
+  const order = wantHead ? [[0, 1.6, 0], [0, 1.05, 0]] : [[0, 1.05, 0], [0, 1.6, 0]];
+  order.push([sx, 1.15, sz], [-sx, 1.15, -sz], [0, 0.5, 0]);
+  for (const [ox, oy, oz] of order) {
+    const pt = [q.x + ox, q.y + oy, q.z + oz];
+    if (!segmentBlocked(eye, pt, boxes)) return pt;
+  }
+  return [q.x, q.y + 1.05, q.z];
+}
+// 打不到人（對方躲在掩體後面只露一點）：在附近找一個看得比較清楚的位置
+function findPeek(p, q, nav) {
+  const boxes = nav.map.boxes;
+  let best = null, bestD = Infinity;
+  for (let n = 0; n < 30; n++) {
+    const x = p.x + rand(-6, 6), z = p.z + rand(-6, 6);
+    const k = nav.cellOf(x, z);
+    if (!nav.ok[k] || !nav.reach[k] || nav.edge[k]) continue;
+    const eye = [x, nav.h[k] + 1.6, z];
+    if (segmentBlocked(eye, [q.x, q.y + 1.05, q.z], boxes)) continue; // 要看得到對方的身體
+    const d = Math.hypot(x - p.x, z - p.z);
+    if (d > 1.5 && d < bestD) { bestD = d; best = [x, z]; }
+  }
+  return best;
 }
 // 沿著路徑走：到了一個點就直接往下一個點走（不會停一格）
 function followPath(p, b) {
@@ -483,6 +511,7 @@ function think(p, r, now, dt, api) {
 
   // 換彈完成
   api.finishReload(p, now);
+  b.pushing = false;
 
   // ---- 視覺：找看得到的最近敵人 ----
   let seen = null, bestD = Infinity;
@@ -574,8 +603,20 @@ function think(p, r, now, dt, api) {
     const dx = tgt.x - p.x, dz = tgt.z - p.z, dist = Math.max(0.01, Math.hypot(dx, dz));
     const decay = Math.exp(-c.track * dt);
     b.aimOff[0] *= decay; b.aimOff[1] *= decay;
-    lookYaw = yawTo(dx, dz) + b.aimOff[0];
-    lookPitch = Math.atan2(tgt.y + (b.head ? 1.6 : 1.05) - eyeY, dist) + b.aimOff[1];
+    const ap = vis ? aimPoint(p, tgt, map.boxes, b.head) : [tgt.x, tgt.y + 1.05, tgt.z];
+    const adx = ap[0] - p.x, adz = ap[2] - p.z;
+    lookYaw = yawTo(adx, adz) + b.aimOff[0];
+    lookPitch = Math.atan2(ap[1] - eyeY, Math.hypot(adx, adz)) + b.aimOff[1];
+    // 打了一陣子都沒打中（對方躲在掩體後面）：換個看得清楚的位置
+    if (vis && tgt.hp < (b.tgtHp ?? 999)) b.hitAt = now;
+    if (vis) b.tgtHp = tgt.hp;
+    if (b.engagedId !== tgt.id) { b.engagedId = tgt.id; b.hitAt = now; b.peek = null; }
+    if (!W.melee && !b.peek && now - b.hitAt > 3500 && now >= (b.peekCd || 0)) {
+      const spot = findPeek(p, r.players.get(tgt.id) || tgt, nav);
+      b.peekCd = now + 2500;
+      if (spot) { setGoal(p, b, nav, spot[0], spot[1]); if (b.path) { b.peek = spot; b.peekUntil = now + 3000; } }
+    }
+    if (b.peek && (now > b.peekUntil || Math.hypot(b.peek[0] - p.x, b.peek[1] - p.z) < 0.6)) { b.peek = null; b.hitAt = now; }
     const aligned = Math.abs(angleDiff(lookYaw, p.yaw)) < 0.12 && Math.abs(lookPitch - p.pitch) < 0.12;
     if (W.melee) {
       // 拿刀：衝過去砍
@@ -597,11 +638,13 @@ function think(p, r, now, dt, api) {
       // 距離越遠越不準；連射越久越散；在空中更不準（跟玩家一樣）
       let err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray) * (b.ground ? 1 : 2.2);
       if (scopeGun) err = c.error * (0.5 + dist / (c.rangeFalloff * 2.5)); // 開鏡比較準
+      // 邊走邊開槍比較不準（跟玩家一樣：看這把槍移動時的散布、走得多快）
+      err = Math.hypot(err, W.spread[1] * 0.3 * (b.moveK || 0));
       const jy = p.yaw + randn() * err;
       const jp = p.pitch + randn() * err;
       b.sprayN += 1;
       const cp = Math.cos(jp);
-      api.shoot(p, { d: [-Math.sin(jy) * cp, Math.sin(jp), -Math.cos(jy) * cp], o: [p.x, eyeY, p.z], s: (Math.random() * 1e9) | 0, a: scopeGun ? 1 : 0 });
+      api.shoot(p, { d: [-Math.sin(jy) * cp, Math.sin(jp), -Math.cos(jy) * cp], o: [p.x, eyeY, p.z], s: (Math.random() * 1e9) | 0, a: scopeGun ? 1 : 0, m: +(b.moveK || 0).toFixed(2) });
       b.burstLeft -= 1;
       if (W.bolt) p.adsSince = 0; // 拉栓：先退出狙擊鏡
       if (W.fireMs >= 300) {
@@ -622,9 +665,9 @@ function think(p, r, now, dt, api) {
       if (b.strafeDir && Math.random() < c.jumpy) wantJump = true; // 偶爾邊閃邊跳
     }
     // 霰彈槍：用尋路繞過障礙物貼近（拿手槍靠近的時候也一樣）
-    b.pushing = shotgunner && dist > 6 && !W.melee;
+    b.pushing = (shotgunner && dist > 6 && !W.melee) || !!b.peek;
     if (b.pushing) {
-      if (!b.path || now >= b.repathAt) { setGoal(p, b, nav, tgt.x, tgt.z); b.repathAt = now + 700; }
+      if (!b.peek && (!b.path || now >= b.repathAt)) { setGoal(p, b, nav, tgt.x, tgt.z); b.repathAt = now + 700; }
       const f = followPath(p, b);
       if (f) { mx += f.mx; mz += f.mz; if (f.jump) wantJump = true; } else { mx += dx / dist; mz += dz / dist; }
       b.strafeDir = 0;
@@ -693,7 +736,9 @@ function think(p, r, now, dt, api) {
   // ---- 移動與物理 ----
   if (wantJump) jump(b, now);
   const speed = (b.state === 'engage' && !W.melee ? c.speed * (b.pushing ? 0.9 : 0.6) : b.state === 'guard' ? 0 : c.speed) * W.speed * (p.adsSince ? W.ads.speed : 1);
+  const ox = p.x, oz = p.z;
   const blocked = move(p, b, nav, mx, mz, speed, dt);
+  b.moveK = Math.min(1, Math.hypot(p.x - ox, p.z - oz) / (6.5 * W.speed * dt)); // 這一格走多快（0 = 站著，1 = 全速）
   if (blocked && b.state !== 'engage') {
     // 被擋住：先試著跳，跳了還是過不去就換條路
     if (b.ground && now >= b.jumpCd) jump(b, now);
@@ -724,4 +769,4 @@ function record(p, now) {
 // 伺服器啟動時先把每張地圖的尋路網格算好
 function prepare() { for (const id of MAP.order) navFor(MAP.get(id)); }
 
-module.exports = { LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };
+module.exports = { move, followPath, jump, LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };

@@ -460,7 +460,8 @@ function handleShoot(p, msg) {
   // 狙擊槍沒開好鏡：子彈落在畫面中心的大圈圈裡（用同一個種子，跟射手畫面上看到的一樣）
   if (w.hipCone && (msg.h || !isScoped)) d = WPN.coneDirs(d, seed, 1, w.hipCone)[0];
   // 霰彈槍：一發好幾顆彈丸
-  const dirs = w.pellets ? WPN.coneDirs(d, seed, w.pellets, w.pelletSpread * (msg.a && isScoped ? w.ads.spread : 1)) : [d];
+  const mk = Math.max(0, Math.min(1, num(msg.m, 0))); // 移動中霰彈槍彈丸比較散
+  const dirs = w.pellets ? WPN.coneDirs(d, seed, w.pellets, w.pelletSpread * (msg.a && isScoped ? w.ads.spread : 1) * (1 + ((w.moveSpread || 1) - 1) * mk)) : [d];
 
   const rewind = p.bot ? 0 : Math.min(250, p.rtt / 2 + 100);
   const targets = [];
@@ -759,7 +760,7 @@ setInterval(() => {
 
     const list = [];
     for (const p of r.players.values()) {
-      list.push([p.id, +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(3), +p.pitch.toFixed(3), p.alive ? 1 : 0, WPN.LIST.indexOf(p.loadout[p.weapon]), p.adsSince ? 1 : 0]);
+      list.push([p.id, +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(3), +p.pitch.toFixed(3), p.alive ? 1 : 0, WPN.LIST.indexOf(p.loadout[p.weapon]), p.adsSince ? 1 : 0, p.hp, p.ammoBy[p.weapon] ?? -1]);
     }
     toRoom(r, { t: 'snap', p: list });
   }

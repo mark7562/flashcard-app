@@ -248,16 +248,14 @@ input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border: 0; bo
 
 /* ================= 遊戲中 HUD ================= */
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
-#crosshair {
-  position: absolute; left: 50%; top: 50%; width: 24px; height: 24px; transform: translate(-50%, -50%);
-  background:
-    linear-gradient(#fff, #fff) center top / 2px 8px no-repeat,
-    linear-gradient(#fff, #fff) center bottom / 2px 8px no-repeat,
-    linear-gradient(#fff, #fff) left center / 8px 2px no-repeat,
-    linear-gradient(#fff, #fff) right center / 8px 2px no-repeat,
-    radial-gradient(circle, #fff 1.5px, transparent 2px) center / 4px 4px no-repeat;
-  filter: drop-shadow(0 0 1px #000);
-}
+/* 準心：四條細線＋中間小點，半透明（不會擋住敵人）；--gap 會隨散布張開 */
+#crosshair { position: absolute; left: 50%; top: 50%; width: 0; height: 0; --gap: 5px; opacity: 0.6; }
+#crosshair i { position: absolute; background: #fff; box-shadow: 0 0 1px rgba(0, 0, 0, 0.9); }
+#crosshair .ch-t { width: 2px; height: 6px; left: -1px; bottom: var(--gap); }
+#crosshair .ch-b { width: 2px; height: 6px; left: -1px; top: var(--gap); }
+#crosshair .ch-l { width: 6px; height: 2px; top: -1px; right: var(--gap); }
+#crosshair .ch-r { width: 6px; height: 2px; top: -1px; left: var(--gap); }
+#crosshair .ch-d { width: 2px; height: 2px; left: -1px; top: -1px; border-radius: 50%; opacity: 0.8; }
 #hitmarker {
   position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; transform: translate(-50%, -50%) rotate(45deg);
   opacity: 0; transition: opacity 0.15s;
@@ -652,7 +650,7 @@ body.touch #wslots { display: none; }
 @media (max-height: 520px) { #resLeave { padding: 5px 16px; font-size: 14px; } }
 
 /* 觀戰時只顯示對方拿的武器名稱（看不到對方的子彈數） */
-body.spectating #ammonow, body.spectating #ammomax, body.spectating #reloadtext, body.spectating #wslots { display: none; }
+body.spectating #reloadtext, body.spectating #wslots { display: none; }
 /* 換套裝提示放左上角（不要擋到中間的倒數和回合訊息） */
 #kitChip { left: max(14px, env(safe-area-inset-left)); top: max(64px, calc(env(safe-area-inset-top) + 54px)); transform: none; }
 body.touch #kitChip { top: max(104px, calc(env(safe-area-inset-top) + 96px)); }

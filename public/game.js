@@ -240,9 +240,8 @@ function shoot(now) {
   me.firedSince = true;
   camera.getWorldDirection(camDir);
   const full = !!w.ads && me.adsOn && me.adsK >= 0.98; // 完全瞄好了
-  const moving = Math.hypot(me.vx, me.vz) > 1;
-  let spread = (me.onGround ? (moving ? w.spread[1] : w.spread[0]) : w.spread[2]) + me.recoil * 0.03;
-  if (w.ads) spread *= 1 + (w.ads.spread - 1) * me.adsK; // 瞄準比較準
+  const spread = currentSpread(w);
+  const mk = moveFactor(w);
   camDir.x += (Math.random() - 0.5) * spread;
   camDir.y += (Math.random() - 0.5) * spread;
   camDir.z += (Math.random() - 0.5) * spread;
@@ -251,12 +250,12 @@ function shoot(now) {
   const seed = (Math.random() * 2147483647) | 0;
   const hip = !!w.hipCone && !full; // 狙擊槍沒開鏡：子彈落在大圈圈裡
   const d = camDir.toArray().map((v) => +v.toFixed(4));
-  send({ t: 'shoot', d, o: origin.toArray().map((v) => +v.toFixed(3)), s: seed, h: hip ? 1 : 0, a: full ? 1 : 0 });
+  send({ t: 'shoot', d, o: origin.toArray().map((v) => +v.toFixed(3)), s: seed, h: hip ? 1 : 0, a: full ? 1 : 0, m: +mk.toFixed(2) });
 
   // 跟伺服器用同一個種子算出彈道
   let dirs = [d];
   if (hip) dirs = WPN.coneDirs(d, seed, 1, w.hipCone);
-  if (w.pellets) dirs = WPN.coneDirs(dirs[0], seed, w.pellets, w.pelletSpread * (full ? w.ads.spread : 1));
+  if (w.pellets) dirs = WPN.coneDirs(dirs[0], seed, w.pellets, w.pelletSpread * (full ? w.ads.spread : 1) * (1 + ((w.moveSpread || 1) - 1) * mk));
   views.fire(now);
   views.muzzleWorld(muzzle);
   for (const dd of dirs) {
@@ -275,6 +274,17 @@ function shoot(now) {
     if (wait) { const slot = me.weapon; setTimeout(() => { if (me.weapon === slot && me.alive) startReload(); }, wait); } else startReload();
   }
   updateAmmo();
+}
+// 走多快（0 = 站著，1 = 全速）：走得越快越不準
+function moveFactor(w) {
+  return Math.min(1, Math.max(0, (Math.hypot(me.vx, me.vz) - 0.5) / (SPEED * w.speed - 0.5)));
+}
+// 目前的散布：站著／移動（看速度）／空中，加上連射後座；瞄準時再乘上瞄準倍率
+function currentSpread(w) {
+  let sp = me.onGround ? w.spread[0] + (w.spread[1] - w.spread[0]) * moveFactor(w) : w.spread[2];
+  sp += me.recoil * 0.03;
+  if (w.ads) sp *= 1 + (w.ads.spread - 1) * me.adsK;
+  return sp;
 }
 function cooldown(w) { return me.lastHeavy && w.heavy ? w.heavy.fireMs : w.fireMs; }
 // 揮刀（輕擊）：三種揮法輪流，超過 1 秒沒揮就從第一招開始；命中由伺服器判定
@@ -418,11 +428,14 @@ function updateAmmo() {
   });
   updateSwapButton();
 }
-function updateHp() {
-  $('hptext').textContent = me.hp;
-  $('hpfill').style.width = me.hp + '%';
-  $('hpfill').classList.toggle('low', me.hp <= 30);
+function updateHp() { showHp(me.hp); }
+function showHp(hp) {
+  $('hptext').textContent = hp;
+  $('hpfill').style.width = hp + '%';
+  $('hpfill').classList.toggle('low', hp <= 30);
 }
+const specShown = { hp: null, ammo: null };
+let xhGap = 5;
 let hitTimer = 0;
 function showHit(head, kill) {
   const el = $('hitmarker');
@@ -774,7 +787,7 @@ function handle(m) {
     case 'snap': {
       if (!playing) break;
       const now = performance.now();
-      for (const [id, x, y, z, yaw, pitch, alive, wi, ads] of m.p) {
+      for (const [id, x, y, z, yaw, pitch, alive, wi, ads, hp, ammo] of m.p) {
         if (id === me.id) continue;
         const r = remotes.get(id) || (roster.has(id) ? makeRemote(id) : null);
         if (!r) continue;
@@ -782,6 +795,8 @@ function handle(m) {
         r.alive = !!alive;
         if (wi >= 0) { r.wid = WPN.LIST[wi]; r.fig.setWeapon(r.wid); }
         r.ads = !!ads;
+        r.hp = hp;
+        r.ammo = ammo;
         r.buf.push({ t: now, x, y, z, yaw, pitch });
         if (r.buf.length > 20) r.buf.shift();
       }
@@ -1542,9 +1557,28 @@ function frame() {
       showWeapon(spec[0], wid);
       $('wname').textContent = `${WEAPONS[wid].icon} ${WEAPONS[wid].name}`;
     }
+    // 觀戰：顯示被觀戰的人的血量和子彈
+    const sr = spec[1], sw = WEAPONS[wid];
+    if (sr.hp !== undefined && specShown.hp !== sr.hp) { specShown.hp = sr.hp; showHp(sr.hp); }
+    const at = sw.mag && sr.ammo >= 0 ? `${sr.ammo}|${sw.mag}` : '';
+    if (specShown.ammo !== at) {
+      specShown.ammo = at;
+      $('ammonow').textContent = sw.mag && sr.ammo >= 0 ? sr.ammo : '';
+      $('ammomax').textContent = sw.mag && sr.ammo >= 0 ? ` / ${sw.mag}` : '';
+      $('reloadtext').textContent = '';
+    }
   } else if (viewOwner !== me.id && playing) {
     showWeapon(me.id, me.kit[me.weapon]);
+    specShown.hp = specShown.ammo = null;
     updateAmmo();
+    updateHp();
+  }
+  // 準心：走路、跳、連射時往外張開（站著不動跟原本一樣）
+  if (playing && me.alive && !spec) {
+    const w = curW();
+    const px = w.melee ? 4 : (currentSpread(w) / 2) / Math.tan(camera.fov * Math.PI / 360) * (innerHeight / 2);
+    xhGap += (Math.max(4, Math.min(60, 3 + px)) - xhGap) * Math.min(1, dt * 18);
+    $('crosshair').style.setProperty('--gap', xhGap.toFixed(1) + 'px');
   }
   // 走出重生區：這條命就不能再換套裝
   if (me.alive && room?.phase === 'live' && !me.leftSpawn && !MAP.inSpawn(curMap, me.team, me.x, me.z)) me.leftSpawn = true;

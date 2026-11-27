@@ -1,7 +1,7 @@
 // 武器資料：伺服器（判定傷害、射速、彈匣）和瀏覽器（畫面、手感）共用同一份
 // slot：primary 主武器 / secondary 副武器 / melee 刀 / throw 投擲物
 // body / head：打身體 / 打頭的傷害   fireMs：兩發之間最少隔多久   speed：拿著時的移動速度倍率
-// spread：散布 [站著, 移動, 空中]   recoil：後座力   kick：每發槍口往上跳多少
+// spread：散布 [站著, 移動（跑滿速）, 空中]；走得越快越不準   moveSpread：霰彈槍移動時彈丸再散開幾倍   recoil：後座力   kick：每發槍口往上跳多少
 // reloadEmptyMs：子彈打光後換彈（要多拉一次槍機／放套筒，比較久）
 // falloff：[開始衰減的距離, 衰減到最低的距離, 最低傷害倍率]
 // ads：瞄準 { zoom 放大倍率, ms 開鏡時間, spread 散布倍率, speed 移動倍率, scope 狙擊鏡種類 }
@@ -15,14 +15,14 @@
     rifle: {
       id: 'rifle', slot: 'primary', name: '突擊步槍', short: '步槍', icon: '🔫',
       mag: 30, fireMs: 100, reloadMs: 1800, reloadEmptyMs: 2300, body: 25, head: 70, speed: 1,
-      spread: [0.004, 0.012, 0.03], recoil: 0.18, kick: 0.007, falloff: [22, 55, 0.8],
+      spread: [0.004, 0.045, 0.09], recoil: 0.18, kick: 0.007, falloff: [22, 55, 0.8],
       ads: { zoom: 1.4, ms: 200, spread: 0.35, speed: 0.75 },
       desc: '全自動，射速快、彈匣大，什麼距離都能打',
     },
     smg: {
       id: 'smg', slot: 'primary', name: '衝鋒槍', short: '衝鋒槍', icon: '🔫',
       mag: 30, fireMs: 70, reloadMs: 1600, reloadEmptyMs: 2000, body: 20, head: 50, speed: 1.08,
-      spread: [0.006, 0.014, 0.032], recoil: 0.13, kick: 0.0045, falloff: [10, 28, 0.7],
+      spread: [0.006, 0.03, 0.07], recoil: 0.13, kick: 0.0045, falloff: [10, 28, 0.7],
       ads: { zoom: 1.25, ms: 130, spread: 0.5, speed: 0.85 },
       desc: '射速最快、跑得快，近中距離很兇；遠距離傷害會掉',
     },
@@ -30,35 +30,35 @@
       id: 'shotgun', slot: 'primary', name: '泵動霰彈槍', short: '霰彈槍', icon: '🔫',
       mag: 6, fireMs: 900, reloadMs: 0, body: 16, head: 24, speed: 1,
       spread: [0, 0, 0], recoil: 0.5, kick: 0.03, falloff: [5, 18, 0.25],
-      pellets: 8, pelletSpread: 0.085, shells: { startMs: 500, eachMs: 480, pumpMs: 500 },
+      pellets: 8, pelletSpread: 0.085, moveSpread: 1.3, shells: { startMs: 500, eachMs: 480, pumpMs: 500 },
       ads: { zoom: 1.15, ms: 150, spread: 0.75, speed: 0.8 },
       desc: '一發 8 顆彈丸，近距離一發擊倒；每發要泵動上膛，一顆一顆裝彈（可以中途開槍）',
     },
     sniper: {
       id: 'sniper', slot: 'primary', name: '栓動狙擊槍', short: '栓狙', icon: '🎯',
       mag: 5, fireMs: 1250, reloadMs: 2800, reloadEmptyMs: 3300, body: 75, chest: 150, head: 200, speed: 0.9,
-      spread: [0.0004, 0.02, 0.06], recoil: 0.6, kick: 0.035, bolt: true, hipCone: 0.12,
+      spread: [0.0004, 0.06, 0.12], recoil: 0.6, kick: 0.035, bolt: true, hipCone: 0.12,
       ads: { zoom: 4, ms: 320, spread: 1, speed: 0.55, scope: 'bolt' },
       desc: '開鏡打胸口以上一發擊倒（腹部、腿兩發）；每發都要拉栓；不開鏡幾乎打不準',
     },
     dmr: {
-      id: 'dmr', slot: 'primary', name: '半自動狙擊槍', short: '連狙', icon: '🎯',
+      id: 'dmr', slot: 'primary', name: '半自動狙擊槍', short: '半自動狙', icon: '🎯',
       mag: 7, fireMs: 340, reloadMs: 2400, reloadEmptyMs: 2900, body: 55, head: 110, speed: 0.93,
-      spread: [0.0008, 0.018, 0.05], recoil: 0.4, kick: 0.022, hipCone: 0.1,
+      spread: [0.0008, 0.05, 0.1], recoil: 0.4, kick: 0.022, hipCone: 0.1,
       ads: { zoom: 2.5, ms: 250, spread: 1, speed: 0.6, scope: 'dmr' },
       desc: '可以連發的狙擊槍：身體兩發、爆頭一發擊倒；不開鏡幾乎打不準',
     },
     pistol: {
       id: 'pistol', slot: 'secondary', name: '手槍', short: '手槍', icon: '🔫',
       mag: 12, fireMs: 170, reloadMs: 1300, reloadEmptyMs: 1600, body: 22, head: 65, speed: 1.05,
-      spread: [0.003, 0.01, 0.025], recoil: 0.3, kick: 0.012, falloff: [12, 35, 0.75], lockBack: true,
+      spread: [0.003, 0.03, 0.07], recoil: 0.3, kick: 0.012, falloff: [12, 35, 0.75], lockBack: true,
       ads: { zoom: 1.2, ms: 120, spread: 0.45, speed: 0.85 },
       desc: '換彈快、拿著跑得比較快，主武器沒子彈時的救命槍',
     },
     deagle: {
-      id: 'deagle', slot: 'secondary', name: '大口徑手槍', short: '沙鷹', icon: '🔫',
+      id: 'deagle', slot: 'secondary', name: '大口徑手槍', short: '大口徑', icon: '🔫',
       mag: 7, fireMs: 380, reloadMs: 1700, reloadEmptyMs: 2000, body: 34, head: 100, speed: 1.05,
-      spread: [0.004, 0.016, 0.04], recoil: 0.75, kick: 0.035, falloff: [15, 40, 0.8], lockBack: true,
+      spread: [0.004, 0.05, 0.1], recoil: 0.75, kick: 0.035, falloff: [15, 40, 0.8], lockBack: true,
       ads: { zoom: 1.25, ms: 170, spread: 0.4, speed: 0.85 },
       desc: '身體三發、爆頭一發擊倒；只有 7 發、後座很大',
     },
