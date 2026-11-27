@@ -240,7 +240,7 @@
       </div>
     </section>
 
-    <div class="ver">v1.27</div>
+    <div class="ver">v1.28</div>
   </div>
 
   <!-- ===== 設定（標題畫面和遊戲中都能開） ===== -->
@@ -250,7 +250,32 @@
       <div id="setTabs" class="seg tabs">
         <button data-tab="setBasic" class="on">基本</button>
         <button data-tab="setAim">瞄準</button>
+        <button data-tab="setXh">準心</button>
         <button data-tab="setKeys">按鍵</button>
+      </div>
+      <div id="setXh" class="sets hidden">
+        <div class="xhprev"><div class="enemy"></div><div id="xhPreview" class="xhair"></div></div>
+        <div class="setrow">樣式
+          <div id="setXhType" class="seg">
+            <button data-v="cross">十字</button>
+            <button data-v="crossdot">十字＋點</button>
+            <button data-v="dot">點</button>
+            <button data-v="circle">圓圈</button>
+            <button data-v="t">T 字</button>
+          </div>
+        </div>
+        <div class="setrow">顏色<div id="setXhColor" class="xhcolors"></div></div>
+        <label>長度<input id="setXhLen" type="range" min="2" max="14" step="1" /><output id="setXhLenVal"></output></label>
+        <label>粗細<input id="setXhThick" type="range" min="1" max="4" step="0.5" /><output id="setXhThickVal"></output></label>
+        <label>中間空隙<input id="setXhGap" type="range" min="0" max="16" step="1" /><output id="setXhGapVal"></output></label>
+        <label>不透明度<input id="setXhAlpha" type="range" min="0.3" max="1" step="0.05" /><output id="setXhAlphaVal"></output></label>
+        <div class="setrow">走路、開槍時張開
+          <div id="setXhDyn" class="seg">
+            <button data-v="1">張開</button>
+            <button data-v="0">固定</button>
+          </div>
+        </div>
+        <p class="hint">「張開」會顯示目前子彈有多散；「固定」準心永遠一樣大，比較不會擋到敵人。</p>
       </div>
       <div id="setBasic" class="sets">
         <label>視野範圍<input id="setFov" type="range" min="60" max="100" step="1" /><output id="setFovVal"></output></label>
@@ -287,15 +312,15 @@
           </div>
         </div>
         <label>開鏡靈敏度<input id="setAdsSens" type="range" min="0.3" max="2" step="0.05" /><output id="setAdsSensVal"></output></label>
-        <p class="hint">瞄準輔助：準心在敵人身上時轉動會稍微變慢；開槍時會輕輕帶向敵人身體中心。往別的方向轉時不會干擾你。</p>
+        <p class="hint">瞄準輔助「弱」：準心越靠近敵人身體中心，轉動越慢，比較容易停在敵人身上。「強」：另外在開槍時，會很輕、很平滑地把準心帶向敵人身體中心。往別的方向轉時不會干擾你。</p>
       </div>
       <div id="setKeys" class="sets hidden">
         <div class="desktop-only keybinds" id="keyList"></div>
         <p class="hint desktop-only">點一下按鍵後，按下新的按鍵（或滑鼠按鍵）。按 Esc 取消。</p>
         <div class="touch-only touchkeys">
-          <label>按鈕大小<input id="setBtnScale" type="range" min="0.7" max="1.5" step="0.05" /><output id="setBtnScaleVal"></output></label>
+          <label>全部按鈕大小<input id="setBtnScale" type="range" min="0.7" max="1.5" step="0.05" /><output id="setBtnScaleVal"></output></label>
           <button id="editLayout" class="nbtn small">✥ 調整按鈕位置</button>
-          <p class="hint">可以把開槍、跳躍、換彈等按鈕拖到你順手的位置。</p>
+          <p class="hint">可以把開槍、跳躍、換彈等按鈕拖到你順手的位置；點一下某顆按鈕，可以單獨調它的大小和不透明度。</p>
         </div>
       </div>
       <div class="btnrow">
@@ -320,9 +345,15 @@
 
   <!-- ===== 手機按鈕位置編輯 ===== -->
   <div id="layoutBar" class="hidden">
-    <span>拖曳按鈕到你想要的位置</span>
+    <span>拖曳按鈕調整位置，點一下可以調大小</span>
     <button id="layoutReset" class="nbtn small">恢復預設</button>
     <button id="layoutDone" class="nbtn primary small">完成</button>
+  </div>
+  <div id="layoutPanel" class="hidden">
+    <b id="lpName"></b>
+    <label>大小<input id="lpSize" type="range" min="0.6" max="1.8" step="0.05" /><output id="lpSizeVal"></output></label>
+    <label>不透明度<input id="lpAlpha" type="range" min="0.2" max="1" step="0.05" /><output id="lpAlphaVal"></output></label>
+    <button id="lpReset" class="nbtn small">重設這顆</button>
   </div>
 
   <!-- ===== 暫停 ===== -->
@@ -342,10 +373,11 @@
   <!-- ===== 遊戲中 HUD ===== -->
   <div id="hud" class="hidden">
     <div id="scope" class="hidden"></div>
+    <div id="smokeOverlay"></div>
     <div id="flashOverlay"></div>
     <div id="bombInfo" class="hidden"></div>
     <div id="actBar" class="hidden"><div class="ab-label"></div><div class="ab-track"><i></i></div></div>
-    <div id="crosshair"><i class="ch-t"></i><i class="ch-b"></i><i class="ch-l"></i><i class="ch-r"></i><i class="ch-d"></i></div>
+    <div id="crosshair" class="xhair"></div>
     <div id="hitmarker"></div>
     <div id="damage"></div>
     <div id="killfeed"></div>

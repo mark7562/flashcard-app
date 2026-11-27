@@ -121,6 +121,26 @@ export function createEffects(scene, camera, sfx) {
   }
   const dist = (p) => camera.position.distanceTo(p);
 
+  const coreGeo = new THREE.SphereGeometry(1, 32, 20);
+  // 煙的核心用自訂著色：視線穿過煙越厚就越不透明（中間完全擋住、邊緣自然變淡，沒有硬邊）
+  // 站在煙裡面時看不到這顆球（只畫正面），改由畫面上的灰色遮罩處理（game.js）
+  function coreMaterial() {
+    return new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, fog: false,
+      uniforms: { camLocal: { value: new THREE.Vector3() }, opacity: { value: 0 }, color: { value: new THREE.Color(0xaeb4bd) } },
+      vertexShader: `varying vec3 vLocal;
+        void main() { vLocal = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `uniform vec3 camLocal; uniform float opacity; uniform vec3 color; varying vec3 vLocal;
+        void main() {
+          vec3 d = normalize(vLocal - camLocal);
+          float b = dot(camLocal, d), c = dot(camLocal, camLocal) - 1.0;
+          float h = sqrt(max(b * b - c, 0.0));
+          float thick = (-b + h) - max(-b - h, 0.0);
+          gl_FragColor = vec4(color, opacity * (1.0 - exp(-thick * 2.6)));
+        }`,
+    });
+  }
+  const tmpCam = new THREE.Vector3();
   function addSmoke(id, x, y, z, now) {
     const group = new THREE.Group();
     group.position.set(x, y, z);
@@ -133,8 +153,13 @@ export function createEffects(scene, camera, sfx) {
       group.add(s);
       puffs.push({ s, p, size: 2.6 + Math.random() * 1.8, spin: Math.random() * 0.4 - 0.2 });
     }
+    // 煙的核心：跟伺服器判定看不看得到的形狀一樣（中心在 y + 1、上下扁 1.6 倍）
+    // 雲朵貼圖之間會有縫，某些角度可以從縫裡看穿；核心是一顆半透明的橢圓球，保證中間一定擋得住（站在煙裡面也是一片灰）
+    const core = new THREE.Mesh(coreGeo, coreMaterial());
+    core.position.y = 1;
+    group.add(core);
     scene.add(group);
-    smokes.push({ id, x, y, z, at: now, gapUntil: 0, group, puffs });
+    smokes.push({ id, x, y, z, at: now, gapUntil: 0, group, puffs, core });
   }
   function addFire(id, x, y, z, now, life) {
     const group = new THREE.Group();
@@ -321,6 +346,12 @@ export function createEffects(scene, camera, sfx) {
         p.s.material.opacity = 0.9 * k;
         p.s.material.rotation += p.spin * dt;
       }
+      const cr = r * 0.92;
+      s.core.scale.set(cr, cr / 1.6, cr);
+      s.core.visible = r > 0.3;
+      s.core.material.uniforms.opacity.value = Math.min(1, k * 1.4);
+      s.core.updateMatrixWorld();
+      s.core.material.uniforms.camLocal.value.copy(s.core.worldToLocal(tmpCam.copy(camera.position)));
     }
     // 火焰
     for (let i = fires.length - 1; i >= 0; i--) {

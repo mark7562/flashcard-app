@@ -1,7 +1,7 @@
 // 方塊戰場 Block Arena — 瀏覽器端
 import * as THREE from 'three';
 import { makeFigure } from './figure.js';
-import { settings, onSettingsChange, setSetting, profile, IS_TOUCH, loadouts, saveLoadouts, activeKit } from './settings.js';
+import { settings, onSettingsChange, setSetting, profile, IS_TOUCH, loadouts, saveLoadouts, activeKit, drawCrosshair } from './settings.js';
 import { renderKitCards, initLoadout } from './loadout.js';
 import { initAudio, setVolumes, sfx, beep, uiStart, uiClick } from './audio.js';
 import { createViewModels } from './viewmodel.js';
@@ -1618,8 +1618,14 @@ function onTouchMove(e) {
       s.hover = el?.dataset.slot || null;
       for (const o of document.querySelectorAll('#swapPop .swopt')) o.classList.toggle('on', o === el);
     } else if (s.role === 'look' || s.role === 'fire' || s.role === 'knife' || s.role === 'aim' || s.role === 'nade') {
-      const k = LOOK_SENS * settings.touch * aaSlow * aimSens();
-      const dy = -(t.clientX - s.x) * k, dp = -(t.clientY - s.y) * k * settings.vert * (settings.invertY ? -1 : 1);
+      // 滑得快（大幅轉頭）時轉得比較少：慢慢微調跟原本一樣，快速大滑動最多只轉 55%
+      const ddx = t.clientX - s.x, ddy = t.clientY - s.y, tm = e.timeStamp || performance.now();
+      const ms = Math.max(4, Math.min(60, tm - (s.tm ?? tm - 16)));
+      s.tm = tm;
+      s.v = (s.v ?? 0) * 0.5 + (Math.hypot(ddx, ddy) / ms) * 0.5; // 像素／毫秒（平滑過）
+      const curve = 1 - 0.45 * Math.max(0, Math.min(1, (s.v - 0.45) / 1.8));
+      const k = LOOK_SENS * settings.touch * aaSlow * aimSens() * curve;
+      const dy = -ddx * k, dp = -ddy * k * settings.vert * (settings.invertY ? -1 : 1);
       me.yaw += dy; me.pitch += dp;
       userYaw += dy; userPitch += dp;
       lastLookAt = performance.now();
@@ -1692,16 +1698,16 @@ addEventListener('resize', () => {
 });
 
 // ---------- 瞄準輔助 ----------
-// 參考一般手機射擊遊戲的做法：
-// 1. 減速（slow）：準心「真的在敵人身上」時，轉動稍微變慢，比較容易停住
-// 2. 吸附（pull）：只有「開槍中」才會很輕地把準心往敵人身體中心帶（弧度/秒）
+// 1. 減速（slow）：準心越靠近敵人身體中心，轉動越慢（漸變，不會一碰到就突然變慢）
+// 2. 吸附（pull，只有「強」）：開槍中把準心往敵人身體中心「按比例」慢慢帶（每秒縮小 pull 比例的偏差），
+//    剛對上敵人時 0.2 秒內慢慢加強、離開時慢慢放掉，不會一頓一頓
 // 3. 玩家往反方向轉的那個軸，完全不吸附，不會跟玩家搶方向
-// size：觸發範圍是敵人身體大小的幾倍
+// size：觸發範圍是敵人身體大小的幾倍；maxRate：吸附最快每秒幾弧度
 const AIM_ASSIST = {
-  low: { slow: 0.85, pull: 0.12, size: 1.2 },
-  high: { slow: 0.7, pull: 0.25, size: 1.5 },
+  low: { slow: 0.82, pull: 0, size: 1.25, maxRate: 0 },
+  high: { slow: 0.72, pull: 2.2, size: 1.5, maxRate: 0.22 },
 };
-let aaSlow = 1, lastLookAt = 0;
+let aaSlow = 1, aaRamp = 0, lastLookAt = 0;
 let userYaw = 0, userPitch = 0; // 這一格玩家自己轉了多少（用來判斷方向）
 const aaEye = new THREE.Vector3(), aaDir = new THREE.Vector3(), aaTarget = new THREE.Vector3();
 function lineClear(from, to) {
@@ -1716,11 +1722,11 @@ function lineClear(from, to) {
   return true;
 }
 function updateAimAssist(dt, now) {
-  aaSlow = 1;
   const uy = userYaw, up = userPitch;
   userYaw = 0; userPitch = 0;
   const cfg = AIM_ASSIST[settings.aimAssist];
-  if (!cfg || !playing || !me.alive || frozen(now)) return;
+  const ease = (target, rate) => { aaSlow += (target - aaSlow) * Math.min(1, dt * rate); };
+  if (!cfg || !playing || !me.alive || frozen(now)) { aaSlow = 1; aaRamp = 0; return; }
   aaEye.set(me.x, me.y + EYE, me.z);
   let best = null;
   for (const r of remotes.values()) {
@@ -1735,26 +1741,31 @@ function updateAimAssist(dt, now) {
     const halfW = Math.atan2(0.45, horiz) * cfg.size;
     const halfH = Math.atan2(0.95, horiz) * cfg.size;
     if (Math.abs(dyaw) > halfW || Math.abs(dp) > halfH) continue; // 準心不在敵人身上
-    const score = Math.abs(dyaw) / halfW + Math.abs(dp) / halfH;
+    const score = Math.hypot(dyaw / halfW, dp / halfH); // 0 = 正中間，1 = 邊緣
     if (best && score >= best.score) continue;
     if (!lineClear(aaEye, aaTarget.set(p.x, p.y + 1.0, p.z))) continue;
     best = { dyaw, dp, score };
   }
-  if (!best) return;
-  aaSlow = cfg.slow;
-  if (!firing) return;
-  const k = cfg.pull * dt;
+  if (!best) { ease(1, 8); aaRamp = Math.max(0, aaRamp - dt * 4); return; }
+  // 減速：邊緣幾乎不減速，越靠中心越慢
+  const near = 1 - Math.min(1, best.score);
+  ease(1 - (1 - cfg.slow) * (0.35 + 0.65 * near), 10);
+  if (!cfg.pull || !firing) { aaRamp = Math.max(0, aaRamp - dt * 4); return; }
+  aaRamp = Math.min(1, aaRamp + dt * 5);
+  const f = (1 - Math.exp(-cfg.pull * dt)) * aaRamp, cap = cfg.maxRate * dt;
   // 玩家正往反方向轉，就不要拉回去
-  if (!(uy !== 0 && Math.sign(uy) !== Math.sign(best.dyaw))) me.yaw += Math.max(-k, Math.min(k, best.dyaw));
-  if (!(up !== 0 && Math.sign(up) !== Math.sign(best.dp))) me.pitch += Math.max(-k, Math.min(k, best.dp));
+  if (!(uy !== 0 && Math.sign(uy) !== Math.sign(best.dyaw))) me.yaw += Math.max(-cap, Math.min(cap, best.dyaw * f));
+  if (!(up !== 0 && Math.sign(up) !== Math.sign(best.dp))) me.pitch += Math.max(-cap, Math.min(cap, best.dp * f));
 }
 
 // ---------- 手機按鈕位置 / 大小 ----------
+const BTN_NAMES = { btnFire: '開槍', btnJump: '跳躍', btnReload: '換彈', btnScore: '計分板', btnMenu: '選單', btnSwap: '切換武器', btnAim: '瞄準', btnAct: '埋彈／拆彈' };
 function applyLayout() {
-  const sc = settings.btnScale;
   for (const id of TOUCH_BTNS) {
     const el = $(id);
     const pos = settings.layout[id];
+    const sc = settings.btnScale * (settings.btnSize[id] ?? 1); // 全部一起調 × 這顆自己的大小
+    el.style.opacity = settings.btnAlpha[id] ?? '';
     if (pos) {
       Object.assign(el.style, { left: pos[0] + '%', top: pos[1] + '%', right: 'auto', bottom: 'auto', transform: `translate(-50%, -50%) scale(${sc})` });
     } else {
@@ -1762,17 +1773,52 @@ function applyLayout() {
     }
   }
 }
-let layoutDone = null, dragBtn = null;
+let layoutDone = null, dragBtn = null, selBtn = null;
+// 編輯時點選一顆按鈕：下面出現它自己的大小、透明度滑桿
+function selectBtn(id) {
+  selBtn = id;
+  for (const b of TOUCH_BTNS) $(b).classList.toggle('sel', b === id);
+  $('layoutPanel').classList.toggle('hidden', !id);
+  if (!id) return;
+  $('lpName').textContent = BTN_NAMES[id] || id;
+  const size = settings.btnSize[id] ?? 1, alpha = settings.btnAlpha[id] ?? 1;
+  $('lpSize').value = size; $('lpSizeVal').textContent = Math.round(size * 100) + '%';
+  $('lpAlpha').value = alpha; $('lpAlphaVal').textContent = Math.round(alpha * 100) + '%';
+}
+$('lpSize').addEventListener('input', () => {
+  if (!selBtn) return;
+  const v = Number($('lpSize').value);
+  settings.btnSize = { ...settings.btnSize, [selBtn]: v };
+  $('lpSizeVal').textContent = Math.round(v * 100) + '%';
+  applyLayout();
+});
+$('lpAlpha').addEventListener('input', () => {
+  if (!selBtn) return;
+  const v = Number($('lpAlpha').value);
+  settings.btnAlpha = { ...settings.btnAlpha, [selBtn]: v };
+  $('lpAlphaVal').textContent = Math.round(v * 100) + '%';
+  applyLayout();
+});
+$('lpReset').addEventListener('click', () => {
+  if (!selBtn) return;
+  const { [selBtn]: _a, ...size } = settings.btnSize, { [selBtn]: _b, ...alpha } = settings.btnAlpha, { [selBtn]: _c, ...layout } = settings.layout;
+  Object.assign(settings, { btnSize: size, btnAlpha: alpha, layout });
+  applyLayout(); selectBtn(selBtn); uiClick();
+});
 function startLayoutEdit(done) {
   layoutDone = done;
   document.body.classList.add('editing');
   $('touch').classList.remove('hidden');
   $('layoutBar').classList.remove('hidden');
+  selectBtn(null);
 }
 function finishLayoutEdit() {
   document.body.classList.remove('editing');
   $('layoutBar').classList.add('hidden');
+  selectBtn(null);
   if (!playing) $('touch').classList.add('hidden');
+  setSetting('btnSize', { ...settings.btnSize });
+  setSetting('btnAlpha', { ...settings.btnAlpha });
   setSetting('layout', { ...settings.layout });
   uiClick();
   const fn = layoutDone;
@@ -1785,6 +1831,7 @@ for (const id of TOUCH_BTNS) {
     if (!document.body.classList.contains('editing')) return;
     e.preventDefault();
     dragBtn = el;
+    selectBtn(id);
     el.setPointerCapture(e.pointerId);
   });
   el.addEventListener('pointermove', (e) => {
@@ -1797,7 +1844,7 @@ for (const id of TOUCH_BTNS) {
   el.addEventListener('pointerup', () => { dragBtn = null; });
 }
 $('layoutDone').addEventListener('click', finishLayoutEdit);
-$('layoutReset').addEventListener('click', () => { setSetting('layout', {}); uiClick(); });
+$('layoutReset').addEventListener('click', () => { setSetting('layout', {}); setSetting('btnSize', {}); setSetting('btnAlpha', {}); applyLayout(); selectBtn(selBtn); uiClick(); });
 
 // ---------- 換套裝（死掉、準備時間、剛復活 10 秒內還沒開火） ----------
 let kitOpen = false, lastCount = 0, kitShownSec = -1;
@@ -2018,6 +2065,17 @@ function frame() {
     // 閃光彈：白畫面，最後一秒慢慢退掉
     const fl = now < me.flashUntil ? Math.min(1, (me.flashUntil - now) / 900) : 0;
     $('flashOverlay').style.opacity = fl.toFixed(3);
+    document.body.classList.toggle('flashed', fl > 0.15); // 白畫面上按鈕改成深色，才看得到
+    // 站在煙裡面：整個畫面一片灰（越靠近煙的中心越濃），跟伺服器「看不看得到」的範圍一致
+    let inSmoke = 0;
+    const cp = camera.position;
+    for (const sm of effects.smokeList()) {
+      const rr = NADE.smokeRadius(sm, now);
+      if (rr <= 0.5) continue;
+      const d = Math.hypot(cp.x - sm.x, (cp.y - sm.y - 1) * 1.6, cp.z - sm.z) / (rr * 0.92);
+      inSmoke = Math.max(inSmoke, Math.min(1, (1.08 - d) / 0.3));
+    }
+    $('smokeOverlay').style.opacity = (Math.max(0, inSmoke) * 0.97).toFixed(3);
     updateCorpses(now);
     updateMatchbar(now);
     if (!$('results').classList.contains('hidden')) {
@@ -2072,7 +2130,8 @@ function frame() {
   const speed = Math.hypot(me.vx, me.vz);
   if (me.onGround && speed > 0.5) bob += dt * speed * 1.6;
   if (playing && !(isRounds() && !me.alive)) {
-    camera.position.set(me.x, me.y + EYE + (me.alive ? Math.sin(bob * 2) * 0.03 : -1.2), me.z);
+    // 走路時鏡頭上下晃；瞄準時晃動減少（開鏡放大後晃動會被放大）
+    camera.position.set(me.x, me.y + EYE + (me.alive ? Math.sin(bob * 2) * 0.03 * (1 - 0.85 * (me.adsK || 0)) : -1.2), me.z);
     camera.rotation.set(me.pitch, me.yaw, 0);
     // 爆炸震動、震撼彈搖晃
     // 有人跟你站在同一個位置（一起重生、從你身上穿過去）：他的頭會塞滿整個鏡頭（一大片青色面罩），先藏起來
@@ -2134,7 +2193,7 @@ function frame() {
     const w = curW();
     const px = !w.spread ? 4 : (currentSpread(w) / 2) / Math.tan(camera.fov * Math.PI / 360) * (innerHeight / 2);
     xhGap += (Math.max(4, Math.min(60, 3 + px)) - xhGap) * Math.min(1, dt * 18);
-    $('crosshair').style.setProperty('--gap', xhGap.toFixed(1) + 'px');
+    drawCrosshair($('crosshair'), settings.xh, xhGap - 4); // 站著不動時不張開，散布越大張越開
   }
   // 走出重生區：這條命就不能再換套裝
   if (me.alive && room?.phase === 'live' && !me.leftSpawn && !MAP.inSpawn(curMap, mySide(), me.x, me.z)) me.leftSpawn = true;
@@ -2154,7 +2213,7 @@ function frame() {
   if ($('scope').className !== scopeCls) $('scope').className = scopeCls;
   if (scopeOn && !spec) {
     // 狙擊鏡會微微晃（栓狙晃比較多，移動時晃更多）
-    const amp = (zw.ads.scope === 'bolt' ? 0.0032 : 0.002) * (Math.hypot(me.vx, me.vz) > 1 ? 3 : 1);
+    const amp = (zw.ads.scope === 'bolt' ? 0.0032 : 0.002) * (1 + 0.6 * Math.min(1, Math.hypot(me.vx, me.vz) / 4)); // 走路時多晃一點（原本 3 倍太誇張）
     camera.rotation.x += Math.sin(now * 0.0013) * amp + Math.sin(now * 0.0031) * amp * 0.3;
     camera.rotation.y += Math.sin(now * 0.0009 + 1) * amp * 1.3;
   }

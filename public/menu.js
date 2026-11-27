@@ -1,7 +1,7 @@
 // 標題畫面的選單：切換頁面、自訂角色、設定、線上人數
 import * as THREE from 'three';
 import { makeFigure, hex } from './figure.js';
-import { settings, setSetting, resetSettings, profile, saveProfile, IS_TOUCH, DEFAULT_KEYS } from './settings.js';
+import { settings, setSetting, resetSettings, profile, saveProfile, IS_TOUCH, DEFAULT_KEYS, drawCrosshair, XH_COLORS } from './settings.js';
 import { initAudio, uiHover, uiClick, uiBack, startMusic, stopMusic } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -121,6 +121,23 @@ const SLIDERS = [
   ['setAdsSens', 'adsSens', (v) => v.toFixed(2) + 'x'],
 ];
 
+// 準心設定（存在 settings.xh 裡）
+const XH_SLIDERS = [
+  ['setXhLen', 'len', (v) => v + 'px'],
+  ['setXhThick', 'thick', (v) => v + 'px'],
+  ['setXhGap', 'gap', (v) => v + 'px'],
+  ['setXhAlpha', 'alpha', (v) => Math.round(v * 100) + '%'],
+];
+function setXh(key, v) { setSetting('xh', { ...settings.xh, [key]: v }); syncXh(); }
+function syncXh() {
+  const xh = settings.xh;
+  for (const [id, key, fmt] of XH_SLIDERS) { $(id).value = xh[key]; $(id + 'Val').textContent = fmt(xh[key]); }
+  for (const b of document.querySelectorAll('#setXhType button')) b.classList.toggle('on', b.dataset.v === xh.type);
+  for (const b of document.querySelectorAll('#setXhDyn button')) b.classList.toggle('on', b.dataset.v === (xh.dyn ? '1' : '0'));
+  for (const b of document.querySelectorAll('#setXhColor button')) b.classList.toggle('on', b.dataset.c === xh.color);
+  drawCrosshair($('xhPreview'), xh);
+}
+
 // ---------- 按鍵設定（電腦） ----------
 const ACTIONS = [
   ['forward', '前進'], ['back', '後退'], ['left', '左移'], ['right', '右移'],
@@ -201,6 +218,7 @@ function syncSettingsUI() {
   for (const b of document.querySelectorAll('#setAssist button')) b.classList.toggle('on', b.dataset.v === settings.aimAssist);
   for (const b of document.querySelectorAll('#setAdsMode button')) b.classList.toggle('on', b.dataset.v === settings.adsMode);
   renderKeys();
+  syncXh();
   $('muteBtn').classList.toggle('off', !settings.musicOn);
 }
 let settingsReturn = null;
@@ -303,6 +321,15 @@ export function initMenu(handlers) {
       setSetting(key, v);
       $(id + 'Val').textContent = fmt(v);
     });
+  }
+  for (const [id, key, fmt] of XH_SLIDERS) $(id).addEventListener('input', () => setXh(key, Number($(id).value)));
+  for (const b of document.querySelectorAll('#setXhType button')) b.addEventListener('click', () => { uiClick(); setXh('type', b.dataset.v); });
+  for (const b of document.querySelectorAll('#setXhDyn button')) b.addEventListener('click', () => { uiClick(); setXh('dyn', b.dataset.v === '1'); });
+  for (const [c, name] of XH_COLORS) {
+    const b = document.createElement('button');
+    b.dataset.c = c; b.title = name; b.style.background = c;
+    b.addEventListener('click', () => { uiClick(); setXh('color', c); });
+    $('setXhColor').append(b);
   }
   for (const b of document.querySelectorAll('#setQuality button')) {
     b.addEventListener('click', () => { setSetting('quality', b.dataset.q); syncSettingsUI(); uiClick(); });

@@ -1,7 +1,7 @@
 // 機器人：尋路（A*）、視線、瞄準、行為狀態
 // 機器人跟真人用同一套規則：同樣的血量、射速、彈匣、命中判定，也看不到牆後面的人
 const MAP = require('./public/map.js');
-const { segmentBlocked } = require('./geom.js');
+const { segmentBlocked, rayBox } = require('./geom.js');
 const WPN = require('./public/weapons.js');
 const NADE = require('./public/nades.js');
 const { WEAPONS } = WPN;
@@ -18,17 +18,17 @@ const MEMORY_MS = 800; // 敵人躲起來多久之內還算「在交戰」
 
 const LEVELS = {
   easy: {
-    label: '新手', react: [1000, 1500], reactPerM: 18, turn: 2.2, error: 0.11, track: 0.5, head: 0.01,
+    label: '新手', react: [950, 1400], reactPerM: 16, reactPerRad: 520, turn: 2.4, error: 0.11, track: 0.5, head: 0.01,
     burst: [2, 3], pause: [650, 1100], spray: 0.25, strafe: 0, retreatHp: 0, hear: 0, flank: false,
     fov: 0.9, range: 22, rangeFalloff: 15, speed: 4.8, spot: 0.15, guardMs: [2000, 4000], jumpy: 0, knife: 0, pistol: false,
   },
   normal: {
-    label: '普通', react: [600, 900], reactPerM: 14, turn: 4, error: 0.06, track: 0.9, head: 0.08,
+    label: '普通', react: [520, 800], reactPerM: 12, reactPerRad: 320, turn: 3.8, error: 0.06, track: 0.9, head: 0.08,
     burst: [3, 5], pause: [380, 650], spray: 0.18, strafe: 0.4, retreatHp: 30, hear: 24, flank: false,
     fov: 1.2, range: 30, rangeFalloff: 20, speed: 5.8, spot: 0.45, guardMs: [3000, 6000], jumpy: 0.1, knife: 0.25, pistol: true,
   },
   hard: {
-    label: '老手', react: [320, 480], reactPerM: 8, turn: 7, error: 0.032, track: 2, head: 0.25,
+    label: '老手', react: [270, 420], reactPerM: 7, reactPerRad: 200, turn: 5.5, error: 0.032, track: 2, head: 0.25,
     burst: [4, 7], pause: [240, 420], spray: 0.12, strafe: 0.9, retreatHp: 35, hear: 40, flank: true,
     fov: 1.4, range: 42, rangeFalloff: 28, speed: 6.3, spot: 0.6, guardMs: [3500, 7000], jumpy: 0.25, knife: 0.5, pistol: true,
   },
@@ -69,6 +69,45 @@ function yawTo(dx, dz) { return Math.atan2(-dx, -dz); } // 跟遊戲鏡頭同一
 function approach(cur, target, maxStep) {
   const d = angleDiff(target, cur);
   return Math.abs(d) <= maxStep ? target : cur + Math.sign(d) * maxStep;
+}
+// 像人一樣轉頭：離目標越遠轉越快（最快 maxRate），快對準時放慢，最後一點點慢慢修正
+function humanTurn(cur, target, maxRate, dt) {
+  const d = angleDiff(target, cur);
+  const rate = Math.min(maxRate, Math.max(maxRate * 0.18, Math.abs(d) * 7));
+  return Math.abs(d) <= rate * dt ? target : cur + Math.sign(d) * rate * dt;
+}
+// 往某個方向看出去，多遠會撞到東西（找「視線長、敵人可能出現」的方向，不要盯著牆）
+function sightDist(boxes, x, y, z, yaw, max = 40) {
+  const d = [-Math.sin(yaw), 0, -Math.cos(yaw)], o = [x, y, z];
+  let best = max;
+  for (const b of boxes) { const t = rayBox(o, d, b.min, b.max); if (t < best) best = t; }
+  return best;
+}
+// 選幾個值得盯的方向：以 baseYaw 為中心 ±spread 內，視線最長的 2~3 個方向
+function pickLooks(p, boxes, baseYaw, spread) {
+  const list = [];
+  for (let i = 0; i <= 12; i++) {
+    const yaw = baseYaw + (i / 12 * 2 - 1) * spread;
+    list.push({ yaw, d: sightDist(boxes, p.x, p.y + 1.6, p.z, yaw) });
+  }
+  // 視線至少 6 公尺；最長的優先，彼此至少隔 0.35 弧度
+  list.sort((a, c) => c.d - a.d);
+  const out = [];
+  for (const l of list) {
+    if (l.d < 6 && out.length) break;
+    if (out.every((o) => Math.abs(angleDiff(o, l.yaw)) > 0.35)) out.push(l.yaw);
+    if (out.length >= 3) break;
+  }
+  return out.length ? out : [baseYaw];
+}
+// 守點時的視線：在幾個方向之間「一眼一眼」地看（停一下、換下一個），偶爾小幅修正，不是一直左右擺
+function glance(b, now, looks) {
+  if (!b.glanceAt || now >= b.glanceAt || b.glanceIdx >= looks.length) {
+    b.glanceIdx = looks.length > 1 ? (b.glanceIdx + 1 + Math.floor(Math.random() * (looks.length - 1))) % looks.length || 0 : 0;
+    b.glanceAt = now + rand(1300, 3200);
+    b.glanceJit = randn() * 0.06;
+  }
+  return looks[b.glanceIdx] + b.glanceJit;
 }
 
 // ---------- 尋路網格（有高度：樓梯、平台、跳上箱子、跳下來） ----------
@@ -611,8 +650,15 @@ function think(p, r, now, dt, api) {
       b.target = seen.id;
       // 本來就瞄著那個方向（守點預瞄）：反應快一倍
       const preAim = Math.abs(angleDiff(yawTo(seen.x - p.x, seen.z - p.z), p.yaw)) < 0.35 && (b.moveK || 0) < 0.2 ? 0.5 : 1;
-      b.reactAt = now + (again ? rand(c.react[0], c.react[1]) * 0.25 : (rand(c.react[0], c.react[1]) + bestD * c.reactPerM) * preAim);
-      if (!again) b.aimOff = [randn() * c.error * 3.5, randn() * c.error * 2];
+      // 敵人在越後面（要轉越多），反應越慢；背後的人不會被瞬間轉身秒掉
+      const turnNeed = Math.abs(angleDiff(yawTo(seen.x - p.x, seen.z - p.z), p.yaw));
+      b.reactAt = now + (again ? rand(c.react[0], c.react[1]) * 0.25 : (rand(c.react[0], c.react[1]) + bestD * c.reactPerM) * preAim + turnNeed * (c.reactPerRad || 0));
+      if (!again) {
+        // 轉身甩過去會稍微甩過頭（往轉的方向偏一點），再慢慢修回來
+        const dir = Math.sign(angleDiff(yawTo(seen.x - p.x, seen.z - p.z), p.yaw));
+        b.aimOff = [randn() * c.error * 3.5 + dir * Math.min(0.16, turnNeed * 0.09), randn() * c.error * 2];
+      }
+      b.acqAt = b.reactAt;
       b.sprayN = 0;
       b.head = Math.random() < c.head;
       b.burstLeft = randInt(c.burst[0], c.burst[1]);
@@ -730,6 +776,7 @@ function think(p, r, now, dt, api) {
       // 邊走邊開槍比較不準（跟玩家一樣：看這把槍移動時的散布、走得多快）
       err = Math.hypot(err, W.spread[1] * 0.3 * (b.moveK || 0)) * (1 + 0.8 * (b.moveK || 0));
       if ((b.stunUntil || 0) > now) err *= 2.5; // 被震撼彈震到：很難瞄
+      err *= 1 + 0.7 * Math.max(0, 1 - (now - (b.acqAt || 0)) / 450); // 剛轉過來的前幾發還沒穩
       if (W.settle && (b.moveK || 0) < 0.2) err *= Math.max(W.settle.min, 1 - W.settle.per * b.sprayN); // 輕機槍站穩越打越準
       const jy = p.yaw + randn() * err;
       const jp = p.pitch + randn() * err;
@@ -816,7 +863,13 @@ function think(p, r, now, dt, api) {
         b.objMove = null;
       } else {
         if (p.actKind) api.act(p, { on: false });
-        const dGoal = Math.hypot(o.goal[0] - p.x, o.goal[1] - p.z);
+        let dGoal = Math.hypot(o.goal[0] - p.x, o.goal[1] - p.z);
+        // 目標點剛好在箱子邊緣之類走不到的地方：一直貼著東西左右滑。1 秒沒有更靠近就當作到了
+        const gk = o.goal[0] + ',' + o.goal[1];
+        if (b.stallKey !== gk) { b.stallKey = gk; b.stallBest = dGoal; b.stallAt = now; b.stallDone = false; }
+        else if (dGoal < b.stallBest - 0.3) { b.stallBest = dGoal; b.stallAt = now; }
+        else if (dGoal < 4 && now - b.stallAt > 1000) b.stallDone = true;
+        if (b.stallDone) dGoal = 0;
         if (dGoal > 1.2) {
           if (!b.goal || Math.hypot(b.goal[0] - o.goal[0], b.goal[1] - o.goal[1]) > 1 || !b.path || b.pathIdx >= b.path.length) setGoal(p, b, nav, o.goal[0], o.goal[1]);
           b.objMove = followPath(p, b);
@@ -827,9 +880,11 @@ function think(p, r, now, dt, api) {
           if (b.objMove.jump) wantJump = true;
           lookYaw = dGoal < 8 || hurt ? yawTo(o.look[0] - p.x, o.look[1] - p.z) : yawTo(mx, mz);
         } else {
-          // 到位：看著敵人會來的方向左右掃
-          b.lookSweep += dt * 0.45;
-          lookYaw = yawTo(o.look[0] - p.x, o.look[1] - p.z) + Math.sin(b.lookSweep) * 0.28;
+          // 到位：盯著敵人會來的方向（視線長的那幾個角度輪流看），不要一直左右擺
+          const base = yawTo(o.look[0] - p.x, o.look[1] - p.z);
+          const key = `${o.look[0]},${o.look[1]},${Math.round(p.x)},${Math.round(p.z)}`;
+          if (b.looksKey !== key) { b.looksKey = key; b.looks = pickLooks(p, map.boxes, base, 0.45); b.glanceAt = 0; }
+          lookYaw = glance(b, now, b.looks);
           if (b.alert && now - b.heardAt < 4000) lookYaw = yawTo(b.alert[0] - p.x, b.alert[1] - p.z);
           if (W.mag && !p.reloadUntil && ammo < W.mag) api.reload(p);
         }
@@ -837,8 +892,8 @@ function think(p, r, now, dt, api) {
     } else if (b.state === 'guard') {
       // 守在戰術位置：朝敵方那邊左右掃視
       const enemyDir = p.team === 0 ? 1 : -1;
-      b.lookSweep += dt * 0.8;
-      lookYaw = yawTo(enemyDir, 0) + Math.sin(b.lookSweep) * 1.1;
+      if (!b.looks || b.looksKey !== 'guard') { b.looksKey = 'guard'; b.looks = pickLooks(p, map.boxes, yawTo(enemyDir, 0), 1.3); b.glanceAt = 0; }
+      lookYaw = glance(b, now, b.looks);
       if (b.alert && now - b.heardAt < 4000) lookYaw = yawTo(b.alert[0] - p.x, b.alert[1] - p.z);
       if (now >= b.guardUntil) { b.state = 'patrol'; b.guard = null; nextPatrol(p, b, nav, r, now); }
       if (W.mag && !p.reloadUntil && ammo < W.mag && now >= b.guardUntil - 1500) api.reload(p);
@@ -846,6 +901,7 @@ function think(p, r, now, dt, api) {
       // 到達目的地
       if (b.guard && Math.hypot(b.guard[0] - p.x, b.guard[1] - p.z) < 1.5) {
         b.state = 'guard';
+        b.looksKey = null;
         b.guardUntil = now + rand(c.guardMs[0], c.guardMs[1]);
         b.lookSweep = Math.random() * 6;
       } else {
@@ -880,7 +936,8 @@ function think(p, r, now, dt, api) {
   }
 
   const stunK = (b.stunUntil || 0) > now ? 0.4 : 1; // 震撼彈：轉身、移動都變慢
-  p.yaw = approach(p.yaw, lookYaw, c.turn * stunK * dt);
+  // 交戰時轉身最快；平常走路、掃視時轉得比較慢（像人一樣）
+  p.yaw = humanTurn(p.yaw, lookYaw, c.turn * stunK * (b.state === 'engage' ? 1 : 0.55), dt);
   p.yaw = Math.atan2(Math.sin(p.yaw), Math.cos(p.yaw));
   p.pitch += Math.max(-c.turn * stunK * dt, Math.min(c.turn * stunK * dt, lookPitch - p.pitch));
 
@@ -996,13 +1053,9 @@ function bombObjective(p, b, r, nav, now) {
       const list = map.rally[bomb.site];
       b.rallyPt = list[Math.floor(Math.random() * list.length)];
     }
-    const atts = [...r.players.values()].filter((q) => q.alive && q.team !== p.team).length;
-    // 來不及拆了（拆彈要 6 秒）：逃命
-    const home = map.teamSpawns[0][p.id % map.teamSpawns[0].length]; // [x, y, z]
-    const homePt = [home[0], home[2]];
-    if (left < 6500 && !p.actKind) return { goal: homePt, look: [s.c[0], s.c[1]] };
-    // 人數差太多（少 2 個以上）就不回防了：保命，讓炸彈爆
-    if (defs.length + 1 < atts && left > 5000) return { goal: homePt, look: [s.c[0], s.c[1]] };
+    // 不管人數多少都回防（沒有經濟系統，保命沒有好處；跑回家掛機看起來也很怪）
+    // 只有真的來不及拆（拆彈要 6 秒）才退到集合點（包點外面），不會跑回出生點
+    if (left < 6500 && !p.actKind && Math.hypot(bomb.x - p.x, bomb.z - p.z) > 1.3) return { goal: b.rallyPt, look: [s.c[0], s.c[1]] };
     const ready = defs.filter((q) => Math.hypot(q.x - b.rallyPt[0], q.z - b.rallyPt[1]) < 8).length;
     const wait = left > 22000 && now - (r.botPlan.plantedAt || (r.botPlan.plantedAt = now)) < 8000 && ready < Math.min(2, defs.length);
     if (wait) return { goal: b.rallyPt, look: [s.c[0], s.c[1]] };
