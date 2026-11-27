@@ -336,7 +336,17 @@ export function createWorld(scene) {
       floorMat = new THREE.MeshStandardMaterial({ map: dayFloor, roughness: 1 });
       w.swapFloor = (night) => { floorMat.map = night ? nightFloor : dayFloor; floorMat.needsUpdate = true; };
     }
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(size, size), floorMat);
+    let floorGeo = new THREE.PlaneGeometry(size, size), fx = 0, fz = 0;
+    if (map.floorRect && floorMat.map) {
+      // 只鋪在一個範圍裡（船：船外面是海）
+      const [x1, z1, x2, z2] = map.floorRect, H2 = map.half * 2, t = floorMat.map;
+      floorGeo = new THREE.PlaneGeometry(x2 - x1, z2 - z1);
+      fx = (x1 + x2) / 2; fz = (z1 + z2) / 2;
+      t.repeat.set((x2 - x1) / H2, (z2 - z1) / H2);
+      t.offset.set((x1 + map.half) / H2, 1 - (z2 + map.half) / H2);
+    }
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.position.set(fx, 0, fz);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     group.add(floor);
@@ -375,6 +385,18 @@ export function createWorld(scene) {
       group.add(sea);
       group.add(skyline(map.half));
     }
+    if (map.theme === 'harbor') {
+      // 海上的黃昏：天空比碼頭亮，四周都是海
+      group.add(skyDome([[-1, 0x2a2440], [-0.02, 0x4a3050], [0.0, 0xffb07a], [0.1, 0xf08a7a], [0.3, 0x8a5a9a], [1, 0x2a2a66]]));
+      const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(22, 32), new THREE.MeshBasicMaterial({ color: 0xffd9a8, fog: false, transparent: true, opacity: 0.95 }));
+      sunDisc.position.set(-320, 40, 120);
+      sunDisc.lookAt(0, 0, 0);
+      group.add(sunDisc);
+      const sea = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: 0x2a5578, roughness: 0.45, metalness: 0.5 }));
+      sea.rotation.x = -Math.PI / 2; sea.position.y = -0.03;
+      group.add(sea);
+      group.add(skyline(map.half + 60));
+    }
     built[map.id] = w;
     return w;
   }
@@ -391,7 +413,15 @@ export function createWorld(scene) {
     for (const l of neonLights) l.intensity = 0;
     edgeMat.blending = THREE.NormalBlending;
 
-    if (map.theme === 'dusk') {
+    if (map.theme === 'harbor') {
+      scene.background.set(0x4a3050);
+      scene.fog.color.set(0x9a6a86);
+      scene.fog.near = 70; scene.fog.far = 260;
+      hemi.color.set(0xffe2d0); hemi.groundColor.set(0x7a6a88); hemi.intensity = 1.75;
+      sun.color.set(0xffc090); sun.intensity = 2.4;
+      sun.position.set(-45, 32, 18);
+      edgeMat.color.set(0x000000); edgeMat.opacity = 0.35;
+    } else if (map.theme === 'dusk') {
       scene.background.set(0x2a1838);
       scene.fog.color.set(0x6b3c6e);
       scene.fog.near = 45; scene.fog.far = 170;

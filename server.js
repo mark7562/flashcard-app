@@ -356,7 +356,7 @@ function dropBomb(r, p) {
   if (!b || b.state !== 'carried' || b.carrier !== p.id) return;
   b.state = 'dropped';
   b.carrier = 0;
-  b.x = p.x; b.z = p.z; b.y = MAP.surfaceAt(mapOf(r).boxes, p.x, p.z);
+  b.x = p.x; b.z = p.z; b.y = MAP.floorAt(mapOf(r).boxes, p.x, p.z, p.y);
   if (b.y > p.y + 0.3) b.y = p.y;
   sendBomb(r);
 }
@@ -682,7 +682,7 @@ function detonate(r, n, now) {
     for (const f of r.fires) if (Math.hypot(f.x - x, f.z - z) < cfg.radius + NADE.NADES.molotov.radius * 0.6) { f.until = now; ev.out = (ev.out || []).concat(f.id); }
   } else if (n.kind === 'molotov') {
     let fy = y;
-    if (n.end !== 'ground') fy = MAP.surfaceAt(mapOf(r).boxes, x, z);
+    if (n.end !== 'ground') fy = MAP.floorAt(mapOf(r).boxes, x, z, y);
     if (fy > y + 0.2) fy = y;
     ev.pos[1] = +fy.toFixed(2);
     // 丟進煙裡：直接熄掉
@@ -989,11 +989,11 @@ function knifeTick(r, now) {
           hitId = hitQ.id;
           applyDamage(owner, hitQ, head ? WEAPONS.tknife.throwable.head : WEAPONS.tknife.throwable.body, head, 'tknife', now);
           // 打中人：刀掉在他腳邊
-          k.pos = [hitQ.x, MAP.surfaceAt(boxes, hitQ.x, hitQ.z) + 0.05, hitQ.z];
+          k.pos = [hitQ.x, MAP.floorAt(boxes, hitQ.x, hitQ.z, hitQ.y) + 0.05, hitQ.z];
         } else if (k.pos[1] > 0.05) {
           // 插在牆上：太高的話掉到地上（撿得到）
           const back = [k.pos[0] - dir[0] * 0.3, k.pos[2] - dir[2] * 0.3];
-          const floor = MAP.surfaceAt(boxes, back[0], back[1]);
+          const floor = MAP.floorAt(boxes, back[0], back[1], k.pos[1]);
           if (k.pos[1] - floor > 1.6) k.pos = [back[0], floor + 0.05, back[1]];
         }
         toRoom(r, { t: 'tkland', kid: k.kid, pos: k.pos.map((x) => +x.toFixed(2)), hit: hitId });
@@ -1011,7 +1011,7 @@ function handleState(p, msg) {
   const x = num(msg.x, p.x), y = num(msg.y, p.y), z = num(msg.z, p.z);
   const dt = Math.max(0.05, (now - p.lastStateAt) / 1000);
   const horiz = Math.hypot(x - p.x, z - p.z);
-  if (horiz > MAX_SPEED * dt * 1.6 + 0.6 + (now < (p.knockUntil || 0) ? 3 : 0) || Math.abs(x) > mapOf(r).half || Math.abs(z) > mapOf(r).half || y < -1 || y > 20) {
+  if (horiz > MAX_SPEED * dt * 1.6 + 0.6 + (now < (p.knockUntil || 0) ? 3 : 0) || !MAP.inBounds(mapOf(r), x, z) || y < -1 || y > 20) {
     send(p.ws, { t: 'correct', x: p.x, y: p.y, z: p.z, seq: p.seq });
     return;
   }

@@ -162,8 +162,12 @@ function physics(dt) {
   jumpQueued = false;
   me.vy -= GRAVITY * dt;
 
+  // 船：跳過欄杆也出不去（超出範圍就退回去）
+  const ox = me.x, oz = me.z;
   moveAxis('x', me.vx * dt);
+  if (!MAP.inBounds(curMap, me.x, me.z)) { me.x = ox; me.vx = 0; }
   moveAxis('z', me.vz * dt);
+  if (!MAP.inBounds(curMap, me.x, me.z)) { me.z = oz; me.vz = 0; }
 
   me.onGround = false;
   me.y += me.vy * dt;
@@ -1889,7 +1893,7 @@ function startCorpse(r, kx, kz, head) {
   const p = r.group.position;
   // 地面高度：在空中被打死會先掉到地上（看腳下最高的地方，避免卡進箱子邊緣）
   let ground = 0;
-  for (const [ox, oz] of [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]) ground = Math.max(ground, MAP.surfaceAt(curMap.boxes, p.x + ox, p.z + oz));
+  for (const [ox, oz] of [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]) ground = Math.max(ground, MAP.floorAt(curMap.boxes, p.x + ox, p.z + oz, p.y));
   if (ground > p.y + 0.3) ground = p.y; // 算出來比人還高（貼牆）就用原本的高度
   r.corpse = { t0: performance.now(), y0: p.y, ground, yaw: Math.atan2(-(kx - p.x), -(kz - p.z)), head, stay: room?.mode !== 'tdm' };
   r.group.rotation.y = r.corpse.yaw; // 面向攻擊者，往後倒

@@ -103,7 +103,9 @@ function buildNav(map) {
     const i = Math.max(0, Math.min(BN - 1, Math.floor((x + half) / BK))), j = Math.max(0, Math.min(BN - 1, Math.floor((z + half) / BK)));
     return buckets[j * BN + i];
   };
-  const surf = (x, z) => MAP.surfaceAt(near(x, z), x, z);
+  // 有貨艙的地圖（甲板底下是空的）：格子的高度用「腳下最高、3 公尺以內」的地板，機器人只走甲板那一層
+  const surf = map.layered ? (x, z) => MAP.floorAt(near(x, z), x, z, 2.5) : (x, z) => MAP.surfaceAt(near(x, z), x, z);
+  const floorY = map.layered ? (x, z, y) => MAP.floorAt(near(x, z), x, z, y) : (x, z) => MAP.surfaceAt(near(x, z), x, z);
   // 身體（以 y 為腳底）會不會卡進方塊
   const bodyFree = (x, y, z, r = BODY_R) => {
     for (const b of near(x, z)) {
@@ -113,9 +115,9 @@ function buildNav(map) {
     return true;
   };
   const FOOT = [[0, 0], [0.3, 0.3], [-0.3, 0.3], [0.3, -0.3], [-0.3, -0.3], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]];
-  const footFloor = (x, z) => {
+  const footFloor = (x, z, y = 0) => {
     let m = 0;
-    for (const [ox, oz] of FOOT) m = Math.max(m, surf(x + ox, z + oz));
+    for (const [ox, oz] of FOOT) m = Math.max(m, floorY(x + ox, z + oz, y));
     return m;
   };
 
@@ -131,6 +133,7 @@ function buildNav(map) {
       raw[k] = hc;
       h[k] = hc;
       if (Math.abs(cx) > half - 0.8 || Math.abs(cz) > half - 0.8 || hc > 3.0) continue;
+      if (map.hatches && map.hatches.some((hh) => inHatch(hh, cx, cz, 0.4))) continue;
       if (!bodyFree(cx, hc, cz, BODY_R + 0.06)) continue;
       let low = hc;
       for (const [ox, oz] of FOOT) low = Math.min(low, surf(cx + ox * 1.6, cz + oz * 1.6));
@@ -343,7 +346,7 @@ function makeBrain(level) {
 function resetBrain(b) {
   Object.assign(b, {
     state: 'patrol', path: null, goal: null, target: 0, lastSeen: null, retreated: false, alert: null,
-    holdUntil: 0, vy: 0, ground: true, guard: null, guardUntil: 0,
+    holdUntil: 0, vy: 0, ground: true, guard: null, guardUntil: 0, lane: -1,
   });
 }
 function setGoal(p, b, nav, x, z) {
@@ -471,6 +474,22 @@ function damaged(p, attacker, now) {
 // 選下一個巡邏目標：有機率去搶戰術位置（高台、掩體），到了會守一陣子
 function nextPatrol(p, b, nav, r, now) {
   const c = b.cfg;
+  // 有分路線的地圖：每次重生挑一條路走（不然大家都擠在中間）
+  const lanes = nav.map.laneSpots;
+  if (lanes && Math.random() < 0.7) {
+    if (!(b.lane >= 0)) b.lane = Math.floor(Math.random() * lanes.length);
+    const mine = p.team === 0 ? -1 : 1;
+    const list = lanes[b.lane].filter((s) => s[0] * mine < nav.half * 0.7 && Math.hypot(s[0] - p.x, s[1] - p.z) > 4);
+    if (list.length) {
+      // 往敵方那邊推進：優先挑比自己更前面的點
+      const ahead = list.filter((s) => (s[0] - p.x) * -mine > 2);
+      const pool = ahead.length && Math.random() < 0.75 ? ahead : list;
+      const s = pool[Math.floor(Math.random() * pool.length)];
+      b.guard = null;
+      setGoal(p, b, nav, s[0], s[1]);
+      return;
+    }
+  }
   if (nav.spots.length && Math.random() < c.spot) {
     // 挑一個不太遠、也不在自己出生區後面的點
     const mine = p.team === 0 ? -1 : 1;
@@ -488,20 +507,42 @@ function nextPatrol(p, b, nav, r, now) {
 }
 
 // 移動和物理：跟玩家一樣會被方塊擋住、會掉下去、可以跳
+function inHatch(hh, x, z, pad = 0) {
+  const [x1, z1, x2, z2] = hh.rect;
+  return x >= x1 - pad && x <= x2 + pad && z >= z1 - pad && z <= z2 + pad;
+}
+// 掉進貨艙（甲板底下）的機器人：先走到最近的艙口樓梯底，再爬上去
+function underDeck(p, nav) {
+  const hs = nav.map.hatches;
+  if (!hs || p.y > 2.45) return null;
+  const onStairs = hs.find((hh) => inHatch(hh, p.x, p.z));
+  if (onStairs) {
+    // 偏離樓梯中線（從旁邊爬上台階）：先回到樓梯底，不然頭會撞到頂板
+    const [ax, az] = onStairs.bot, [bx, bz] = onStairs.top;
+    const L = Math.hypot(bx - ax, bz - az), off = Math.abs((p.x - ax) * (bz - az) - (p.z - az) * (bx - ax)) / L;
+    return off > 0.6 ? onStairs.bot : onStairs.top;
+  }
+  if (nav.h[nav.cellOf(p.x, p.z)] < p.y + 1.5) return null;
+  let best = null, bd = Infinity;
+  for (const hh of hs) { const d = Math.hypot(hh.bot[0] - p.x, hh.bot[1] - p.z); if (d < bd) { bd = d; best = hh; } }
+  return best.bot;
+}
 function move(p, b, nav, mx, mz, speed, dt) {
+  const out = underDeck(p, nav);
+  if (out) { mx = out[0] - p.x; mz = out[1] - p.z; }
   const ml = Math.hypot(mx, mz);
   let blocked = false;
   if (ml > 0.01) {
     const sp = speed * dt / ml;
     const nx = p.x + mx * sp, nz = p.z + mz * sp;
     const lim = nav.half - 0.5;
-    const inside = (x, z) => Math.abs(x) < lim && Math.abs(z) < lim;
+    const inside = (x, z) => Math.abs(x) < lim && Math.abs(z) < lim && MAP.inBounds(nav.map, x, z);
     if (inside(nx, nz) && nav.bodyFree(nx, p.y, nz)) { p.x = nx; p.z = nz; }
     else if (inside(nx, p.z) && nav.bodyFree(nx, p.y, p.z)) p.x = nx;
     else if (inside(p.x, nz) && nav.bodyFree(p.x, p.y, nz)) p.z = nz;
     else blocked = true;
   }
-  const floor = nav.footFloor(p.x, p.z);
+  const floor = nav.footFloor(p.x, p.z, p.y);
   if (b.ground) {
     if (floor > p.y) p.y = floor; // 走上樓梯
     else if (floor < p.y - 0.05) { b.ground = false; b.vy = 0; } // 走出邊緣，往下掉
