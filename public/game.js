@@ -1,7 +1,8 @@
 // 方塊戰場 Block Arena — 瀏覽器端
 import * as THREE from 'three';
 import { makeFigure } from './figure.js';
-import { settings, onSettingsChange, setSetting, profile, IS_TOUCH } from './settings.js';
+import { settings, onSettingsChange, setSetting, profile, IS_TOUCH, loadouts, saveLoadouts, activeKit } from './settings.js';
+import { renderKitCards, initLoadout } from './loadout.js';
 import { initAudio, setVolumes, playShot, beep, uiStart, uiClick } from './audio.js';
 import { initMenu, showTitle, hideTitle, setStatus, openSettings, updatePreview, go, currentScreen } from './menu.js';
 import { initLobby, renderRooms, renderRoom, lobbyError, rulesText } from './lobby.js';
@@ -14,19 +15,22 @@ const $ = (id) => document.getElementById(id);
 // ---------- 常數 ----------
 const EYE = 1.6, PH = 1.8, PW = 0.35;
 const SPEED = 6.5, JUMP = 8, GRAVITY = 22;
-const MAG = 30, FIRE_MS = 100, RELOAD_MS = 1800;
+const WPN = window.GAME_WEAPONS, WEAPONS = WPN.WEAPONS;
+const DRAW_MS = 250; // 換武器的拔槍時間
+const KIT_MS = 10000; // 復活後幾秒內可以換套裝
 const SEND_MS = 50, INTERP_MS = 100;
 if (IS_TOUCH) document.body.classList.add('touch');
 
 // ---------- 狀態 ----------
 const me = {
   id: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, yaw: 0, pitch: 0, onGround: false,
-  hp: 100, alive: false, seq: 0, ammo: MAG, reloadEnd: 0, lastShot: 0, recoil: 0,
+  hp: 100, alive: false, seq: 0, reloadEnd: 0, lastShot: 0, recoil: 0,
+  kit: { ...WPN.DEFAULT_LOADOUT }, weapon: 'primary', ammoBy: {}, drawEnd: 0, kitUntil: 0, firedSince: false, swingAt: 0,
 };
 const roster = new Map(); // id -> { name, color, kills, deaths }
 const remotes = new Map(); // id -> { group, buf: [...], alive }
 const keys = {};
-const TOUCH_BTNS = ['btnFire', 'btnJump', 'btnReload', 'btnScore', 'btnMenu']; // 可以調整位置的手機按鈕
+const TOUCH_BTNS = ['btnFire', 'btnJump', 'btnReload', 'btnScore', 'btnMenu', 'btnSwap']; // 可以調整位置的手機按鈕
 let ws = null, playing = false, firing = false, jumpQueued = false;
 let moveVec = { x: 0, y: 0 }; // 手機搖桿
 let rtt = 0, lastSend = 0, respawnAt = 0;
@@ -69,9 +73,46 @@ const flashLight = new THREE.PointLight(0xffc860, 0, 6);
 flashLight.position.set(0, 0.02, -0.55);
 gun.add(flashLight);
 const GUN_REST = new THREE.Vector3(0.2, -0.2, -0.4);
-gun.position.copy(GUN_REST);
-gun.scale.setScalar(0.65);
-camera.add(gun);
+// vm：第一人稱手上拿的東西（步槍 / 手槍 / 刀，一次只顯示一個）
+const vm = new THREE.Group();
+vm.position.copy(GUN_REST);
+vm.scale.setScalar(0.65);
+camera.add(vm);
+const pistolVM = new THREE.Group();
+{
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.24), gunMat);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.15, 0.07), gunMat);
+  grip.position.set(0, -0.1, 0.07); grip.rotation.x = 0.25;
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.025, 0.04), gunAccent);
+  sight.position.set(0, 0.055, -0.08);
+  pistolVM.add(body, grip, sight);
+  pistolVM.position.set(-0.02, 0.02, 0.12);
+}
+const knifeVM = new THREE.Group();
+{
+  const steel = new THREE.MeshStandardMaterial({ color: 0xdfe5ee, roughness: 0.25, metalness: 0.7 });
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.07, 0.32), steel);
+  blade.position.z = -0.16;
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.05, 0.13), gunMat);
+  handle.position.z = 0.06;
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.1, 0.02), gunAccent);
+  knifeVM.add(blade, handle, guard);
+  knifeVM.position.set(0, -0.02, 0.05);
+  knifeVM.rotation.set(0.3, 0, -0.35);
+}
+vm.add(gun, pistolVM, knifeVM);
+const VIEW_MODELS = { rifle: gun, pistol: pistolVM, knife: knifeVM };
+const MUZZLE_Z = { rifle: -0.5, pistol: -0.15 };
+function showViewModel() {
+  const id = me.kit[me.weapon];
+  for (const [k, m] of Object.entries(VIEW_MODELS)) m.visible = k === id;
+  const holder = VIEW_MODELS[id];
+  if (MUZZLE_Z[id] !== undefined) {
+    holder.add(flash, flashLight);
+    flash.position.set(0, 0.02, MUZZLE_Z[id]);
+    flashLight.position.set(0, 0.02, MUZZLE_Z[id] - 0.05);
+  }
+}
 
 // ---------- 其他玩家的模型 ----------
 function makeRemote(id) {
@@ -82,7 +123,8 @@ function makeRemote(id) {
   const fig = makeFigure(info.color, info.name, { body: team.color, labelColor: team.color, xray: mate });
   fig.group.visible = false;
   scene.add(fig.group);
-  const r = { fig, group: fig.group, arm: fig.arm, buf: [], alive: false, team: info.team, yaw: 0, pitch: 0 };
+  fig.group.rotation.order = 'YXZ'; // 倒地動畫要先轉向再往後倒
+  const r = { fig, group: fig.group, arm: fig.arm, buf: [], alive: false, team: info.team, yaw: 0, pitch: 0, corpse: null };
   remotes.set(id, r);
   return r;
 }
@@ -145,8 +187,9 @@ function physics(dt) {
   const len = Math.hypot(fx, fz);
   if (len > 1) { fx /= len; fz /= len; }
   const sin = Math.sin(me.yaw), cos = Math.cos(me.yaw);
-  const wx = (fx * cos + fz * sin) * SPEED;
-  const wz = (-fx * sin + fz * cos) * SPEED;
+  const sp = SPEED * curW().speed; // 拿手槍、刀跑比較快
+  const wx = (fx * cos + fz * sin) * sp;
+  const wz = (-fx * sin + fz * cos) * sp;
   const accel = me.onGround ? 14 : 4;
   const k = 1 - Math.exp(-accel * dt);
   me.vx += (wx - me.vx) * k;
@@ -195,14 +238,44 @@ function traceEnd(origin, dir) {
 const camDir = new THREE.Vector3();
 const muzzle = new THREE.Vector3();
 let flashUntil = 0;
+// ---------- 武器 ----------
+function curW() { return WEAPONS[me.kit[me.weapon]]; }
+// 套用一整套裝備（復活、換套裝時）：子彈補滿、拿主武器
+function applyKit(kit) {
+  me.kit = WPN.clean(kit);
+  me.ammoBy = {};
+  for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[me.kit[slot]]; if (w.mag) me.ammoBy[slot] = w.mag; }
+  me.weapon = 'primary';
+  me.reloadEnd = 0;
+  me.drawEnd = performance.now() + DRAW_MS;
+  showViewModel();
+  updateAmmo();
+}
+function switchWeapon(slot) {
+  if (!me.alive || !WPN.HAND_SLOTS.includes(slot) || slot === me.weapon) return;
+  me.weapon = slot;
+  me.reloadEnd = 0; // 換武器會中斷換彈
+  me.drawEnd = performance.now() + DRAW_MS;
+  send({ t: 'weapon', s: slot });
+  showViewModel();
+  updateAmmo();
+  beep(520, 0.04, 0.05, 'square');
+}
+function cycleWeapon(dir) {
+  const list = WPN.HAND_SLOTS;
+  switchWeapon(list[(list.indexOf(me.weapon) + dir + list.length) % list.length]);
+}
 function shoot(now) {
-  if (!me.alive || me.reloadEnd || frozen(now) || now - me.lastShot < FIRE_MS) return;
-  if (me.ammo <= 0) { startReload(); return; }
+  const w = curW();
+  if (!me.alive || me.reloadEnd || frozen(now) || now < me.drawEnd || now - me.lastShot < w.fireMs) return;
+  if (w.melee) { swing(now, w); return; }
+  if (me.ammoBy[me.weapon] <= 0) { startReload(); return; }
   me.lastShot = now;
-  me.ammo -= 1;
+  me.ammoBy[me.weapon] -= 1;
+  me.firedSince = true;
   camera.getWorldDirection(camDir);
   const moving = Math.hypot(me.vx, me.vz) > 1;
-  const spread = (me.onGround ? (moving ? 0.012 : 0.004) : 0.03) + me.recoil * 0.03;
+  const spread = (me.onGround ? (moving ? w.spread[1] : w.spread[0]) : w.spread[2]) + me.recoil * 0.03;
   camDir.x += (Math.random() - 0.5) * spread;
   camDir.y += (Math.random() - 0.5) * spread;
   camDir.z += (Math.random() - 0.5) * spread;
@@ -215,18 +288,32 @@ function shoot(now) {
   addTracer(muzzle.clone(), end);
   addSpark(end);
   // 後座力
-  me.pitch = Math.min(1.5, me.pitch + 0.007);
+  me.pitch = Math.min(1.5, me.pitch + w.kick);
   me.yaw += (Math.random() - 0.5) * 0.004;
-  me.recoil = Math.min(1, me.recoil + 0.18);
+  me.recoil = Math.min(1, me.recoil + w.recoil);
   flashUntil = now + 45;
   flash.rotation.z = Math.random() * Math.PI;
-  playShot(0.35);
-  if (me.ammo === 0) startReload();
+  playShot(w.slot === 'secondary' ? 0.26 : 0.35);
+  if (me.ammoBy[me.weapon] === 0) startReload();
   updateAmmo();
 }
+// 揮刀：命中由伺服器判定
+function swing(now, w) {
+  me.lastShot = now;
+  me.swingAt = now;
+  me.firedSince = true;
+  camera.getWorldDirection(camDir);
+  send({ t: 'melee', d: camDir.toArray().map((v) => +v.toFixed(4)), o: [+me.x.toFixed(3), +(me.y + EYE).toFixed(3), +me.z.toFixed(3)] });
+  swishSound(0.3);
+}
+function swishSound(vol) {
+  beep(900, 0.06, vol * 0.25, 'triangle');
+  beep(500, 0.08, vol * 0.2, 'sawtooth', 0.03);
+}
 function startReload() {
-  if (!me.alive || me.reloadEnd || me.ammo >= MAG) return;
-  me.reloadEnd = performance.now() + RELOAD_MS;
+  const w = curW();
+  if (!me.alive || me.reloadEnd || !w.mag || me.ammoBy[me.weapon] >= w.mag) return;
+  me.reloadEnd = performance.now() + w.reloadMs;
   send({ t: 'reload' });
   beep(420, 0.05, 0.08);
   updateAmmo();
@@ -234,9 +321,29 @@ function startReload() {
 
 // ---------- HUD ----------
 function updateAmmo() {
-  $('ammonow').textContent = me.ammo;
-  $('reloadtext').textContent = me.reloadEnd ? '換彈中…' : (me.ammo <= 5 ? '按 R 換彈' : '');
-  if (IS_TOUCH && !me.reloadEnd && me.ammo <= 5) $('reloadtext').textContent = '點 R 換彈';
+  const w = curW();
+  $('wname').textContent = `${w.icon} ${w.name}`;
+  if (w.melee) {
+    $('ammonow').textContent = '';
+    $('ammomax').textContent = '';
+    $('reloadtext').textContent = '';
+  } else {
+    const n = me.ammoBy[me.weapon] ?? 0;
+    $('ammonow').textContent = n;
+    $('ammomax').textContent = ` / ${w.mag}`;
+    const low = n <= Math.ceil(w.mag / 6);
+    $('reloadtext').textContent = me.reloadEnd ? '換彈中…' : (low ? (IS_TOUCH ? '點 R 換彈' : '按 R 換彈') : '');
+  }
+  // 電腦版：右下角的武器欄
+  const box = $('wslots');
+  box.replaceChildren();
+  WPN.HAND_SLOTS.forEach((slot, i) => {
+    const d = document.createElement('div');
+    d.className = 'ws' + (slot === me.weapon ? ' on' : '');
+    d.textContent = `${i + 1} ${WEAPONS[me.kit[slot]].short}`;
+    box.append(d);
+  });
+  updateSwapButton();
 }
 function updateHp() {
   $('hptext').textContent = me.hp;
@@ -268,12 +375,13 @@ function toast(text) {
 function nameOf(id) { return roster.get(id)?.name ?? '?'; }
 function colorOf(id) { return '#' + (roster.get(id)?.color ?? 0xffffff).toString(16).padStart(6, '0'); }
 function teamCss(id) { return MAP.teams[roster.get(id)?.team ?? 0].css; }
-function feed(killer, victim, head) {
+function feed(killer, victim, head, weapon) {
   const div = document.createElement('div');
   if (killer === me.id || victim === me.id) div.className = 'me';
   const a = document.createElement('span'); a.textContent = nameOf(killer); a.style.color = teamCss(killer);
   const b = document.createElement('span'); b.textContent = nameOf(victim); b.style.color = teamCss(victim);
-  div.append(a, document.createTextNode(head ? ' 🎯爆頭 ' : ' 🔫 '), b);
+  const w = WEAPONS[weapon];
+  div.append(a, document.createTextNode(head ? ' 🎯爆頭 ' : w?.melee ? ' 🔪 ' : ' 🔫 '), b);
   $('killfeed').prepend(div);
   while ($('killfeed').children.length > 5) $('killfeed').lastChild.remove();
   setTimeout(() => div.remove(), 6000);
@@ -315,7 +423,11 @@ let room = null; // 目前所在房間（伺服器傳來的狀態）
 let helloed = false, kicked = false;
 let roomDeadline = 0, freezeEnd = 0, resultsEnd = 0, spectateId = 0;
 function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
-function frozen(now = performance.now()) { return room?.mode === 'elim' && now < freezeEnd; }
+// 不能動、不能開火：等待載入、開場倒數、回合準備
+function frozen(now = performance.now()) {
+  if (!room || room.state !== 'playing') return false;
+  return room.phase === 'loading' || now < freezeEnd || (room.phase === 'freeze' && !freezeEnd);
+}
 
 function connect() {
   setStatus('連線中…');
@@ -346,6 +458,8 @@ function openLobby() {
 }
 
 function onRoom(r) {
+  // 倒數結束、正式開打：從這時候開始算 10 秒換套裝時間
+  if (r && r.phase === 'live' && room?.phase !== 'live' && playing) { me.kitUntil = performance.now() + KIT_MS; me.firedSince = false; }
   room = r;
   if (!r) {
     if (playing) exitMatch();
@@ -397,6 +511,11 @@ function enterMatch() {
   $('scoreboard').classList.add('hidden');
   if (IS_TOUCH) $('touch').classList.remove('hidden');
   $('killfeed').replaceChildren();
+  kitOpen = false;
+  applyKit(activeKit());
+  send({ t: 'loadout', l: activeKit() });
+  // 地圖畫好之後告訴伺服器「我載入完成了」
+  requestAnimationFrame(() => requestAnimationFrame(() => send({ t: 'ready' })));
   checkOrientation();
   updateHp(); updateAmmo();
   toast(rulesText(room));
@@ -419,7 +538,8 @@ function exitMatch() {
   freezeEnd = 0;
   for (const k in keys) keys[k] = false;
   for (const id of [...remotes.keys()]) removeRemote(id);
-  for (const id of ['hud', 'touch', 'paused', 'settings', 'results', 'rotate', 'death', 'scoreboard', 'spectate']) $(id).classList.add('hidden');
+  kitOpen = false;
+  for (const id of ['hud', 'touch', 'paused', 'settings', 'results', 'rotate', 'death', 'scoreboard', 'spectate', 'kitPick', 'kitChip', 'swapPop']) $(id).classList.add('hidden');
   if (document.pointerLockElement) document.exitPointerLock();
   setWorld('arena', true);
   title.visible = true;
@@ -492,8 +612,10 @@ function updateMatchbar(now) {
   $('mbScore1').textContent = score[1];
   document.querySelector('.mb-team.t0').classList.toggle('mine', me.team === 0);
   document.querySelector('.mb-team.t1').classList.toggle('mine', me.team === 1);
-  if (room.mode === 'tdm') {
-    $('mbSub').textContent = `目標 ${room.rules.scoreLimit} 殺`;
+  if (room.phase === 'loading') {
+    $('mbSub').textContent = '等待載入';
+  } else if (room.mode === 'tdm') {
+    $('mbSub').textContent = room.phase === 'freeze' ? '準備開戰' : `目標 ${room.rules.scoreLimit} 殺`;
   } else {
     const alive = [0, 0];
     if (me.alive) alive[me.team]++;
@@ -529,14 +651,21 @@ function handle(m) {
       break;
     case 'respawn':
       if (m.id === me.id) {
-        Object.assign(me, { x: m.x, y: m.y, z: m.z, yaw: m.yaw, pitch: 0, vx: 0, vy: 0, vz: 0, seq: m.seq, hp: 100, alive: true, ammo: MAG, reloadEnd: 0 });
+        Object.assign(me, { x: m.x, y: m.y, z: m.z, yaw: m.yaw, pitch: 0, vx: 0, vy: 0, vz: 0, seq: m.seq, hp: 100, alive: true, reloadEnd: 0 });
+        me.kitUntil = performance.now() + KIT_MS;
+        me.firedSince = false;
+        kitOpen = false;
+        applyKit(m.kit || activeKit());
         $('death').classList.add('hidden');
         $('spectate').classList.add('hidden');
         updateHp(); updateAmmo();
       } else {
         const r = remotes.get(m.id);
-        if (r) { r.buf = [{ t: performance.now(), x: m.x, y: m.y, z: m.z, yaw: m.yaw, pitch: 0 }]; r.alive = true; }
+        if (r) { r.buf = [{ t: performance.now(), x: m.x, y: m.y, z: m.z, yaw: m.yaw, pitch: 0 }]; r.alive = true; clearCorpse(r); }
       }
+      break;
+    case 'kit':
+      applyKit(m.kit);
       break;
     case 'correct':
       if (m.seq === me.seq) { me.x = m.x; me.y = m.y; me.z = m.z; me.vx = me.vz = 0; }
@@ -544,11 +673,13 @@ function handle(m) {
     case 'snap': {
       if (!playing) break;
       const now = performance.now();
-      for (const [id, x, y, z, yaw, pitch, alive] of m.p) {
+      for (const [id, x, y, z, yaw, pitch, alive, wi] of m.p) {
         if (id === me.id) continue;
         const r = remotes.get(id) || (roster.has(id) ? makeRemote(id) : null);
         if (!r) continue;
+        if (alive && r.corpse) clearCorpse(r);
         r.alive = !!alive;
+        if (wi >= 0) r.fig.setWeapon(WPN.LIST[wi]);
         r.buf.push({ t: now, x, y, z, yaw, pitch });
         if (r.buf.length > 20) r.buf.shift();
       }
@@ -563,7 +694,12 @@ function handle(m) {
       addTracer(o, e);
       addSpark(e);
       const dist = Math.hypot(o.x - me.x, o.z - me.z);
-      playShot(0.35 / (1 + dist * 0.12));
+      playShot((m.w === 'pistol' ? 0.26 : 0.35) / (1 + dist * 0.12));
+      break;
+    }
+    case 'swing': {
+      const r = remotes.get(m.id);
+      if (r) { const p = r.group.position; const d = Math.hypot(p.x - me.x, p.z - me.z); if (d < 20) swishSound(0.3 / (1 + d * 0.3)); }
       break;
     }
     case 'hit':
@@ -582,12 +718,13 @@ function handle(m) {
       if (k) k.kills = m.kk;
       if (v) v.deaths = m.vd;
       if (room && m.score) room.score = m.score;
-      feed(m.killer, m.victim, m.head);
+      feed(m.killer, m.victim, m.head, m.w);
       if (m.killer === me.id) toast(m.head ? `🎯 爆頭擊殺 ${nameOf(m.victim)}` : `擊殺 ${nameOf(m.victim)}`);
       if (m.victim === me.id) {
         me.alive = false;
         me.hp = 0;
         firing = false;
+        kitOpen = true; // 死掉的時候可以換套裝
         updateHp();
         $('deathby').textContent = `擊倒你的是：${nameOf(m.killer)}`;
         const elim = room?.mode === 'elim';
@@ -596,19 +733,24 @@ function handle(m) {
           $('respawn').textContent = '等待下一回合…';
           spectateId = 0;
           clearTimeout(deathTimer);
-          deathTimer = setTimeout(() => { if (!me.alive) $('death').classList.add('hidden'); }, 2500);
+          deathTimer = setTimeout(() => { if (!me.alive) { $('death').classList.add('hidden'); kitOpen = false; } }, 2500);
         } else {
           respawnAt = performance.now() + 3000;
         }
         $('death').classList.remove('hidden');
       }
       const r = remotes.get(m.victim);
-      if (r) r.alive = false;
+      if (r) {
+        r.alive = false;
+        startCorpse(r, m.kx ?? (m.killer === me.id ? me.x : r.group.position.x), m.kz ?? (m.killer === me.id ? me.z : r.group.position.z), m.head);
+      }
       if (!$('scoreboard').classList.contains('hidden')) renderScores();
       break;
     }
     case 'round':
       freezeEnd = performance.now() + m.freeze;
+      lastCount = 0;
+      for (const r of remotes.values()) clearCorpse(r); // 新回合：屍體清掉
       if (room) room.round = m.n;
       $('death').classList.add('hidden');
       $('spectate').classList.add('hidden');
@@ -647,6 +789,12 @@ function onInput(code, down) {
   if (a === 'fire') firing = down;
   if (a === 'jump' && down) jumpQueued = true;
   if (a === 'reload' && down) startReload();
+  if (down && (a === 'w1' || a === 'w2' || a === 'w3')) {
+    const i = Number(a[1]) - 1;
+    if (kitPickVisible()) pickKit(i); // 換套裝選單開著：1 / 2 / 3 選套裝
+    else switchWeapon(WPN.HAND_SLOTS[i]);
+  }
+  if (a === 'kit' && down) toggleKitPick();
   if (a === 'score') setScoreboard(down);
   return true;
 }
@@ -680,6 +828,14 @@ canvas.addEventListener('mousedown', (e) => {
   onInput('Mouse' + e.button, true);
 });
 document.addEventListener('mouseup', (e) => onInput('Mouse' + e.button, false));
+let wheelAt = 0;
+document.addEventListener('wheel', (e) => {
+  if (!playing || document.pointerLockElement !== canvas) return;
+  const now = performance.now();
+  if (now - wheelAt < 120 || !e.deltaY) return; // 一格滾輪只換一次
+  wheelAt = now;
+  cycleWeapon(e.deltaY > 0 ? 1 : -1);
+}, { passive: true });
 document.addEventListener('keydown', (e) => {
   if (!playing || e.code === 'Escape') return;
   if (onInput(e.code, true)) e.preventDefault();
@@ -736,11 +892,18 @@ function onTouchStart(e) {
     // 暫停選單或設定開著的時候，讓按鈕和滑桿正常運作
     if (t.target.closest?.('.overlay')) continue;
     if (t.target.closest?.('#scoreboard')) { e.preventDefault(); setScoreboard(false); continue; }
+    if (t.target.closest?.('#kitChip, #kitPick')) continue; // 讓按鈕正常點
     const btn = t.target.closest?.('.tbtn');
     if (btn) {
       e.preventDefault();
       btn.classList.add('on');
       if (btn.id === 'btnFire') { firing = true; touches.set(t.identifier, { role: 'fire', x: t.clientX, y: t.clientY, btn }); }
+      else if (btn.id === 'btnSwap') {
+        // 點一下＝切換；按住＝跳出其他武器，滑過去放開就換
+        const s = { role: 'swap', btn, hover: null, open: false };
+        s.timer = setTimeout(() => { s.open = true; openSwapPop(); }, 230);
+        touches.set(t.identifier, s);
+      }
       else {
         touches.set(t.identifier, { role: 'btn', btn });
         if (btn.id === 'btnJump') jumpQueued = true;
@@ -776,6 +939,15 @@ function onTouchMove(e) {
       if (len > max) { dx *= max / len; dy *= max / len; }
       moveVec = { x: dx / max, y: dy / max };
       $('knob').style.transform = `translate(${dx}px, ${dy}px)`;
+    } else if (s.role === 'swap') {
+      if (!s.open) continue;
+      // 選項本身不接收觸控，用位置判斷手指在哪個選項上（範圍放寬一點比較好選）
+      const el = [...document.querySelectorAll('#swapPop .swopt')].find((o) => {
+        const r = o.getBoundingClientRect();
+        return t.clientX >= r.left - 20 && t.clientX <= r.right + 20 && t.clientY >= r.top - 4 && t.clientY <= r.bottom + 4;
+      });
+      s.hover = el?.dataset.slot || null;
+      for (const o of document.querySelectorAll('#swapPop .swopt')) o.classList.toggle('on', o === el);
     } else if (s.role === 'look' || s.role === 'fire') {
       const k = LOOK_SENS * settings.touch * aaSlow;
       const dy = -(t.clientX - s.x) * k, dp = -(t.clientY - s.y) * k * settings.vert * (settings.invertY ? -1 : 1);
@@ -792,6 +964,18 @@ function onTouchEnd(e) {
     if (!s) continue;
     if (s.role === 'move') { moveVec = { x: 0, y: 0 }; $('stick').classList.remove('on'); }
     if (s.role === 'fire') firing = false;
+    if (s.role === 'swap') {
+      clearTimeout(s.timer);
+      if (!s.open) swapTap();
+      else {
+        $('swapPop').classList.add('hidden');
+        if (s.hover) {
+          // 記住「原本拿的＋新選的」，之後點一下就在這兩把之間切換
+          setSetting('swapPair', [me.weapon, s.hover]);
+          switchWeapon(s.hover);
+        }
+      }
+    }
     s.btn?.classList.remove('on');
     touches.delete(t.identifier);
   }
@@ -939,6 +1123,118 @@ for (const id of TOUCH_BTNS) {
 $('layoutDone').addEventListener('click', finishLayoutEdit);
 $('layoutReset').addEventListener('click', () => { setSetting('layout', {}); uiClick(); });
 
+// ---------- 換套裝（死掉、準備時間、剛復活 10 秒內還沒開火） ----------
+let kitOpen = false, lastCount = 0, kitShownSec = -1;
+function canKit(now = performance.now()) {
+  if (!playing || !room || room.state !== 'playing') return false;
+  if (!me.alive || room.phase !== 'live') return true;
+  return now < me.kitUntil && !me.firedSince;
+}
+function kitPickVisible() { return !$('kitPick').classList.contains('hidden'); }
+function toggleKitPick() {
+  if (!canKit()) { kitOpen = false; return; }
+  kitOpen = !kitOpen;
+  uiClick();
+}
+function pickKit(i) {
+  if (!canKit()) return;
+  loadouts.active = i;
+  saveLoadouts();
+  send({ t: 'loadout', l: activeKit() });
+  uiClick();
+  if (me.alive) { applyKit(activeKit()); kitOpen = false; toast(`已換成 套裝 ${i + 1}`); }
+  else { me.kit = WPN.clean(activeKit()); toast(`下次重生使用 套裝 ${i + 1}`); }
+  renderKitCards($('kitCards'), pickKit);
+}
+function updateKitUI(now) {
+  const can = canKit(now) && $('results').classList.contains('hidden');
+  if (!can) kitOpen = false;
+  const showPick = can && kitOpen;
+  if (showPick !== kitPickVisible()) {
+    $('kitPick').classList.toggle('hidden', !showPick);
+    if (showPick) renderKitCards($('kitCards'), pickKit);
+  }
+  if (showPick) {
+    $('kitHint').textContent = (me.alive ? '' : '下次重生使用 · ') + (IS_TOUCH ? '點一下選擇' : '按 1 / 2 / 3 選擇，B 關閉');
+  }
+  const showChip = can && !kitOpen;
+  $('kitChip').classList.toggle('hidden', !showChip);
+  if (showChip) {
+    const left = me.alive && room.phase === 'live' ? Math.ceil((me.kitUntil - now) / 1000) : null;
+    if (left !== kitShownSec) {
+      kitShownSec = left;
+      $('kitChip').textContent = `🎒 換套裝${IS_TOUCH ? '' : ' [B]'}` + (left !== null ? `（${left}）` : '');
+    }
+  }
+}
+$('kitChip').addEventListener('click', (e) => { e.stopPropagation(); toggleKitPick(); });
+document.querySelector('#kitPick .kp-title').addEventListener('click', (e) => { e.stopPropagation(); kitOpen = false; uiClick(); });
+
+// ---------- 手機切換武器鈕 ----------
+function swapTarget() {
+  const [a, b] = settings.swapPair || ['primary', 'secondary'];
+  return me.weapon === a ? b : a;
+}
+function swapTap() { switchWeapon(swapTarget()); }
+function updateSwapButton() {
+  if (!IS_TOUCH) return;
+  const w = WEAPONS[me.kit[swapTarget()]];
+  $('swapLabel').textContent = w ? w.short : '';
+}
+function openSwapPop() {
+  const pop = $('swapPop');
+  pop.replaceChildren();
+  for (const slot of WPN.HAND_SLOTS) {
+    if (slot === me.weapon) continue;
+    const w = WEAPONS[me.kit[slot]];
+    const o = document.createElement('div');
+    o.className = 'swopt';
+    o.dataset.slot = slot;
+    o.innerHTML = '<b></b><span></span>';
+    o.querySelector('b').textContent = w.icon;
+    o.querySelector('span').textContent = w.short;
+    pop.append(o);
+  }
+  // 放在按鈕的左邊，手指往左滑就選到
+  const r = $('btnSwap').getBoundingClientRect();
+  pop.style.right = (innerWidth - r.left + 8) + 'px';
+  pop.style.top = Math.max(8, r.top + r.height / 2 - 60) + 'px';
+  pop.classList.remove('hidden');
+  beep(700, 0.03, 0.05, 'square');
+}
+
+// ---------- 倒地的屍體 ----------
+// 往被打的方向倒下；死鬥模式躺一下就沉進地面，殲滅模式留到這回合結束
+function startCorpse(r, kx, kz, head) {
+  const p = r.group.position;
+  r.corpse = { t0: performance.now(), y0: p.y, yaw: Math.atan2(-(kx - p.x), -(kz - p.z)), head, stay: room?.mode !== 'tdm' };
+  r.group.rotation.y = r.corpse.yaw; // 面向攻擊者，往後倒
+  if (r.fig.label) r.fig.label.visible = false;
+}
+function clearCorpse(r) {
+  if (!r.corpse) return;
+  r.corpse = null;
+  r.group.rotation.x = 0;
+  r.group.rotation.z = 0;
+  if (r.fig.label) r.fig.label.visible = true;
+}
+function updateCorpses(now) {
+  for (const r of remotes.values()) {
+    const c = r.corpse;
+    if (!c) continue;
+    const t = now - c.t0;
+    const k = Math.min(1, t / (c.head ? 280 : 420));
+    const ease = 1 - Math.pow(1 - k, 3);
+    const bounce = k >= 1 ? Math.sin(Math.min(1, (t - 420) / 250) * Math.PI) * 0.06 : 0;
+    r.group.rotation.x = ease * Math.PI / 2 - bounce;
+    r.group.rotation.z = ease * 0.15;
+    let y = c.y0 + ease * 0.1;
+    if (!c.stay && t > 2500) y -= (t - 2500) / 1000 * 0.9; // 慢慢沉下去
+    r.group.position.y = y;
+    if (!c.stay && t > 3600) { clearCorpse(r); r.group.visible = false; }
+  }
+}
+
 // ---------- 主迴圈 ----------
 const clock = new THREE.Clock();
 let bob = 0;
@@ -975,15 +1271,23 @@ function frame() {
     if (me.alive) {
       if (frozen(now)) { me.vx = me.vz = 0; jumpQueued = false; } else physics(dt);
       if (firing) shoot(now);
-      if (me.reloadEnd && now >= me.reloadEnd) { me.reloadEnd = 0; me.ammo = MAG; updateAmmo(); }
+      if (me.reloadEnd && now >= me.reloadEnd) { me.reloadEnd = 0; me.ammoBy[me.weapon] = curW().mag; updateAmmo(); }
     } else if (room?.mode === 'tdm') {
       $('respawn').textContent = `${Math.max(0, Math.ceil((respawnAt - now) / 1000))} 秒後重生…`;
     }
-    // 回合開始倒數
-    if (freezeEnd) {
-      if (now < freezeEnd) banner(`第 ${room?.round ?? ''} 回合`, `${Math.ceil((freezeEnd - now) / 1000)} 秒後開戰`, '', 0);
-      else { freezeEnd = 0; banner('開戰！', '', '', 900); beep(1200, 0.2, 0.1, 'sawtooth'); }
+    // 等待載入 → 開場倒數 → 開戰
+    if (room?.phase === 'loading') {
+      const rd = room.ready || [0, 0];
+      banner('等待玩家載入中…', `${rd[0]} / ${rd[1]} 位玩家已就緒`, 'wait', 0);
+    } else if (freezeEnd) {
+      if (now < freezeEnd) {
+        const sec = Math.ceil((freezeEnd - now) / 1000);
+        banner(String(sec), room?.mode === 'tdm' ? '準備開戰' : `第 ${room?.round ?? ''} 回合`, 'count', 0);
+        if (sec !== lastCount) { lastCount = sec; beep(660, 0.08, 0.08, 'triangle'); }
+      } else { freezeEnd = 0; banner('開戰！', '', '', 900); beep(1200, 0.2, 0.1, 'sawtooth'); }
     }
+    updateKitUI(now);
+    updateCorpses(now);
     updateMatchbar(now);
     if (!$('results').classList.contains('hidden')) {
       $('resBack').textContent = `${Math.max(0, Math.ceil((resultsEnd - now) / 1000))} 秒後回到房間`;
@@ -993,7 +1297,7 @@ function frame() {
       send({ t: 'state', seq: me.seq, x: +me.x.toFixed(3), y: +me.y.toFixed(3), z: +me.z.toFixed(3), yaw: +me.yaw.toFixed(3), pitch: +me.pitch.toFixed(3) });
     }
     for (const r of remotes.values()) {
-      r.group.visible = r.alive;
+      r.group.visible = r.alive || !!r.corpse;
       if (r.alive) interpolate(r, now - INTERP_MS);
     }
   }
@@ -1023,13 +1327,19 @@ function frame() {
     camera.position.set(me.x, me.y + EYE + (me.alive ? Math.sin(bob * 2) * 0.03 : -1.2), me.z);
     camera.rotation.set(me.pitch, me.yaw, 0);
   }
-  gun.visible = playing && me.alive;
-  gun.position.set(
+  vm.visible = playing && me.alive;
+  // 拔槍動畫：換武器時從下面舉起來
+  const draw = Math.max(0, (me.drawEnd - now) / DRAW_MS);
+  // 揮刀動畫
+  const sw = Math.max(0, 1 - (now - me.swingAt) / 300);
+  const swingK = sw > 0 ? Math.sin((1 - sw) * Math.PI) : 0;
+  vm.position.set(
     GUN_REST.x + Math.sin(bob) * 0.012,
-    GUN_REST.y + Math.abs(Math.cos(bob)) * 0.01 - (me.reloadEnd ? 0.12 : 0),
-    GUN_REST.z + me.recoil * 0.06,
+    GUN_REST.y + Math.abs(Math.cos(bob)) * 0.01 - (me.reloadEnd ? 0.12 : 0) - draw * 0.3,
+    GUN_REST.z + me.recoil * 0.06 - swingK * 0.15,
   );
-  gun.rotation.x = me.recoil * 0.15 + (me.reloadEnd ? -0.6 : 0);
+  vm.rotation.x = me.recoil * 0.15 + (me.reloadEnd ? -0.6 : 0) - draw * 0.6 - swingK * 0.5;
+  vm.rotation.y = swingK * 0.9;
   const flashing = now < flashUntil;
   flash.visible = flashing;
   flashLight.intensity = flashing ? 3 : 0;
@@ -1054,5 +1364,6 @@ const title = createTitleScene(scene);
 setWorld('arena', true);
 initMenu({ onPlay: openLobby, onEditLayout: startLayoutEdit });
 initLobby({ send, myId: () => me.id });
+initLoadout();
 frame();
 setInterval(checkOrientation, 1000);

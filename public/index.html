@@ -45,6 +45,7 @@
       <nav class="menu">
         <button id="play" class="nbtn primary"><span class="ic">▶</span>開始遊戲</button>
         <button class="nbtn" data-go="scrCustom"><span class="ic">◆</span>自訂角色</button>
+        <button class="nbtn" data-go="scrLoadout"><span class="ic">✦</span>裝備</button>
         <button class="nbtn" data-go="scrHelp"><span class="ic">✚</span>操作說明</button>
         <button id="openSettings" class="nbtn"><span class="ic">⚙</span>設定</button>
       </nav>
@@ -69,6 +70,17 @@
       </div>
     </section>
 
+    <!-- 裝備套裝 -->
+    <section id="scrLoadout" class="scr hidden">
+      <div class="npanel wide">
+        <h2 class="ntitle">裝備<small>LOADOUT</small></h2>
+        <div id="kitTabs" class="seg tabs"></div>
+        <div id="kitForm" class="kitform"></div>
+        <p class="hint">對戰中「死掉等重生」或「剛復活 10 秒內（還沒開火）」可以換套裝。</p>
+        <button class="nbtn primary small" data-go="scrMain" data-back>完成</button>
+      </div>
+    </section>
+
     <!-- 操作說明 -->
     <section id="scrHelp" class="scr hidden">
       <div class="npanel">
@@ -84,6 +96,8 @@
           <div><kbd>左鍵</kbd><span>開槍（按住連射）</span></div>
           <div><kbd>空白鍵</kbd><span>跳躍</span></div>
           <div><kbd>R</kbd><span>換彈</span></div>
+          <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><span>主武器 / 手槍 / 刀（也可以用滾輪）</span></div>
+          <div><kbd>B</kbd><span>換套裝（可以換的時候）</span></div>
           <div><kbd>Tab</kbd><span>按住看計分板</span></div>
           <div><kbd>Esc</kbd><span>暫停 / 設定</span></div>
         </div>
@@ -93,12 +107,13 @@
           <div><kbd>🔫</kbd><span>按住開槍，按住時也能拖曳瞄準</span></div>
           <div><kbd>⤒</kbd><span>跳躍</span></div>
           <div><kbd>R</kbd><span>換彈</span></div>
+          <div><kbd>⇄</kbd><span>點一下在兩把武器之間切換；按住會跳出其他武器，滑過去放開就換成那把，之後點一下就在這兩把之間切換</span></div>
           <div><kbd>📋</kbd><span>計分板</span></div>
           <div><kbd>⚙</kbd><span>暫停 / 設定</span></div>
           <p class="hint">建議把手機橫放來玩。按鈕位置和大小可以在「設定 → 按鍵」裡調整。</p>
         </div>
         <div class="rules">
-          <b>規則</b> 身體 25 傷害、爆頭 70 傷害，血量 100。被擊倒 3 秒後重生，重生後 1.5 秒內有保護。
+          <b>規則</b> 血量 100。步槍打身體 25、爆頭 70；手槍 22 / 65；刀 55，從背後砍一刀擊倒。被擊倒 3 秒後重生，重生後 1.5 秒內有保護。
         </div>
         <button class="nbtn primary small" data-go="scrMain" data-back>返回</button>
       </div>
@@ -217,7 +232,7 @@
       </div>
     </section>
 
-    <div class="ver">v1.7</div>
+    <div class="ver">v1.8</div>
   </div>
 
   <!-- ===== 設定（標題畫面和遊戲中都能開） ===== -->
@@ -328,7 +343,10 @@
       <div id="hpbar"><div id="hpfill"></div></div>
       <span id="hptext">100</span>
     </div>
-    <div id="ammo"><span id="ammonow">30</span><small> / 30</small><div id="reloadtext"></div></div>
+    <div id="ammo"><div id="wname"></div><span id="ammonow">30</span><small id="ammomax"> / 30</small><div id="reloadtext"></div></div>
+    <div id="wslots"></div>
+    <button id="kitChip" class="hidden"></button>
+    <div id="kitPick" class="hidden"><div class="kp-title">換套裝 <span class="kp-x">✕</span></div><div id="kitCards" class="kitcards"></div><div id="kitHint" class="hint"></div></div>
     <div id="death" class="hidden">
       <div class="big">你被擊倒了</div>
       <div id="deathby"></div>
@@ -359,10 +377,13 @@
     <button class="tbtn" id="btnReload">R</button>
     <button class="tbtn" id="btnJump">⤒</button>
     <button class="tbtn" id="btnFire">🔫</button>
+    <button class="tbtn" id="btnSwap"><span id="swapIcon">⇄</span><small id="swapLabel"></small></button>
+    <div id="swapPop" class="hidden"></div>
   </div>
   <div id="rotate" class="hidden">請把手機橫放來玩 ↻</div>
 
   <script src="map.js"></script>
+  <script src="weapons.js"></script>
   <script type="module" src="game.js"></script>
 </body>
 </html>

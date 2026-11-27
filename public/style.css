@@ -287,7 +287,7 @@ input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border: 0; bo
 #killfeed div { background: rgba(0, 0, 0, 0.55); padding: 4px 10px; border-radius: 6px; }
 #killfeed .me { outline: 1px solid var(--cyan); }
 #toast {
-  position: absolute; top: 28%; left: 50%; transform: translateX(-50%); font-size: 22px; font-weight: 800;
+  position: absolute; top: 37%; left: 50%; transform: translateX(-50%); font-size: 22px; font-weight: 800;
   color: #fff; text-shadow: 0 0 10px var(--cyan), 0 2px 6px #000; opacity: 0; transition: opacity 0.5s; white-space: nowrap;
 }
 #toast.show { opacity: 1; transition: none; }
@@ -565,3 +565,80 @@ body.touch #hpbar { width: 120px; }
 body.editing #touch { z-index: 34; background: rgba(7, 4, 24, 0.88); }
 body.editing .tbtn { outline: 2px dashed rgba(255, 190, 11, 0.9); outline-offset: 3px; cursor: move; touch-action: none; }
 @media (max-width: 560px) { .keybinds { grid-template-columns: 1fr; } }
+
+/* ================= 武器與裝備 ================= */
+#wname { font-size: 14px; font-weight: 700; color: #dfe7f7; letter-spacing: 0.05em; }
+#wslots {
+  position: absolute; right: max(20px, env(safe-area-inset-right)); bottom: max(96px, calc(env(safe-area-inset-bottom) + 80px));
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-end;
+}
+#wslots .ws { font-size: 13px; padding: 2px 8px; border-radius: 3px; color: #9aa7bf; background: rgba(7, 4, 24, 0.45); }
+#wslots .ws.on { color: #fff; background: rgba(0, 229, 255, 0.3); box-shadow: 0 0 8px rgba(0, 229, 255, 0.5); }
+body.touch #wslots { display: none; }
+#kitChip {
+  position: absolute; top: max(96px, calc(env(safe-area-inset-top) + 86px)); left: 50%; transform: translateX(-50%);
+  pointer-events: auto; padding: 6px 14px; border-radius: 999px; font: 700 14px var(--zh); color: #ffbe0b;
+  background: rgba(7, 4, 24, 0.75); border: 1px solid rgba(255, 190, 11, 0.6); cursor: pointer;
+}
+#kitPick {
+  position: absolute; left: 50%; bottom: max(110px, calc(env(safe-area-inset-bottom) + 96px)); transform: translateX(-50%);
+  pointer-events: auto; z-index: 3; padding: 10px 12px; border-radius: 6px; text-align: center;
+  background: rgba(7, 4, 24, 0.85); border: 1px solid rgba(0, 229, 255, 0.45); box-shadow: 0 0 24px rgba(123, 43, 255, 0.35);
+}
+#kitPick .kp-title { font-weight: 800; letter-spacing: 0.1em; margin-bottom: 6px; color: var(--cyan); }
+.kitcards { display: flex; gap: 8px; }
+.kitcard {
+  display: flex; flex-direction: column; gap: 2px; min-width: 120px; padding: 8px 10px; margin: 0; cursor: pointer;
+  border-radius: 4px; border: 1px solid rgba(0, 229, 255, 0.35); background: rgba(0, 0, 0, 0.35); color: var(--text); font: 13px var(--zh);
+}
+.kitcard b { font-size: 14px; }
+.kitcard span { color: var(--muted); }
+.kitcard.on { border-color: #ffbe0b; box-shadow: 0 0 10px rgba(255, 190, 11, 0.45); }
+.kitcard.on b::after { content: ' ★'; color: #ffbe0b; }
+#kitPick .hint { margin: 6px 0 0; font-size: 12px; }
+@media (max-height: 520px) { #kitPick { bottom: 70px; padding: 6px 8px; } .kitcard { min-width: 96px; padding: 6px 8px; } }
+
+/* 倒數 */
+#banner.count #bannerBig { font-size: clamp(60px, 12vw, 110px); color: #fff; font-family: var(--num); }
+#banner.wait #bannerBig { font-size: clamp(24px, 4.5vw, 40px); }
+
+/* 手機切換武器鈕 */
+#btnSwap {
+  right: max(40px, calc(env(safe-area-inset-right) + 12px)); bottom: max(196px, calc(env(safe-area-inset-bottom) + 180px));
+  width: 58px; height: 58px; font-size: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
+}
+#btnSwap small { font-size: 11px; margin-top: 3px; color: #dfe7f7; }
+#swapPop {
+  position: fixed; z-index: 12; display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.swopt {
+  display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 999px; font-weight: 700; font-size: 16px;
+  background: rgba(7, 4, 24, 0.85); border: 2px solid rgba(0, 229, 255, 0.5); color: #fff;
+}
+.swopt b { font-size: 20px; }
+.swopt.on { background: rgba(0, 229, 255, 0.45); border-color: #fff; }
+
+/* 裝備畫面 */
+.kitform { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.kitrow { display: grid; grid-template-columns: 76px 1fr; gap: 4px 10px; align-items: center; }
+.kr-label { font-weight: 700; color: #dfe7f7; }
+.kr-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.kr-opt {
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px; margin: 0; cursor: pointer; border-radius: 4px;
+  border: 1px solid rgba(0, 229, 255, 0.35); background: rgba(0, 0, 0, 0.3); color: var(--text); font: 15px var(--zh);
+}
+.kr-opt.on { border-color: var(--cyan); background: rgba(0, 229, 255, 0.2); box-shadow: 0 0 8px rgba(0, 229, 255, 0.4); }
+.kr-opt.off { opacity: 0.55; }
+.kr-info { grid-column: 2; font-size: 12px; color: var(--muted); }
+.kitform .nbtn.using { border-color: #ffbe0b; color: #ffbe0b; }
+@media (max-height: 520px) { .kitform { gap: 6px; } .kr-opt { padding: 4px 10px; font-size: 14px; } }
+/* 矮螢幕（手機橫放）：倒數數字和換套裝選單不要疊在一起 */
+@media (max-height: 520px) {
+  #banner { top: 17%; }
+  #banner.count #bannerBig { font-size: 52px; }
+  #banner.count #bannerSmall { font-size: 15px; margin-top: 2px; }
+  #kitPick { bottom: 16px; }
+  #kitPick .kp-title { margin-bottom: 4px; font-size: 14px; }
+}
+#kitPick .kp-title { cursor: pointer; }
+#kitPick .kp-x { font-size: 13px; color: var(--muted); margin-left: 6px; }

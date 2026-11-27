@@ -39,14 +39,26 @@ export function makeFigure(color, name = null, opts = {}) {
   visor.position.set(0, 1.63, -0.2);
   const arm = new THREE.Group();
   arm.position.set(0.28, 1.3, -0.1);
+  // 手上的武器：步槍、手槍、刀（看得出對方拿什麼）
   const gun = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.6), dark);
   gun.position.z = -0.3;
-  arm.add(gun);
-  for (const m of [body, head, gun]) m.castShadow = true;
+  const pistol = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.26), dark);
+  pistol.position.z = -0.16;
+  const steel = new THREE.MeshStandardMaterial({ color: 0xd8dde6, roughness: 0.3, metalness: 0.6 });
+  const knife = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.06, 0.34), steel);
+  knife.position.z = -0.2;
+  arm.add(gun, pistol, knife);
+  const weapons = { rifle: gun, pistol, knife };
+  for (const m of [body, head, gun, pistol, knife]) m.castShadow = true;
   group.add(body, head, visor, arm);
 
   const fig = {
-    group, arm, label: null,
+    group, arm, label: null, weapon: '',
+    setWeapon(id) {
+      if (fig.weapon === id) return;
+      fig.weapon = id;
+      for (const [k, m] of Object.entries(weapons)) m.visible = k === (weapons[id] ? id : 'rifle');
+    },
     setColor(c) { mat.color.setHex(c); headMat.color.setHex(c); },
     setName(text, c = mat.color.getHex()) {
       if (fig.label) {
@@ -64,6 +76,7 @@ export function makeFigure(color, name = null, opts = {}) {
       group.traverse((o) => { o.geometry?.dispose(); o.material?.map?.dispose(); o.material?.dispose(); });
     },
   };
+  fig.setWeapon('rifle');
   if (name) fig.setName(name, opts.labelColor ?? color);
   return fig;
 }

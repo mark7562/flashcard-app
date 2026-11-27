@@ -4,6 +4,7 @@ export const IS_TOUCH = matchMedia('(pointer: coarse)').matches || (navigator.ma
 export const DEFAULT_KEYS = {
   forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
   jump: 'Space', reload: 'KeyR', fire: 'Mouse0', score: 'Tab',
+  w1: 'Digit1', w2: 'Digit2', w3: 'Digit3', kit: 'KeyB',
 };
 
 const DEFAULTS = {
@@ -14,6 +15,7 @@ const DEFAULTS = {
   aimAssist: IS_TOUCH ? 'low' : 'off', // 瞄準輔助：off / low / high
   keys: { ...DEFAULT_KEYS }, // 電腦按鍵
   btnScale: 1, // 手機按鈕大小
+  swapPair: ['primary', 'secondary'], // 手機切換鈕：點一下在這兩把之間切換
   layout: {}, // 手機按鈕位置 { 按鈕 id: [x%, y%] }
   fov: 75, // 視野
   sfx: 80, // 音效音量 0~100
@@ -45,4 +47,12 @@ export function resetSettings() {
 }
 
 export const profile = load('ba-profile', { name: '', color: 0x00bbf9 });
+
+// 裝備套裝：三個欄位，玩家自己組；active = 目前用哪一套
+const WPN = window.GAME_WEAPONS;
+export const loadouts = load('ba-loadouts', { active: 0, sets: [] });
+loadouts.sets = [0, 1, 2].map((i) => WPN.clean(loadouts.sets[i]));
+if (![0, 1, 2].includes(loadouts.active)) loadouts.active = 0;
+export function saveLoadouts() { save('ba-loadouts', loadouts); }
+export function activeKit() { return loadouts.sets[loadouts.active]; }
 export function saveProfile() { save('ba-profile', profile); }
