@@ -100,9 +100,59 @@ export function makeFigure(color, name = null, opts = {}) {
   const nadeMat = new THREE.MeshStandardMaterial({ color: 0x3d5a2a, roughness: 0.5 });
   const nade = new THREE.Group();
   part(nade, 0.09, 0.13, 0.09, nadeMat, 0, 0.02, -0.05);
-  arm.add(gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade);
-  const NADE_COLORS = { frag: 0x3d5a2a, flash: 0x9aa3ad, smoke: 0x5b6b5a, molotov: 0x8a5a2a, stun: 0x2f6fd6 };
-  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade };
+  // ---- 第二批武器（第三人稱輪廓） ----
+  const tanM = new THREE.MeshStandardMaterial({ color: 0xb89a6a, roughness: 0.75 });
+  const oliveM = new THREE.MeshStandardMaterial({ color: 0x4f5a3a, roughness: 0.75 });
+  const redM = new THREE.MeshStandardMaterial({ color: 0xb3261e, roughness: 0.6 });
+  const tapeM = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.9 });
+  const lmg = new THREE.Group();
+  part(lmg, 0.1, 0.12, 0.44, dark, 0, 0, -0.1);
+  part(lmg, 0.09, 0.09, 0.34, dark, 0, 0, -0.48);
+  part(lmg, 0.035, 0.035, 0.3, dark, 0, 0, -0.8);
+  part(lmg, 0.11, 0.13, 0.15, oliveM, -0.06, -0.12, -0.12); // 彈箱
+  part(lmg, 0.05, 0.12, 0.06, poly, 0, -0.1, 0.06, -0.35);
+  part(lmg, 0.06, 0.1, 0.2, poly, 0, -0.02, 0.25);
+  const burst = new THREE.Group();
+  part(burst, 0.08, 0.11, 0.6, tanM, 0, 0, -0.1);
+  part(burst, 0.03, 0.03, 0.2, dark, 0, 0, -0.5);
+  part(burst, 0.06, 0.15, 0.07, dark, 0, -0.12, 0.08, 0.2); // 彈匣在後面
+  part(burst, 0.05, 0.12, 0.06, poly, 0, -0.1, -0.15, -0.35);
+  part(burst, 0.06, 0.06, 0.16, dark, 0, 0.1, -0.08); // 倍鏡
+  const carbine = new THREE.Group();
+  part(carbine, 0.08, 0.1, 0.36, dark, 0, 0, -0.1);
+  part(carbine, 0.085, 0.085, 0.2, poly, 0, 0, -0.38);
+  part(carbine, 0.06, 0.06, 0.3, dark, 0, 0, -0.62); // 消音器
+  part(carbine, 0.06, 0.14, 0.07, dark, 0, -0.12, -0.18, 0.2);
+  part(carbine, 0.05, 0.12, 0.06, poly, 0, -0.1, 0.02, -0.35);
+  part(carbine, 0.05, 0.08, 0.16, poly, 0, -0.02, 0.18);
+  const autoshotgun = new THREE.Group();
+  part(autoshotgun, 0.09, 0.12, 0.42, dark, 0, 0, -0.1);
+  part(autoshotgun, 0.05, 0.05, 0.3, dark, 0, 0.03, -0.45);
+  part(autoshotgun, 0.1, 0.16, 0.16, poly, 0, -0.14, -0.15); // 彈鼓
+  part(autoshotgun, 0.05, 0.12, 0.06, poly, 0, -0.1, 0.04, -0.4);
+  part(autoshotgun, 0.06, 0.1, 0.22, poly, 0, -0.04, 0.22);
+  const mpistol = new THREE.Group();
+  part(mpistol, 0.05, 0.055, 0.28, dark, 0, 0.02, -0.12);
+  part(mpistol, 0.045, 0.13, 0.07, poly, 0, -0.07, -0.02, -0.25);
+  part(mpistol, 0.035, 0.16, 0.05, dark, 0, -0.17, 0.0, -0.25); // 長彈匣
+  part(mpistol, 0.035, 0.06, 0.035, poly, 0, -0.05, -0.17);
+  const revolver = new THREE.Group();
+  part(revolver, 0.045, 0.06, 0.14, dark, 0, 0.02, -0.06);
+  part(revolver, 0.06, 0.06, 0.08, dark, 0, 0.02, -0.06); // 彈巢
+  part(revolver, 0.025, 0.025, 0.24, dark, 0, 0.04, -0.24);
+  part(revolver, 0.045, 0.13, 0.07, wood, 0, -0.07, 0.03, -0.35);
+  // 近戰
+  const melee = (parts) => { const g = new THREE.Group(); for (const a of parts) part(g, ...a); return g; };
+  const butterfly = melee([[0.012, 0.05, 0.22, steel, 0, 0, -0.16], [0.03, 0.04, 0.16, chrome, 0, 0, 0.03]]);
+  const bat = melee([[0.035, 0.035, 0.3, tapeM, 0, 0, 0.0], [0.07, 0.07, 0.6, wood, 0, 0, -0.42]]);
+  const axe = melee([[0.035, 0.04, 0.7, wood, 0, 0, -0.2], [0.03, 0.18, 0.14, steel, 0, 0.06, -0.52]]);
+  const hammer = melee([[0.035, 0.035, 0.8, wood, 0, 0, -0.25], [0.14, 0.14, 0.3, dark, 0, 0, -0.66, Math.PI / 2]]);
+  const baton = melee([[0.03, 0.03, 0.16, tapeM, 0, 0, 0.02], [0.025, 0.025, 0.42, dark, 0, 0, -0.27], [0.02, 0.02, 0.04, accent, 0, 0, -0.5]]);
+  const katana = melee([[0.012, 0.045, 0.9, steel, 0, 0.01, -0.5], [0.07, 0.07, 0.015, accent, 0, 0, -0.04], [0.035, 0.045, 0.26, redM, 0, 0, 0.1]]);
+  const tknife = melee([[0.012, 0.035, 0.18, steel, 0, 0, -0.14], [0.025, 0.035, 0.11, redM, 0, 0, 0.0]]);
+  arm.add(gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, butterfly, bat, axe, hammer, baton, katana, tknife);
+  const NADE_COLORS = { frag: 0x3d5a2a, flash: 0x9aa3ad, smoke: 0x5b6b5a, molotov: 0x8a5a2a, stun: 0x2f6fd6, decoy: 0xf2c230 };
+  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, butterfly, bat, axe, hammer, baton, katana, tknife };
   for (const m of [body, head]) m.castShadow = true;
   group.add(body, head, visor, arm);
 

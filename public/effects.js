@@ -30,6 +30,7 @@ const NADE_LOOK = {
   smoke: { color: 0x5b6b5a, size: [0.075, 0.14, 0.075] },
   molotov: { color: 0x6b3d1a, size: [0.07, 0.17, 0.07] },
   stun: { color: 0x2f6fd6, size: [0.075, 0.12, 0.075] },
+  decoy: { color: 0xf2c230, size: [0.075, 0.12, 0.075] },
 };
 
 export function createEffects(scene, camera, sfx) {
@@ -194,6 +195,7 @@ export function createEffects(scene, camera, sfx) {
       addFire(ev.nid, pos.x, pos.y, pos.z, now, NADE.NADES.molotov.life);
       return {};
     }
+    if (ev.kind === 'decoy') { decoyLand(ev.nid, ev.pos); sfx('clink', vol(0.4)); return {}; }
     if (ev.kind === 'stun') {
       ring(pos, 0x3da5ff, NADE.NADES.stun.radius, 0.5);
       burst(pos, TEX.flash, 0x6fc3ff, 2.5, 0.3, 2);
@@ -280,10 +282,22 @@ export function createEffects(scene, camera, sfx) {
     for (const fx of flashes) { if (fx.pool) freeLight(fx.pool); else scene.remove(fx.obj); }
     flashes.length = 0;
     setBomb(null);
+    for (const kid of [...knives.keys()]) removeKnife(kid);
+    for (const id of [...decoys.keys()]) decoyEnd(id);
   }
 
   let beepAt = 0;
   function update(dt, now) {
+    // 飛刀：照伺服器給的起點和速度畫拋物線（落地位置以伺服器為準）
+    for (const [kid, k] of knives) {
+      if (k.landed) continue;
+      const t = (now - k.t0) / 1000;
+      if (t > 3.2) { removeKnife(kid); continue; }
+      k.mesh.position.set(k.o[0] + k.v[0] * t, k.o[1] + k.v[1] * t - 6 * t * t, k.o[2] + k.v[2] * t);
+      k.mesh.rotation.y = Math.atan2(-k.v[0], -k.v[2]);
+      k.mesh.rotation.x -= dt * 22; // 一邊飛一邊轉
+    }
+    for (const m of decoys.values()) m.children.forEach((c, i) => { if (i === 0) c.material.emissive?.setHex((now % 600) < 80 ? 0x553300 : 0); });
     // 飛行中的投擲物
     for (const [nid, n] of nades) {
       const t = (now - n.t0) / 1000;
@@ -354,6 +368,66 @@ export function createEffects(scene, camera, sfx) {
   // 看某條視線有沒有被煙擋住（自己的閃光判斷用不到，留給之後）
   function smokeList() { return smokes; }
 
+  // ---------- 飛刀 ----------
+  const knives = new Map(); // kid -> { mesh, o, v, t0, landed }
+  function knifeMesh() {
+    const g = new THREE.Group();
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.04, 0.24), new THREE.MeshStandardMaterial({ color: 0xdfe5ee, roughness: 0.25, metalness: 0.8 }));
+    blade.position.z = -0.1;
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.14), new THREE.MeshStandardMaterial({ color: 0x8b1e1e, roughness: 0.7 }));
+    grip.position.z = 0.08;
+    g.add(blade, grip);
+    g.rotation.order = 'YXZ';
+    return g;
+  }
+  function addKnife(kid, o, v, now) {
+    const mesh = knifeMesh();
+    mesh.position.fromArray(o);
+    scene.add(mesh);
+    knives.set(kid, { mesh, o, v, t0: now, landed: false });
+    sfx('whoosh', 0.3 / (1 + dist(mesh.position) * 0.1));
+  }
+  function landKnife(kid, pos, hit) {
+    const k = knives.get(kid);
+    if (!k) return;
+    k.landed = true;
+    k.mesh.position.set(pos[0], pos[1] + 0.05, pos[2]);
+    // 掉在地上：平躺；插在牆上：刀尖朝前
+    if (pos[1] < 0.3 || hit) k.mesh.rotation.set(-Math.PI / 2 + 0.2, Math.random() * 6, 0);
+    sfx(hit ? 'stab' : 'clang', 0.4 / (1 + dist(k.mesh.position) * 0.1));
+  }
+  function removeKnife(kid) {
+    const k = knives.get(kid);
+    if (!k) return;
+    scene.remove(k.mesh);
+    k.mesh.traverse((x) => { x.geometry?.dispose(); x.material?.dispose(); });
+    knives.delete(kid);
+  }
+  // ---------- 誘餌彈：地上的那顆，會一閃一閃 ----------
+  const decoys = new Map();
+  function decoyLand(id, pos) {
+    const m = nadeMesh('decoy');
+    m.position.fromArray(pos);
+    m.position.y += 0.06;
+    m.rotation.z = Math.PI / 2;
+    scene.add(m);
+    decoys.set(id, m);
+  }
+  function decoyShot(m, now) {
+    const pos = new THREE.Vector3(m.x, m.y + 0.15, m.z);
+    const d = dist(pos);
+    for (let i = 0; i < m.n; i++) {
+      sfx(m.w, 0.45 / (1 + d * (m.quiet ? 0.25 : 0.07)), d / 70, i * m.gap / 1000);
+    }
+  }
+  function decoyEnd(id) {
+    const m = decoys.get(id);
+    if (!m) return;
+    scene.remove(m);
+    m.traverse((x) => { x.geometry?.dispose(); x.material?.dispose(); });
+    decoys.delete(id);
+  }
+
   // 先把會用到的材質編譯好（第一次出現時才編譯會卡一下）
   function warm(renderer) {
     const g = new THREE.Group();
@@ -373,5 +447,5 @@ export function createEffects(scene, camera, sfx) {
     g.traverse((x) => x.geometry?.dispose()); // 材質不要 dispose：編譯好的程式會跟著被丟掉
   }
 
-  return { addNade, boom, setBomb, bombBoom, showArc, clear, update, smokeList, killFire, warm };
+  return { addNade, boom, setBomb, bombBoom, showArc, clear, update, smokeList, killFire, warm, addKnife, landKnife, removeKnife, decoyLand, decoyShot, decoyEnd };
 }

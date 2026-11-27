@@ -10,6 +10,10 @@
 // pellets：霰彈槍一發幾顆彈丸   pelletSpread：彈丸散開的半徑（弧度）
 // shells：一顆一顆裝 { startMs 開始, eachMs 每顆, pumpMs 打光時最後要泵一次 }
 // lockBack：打光時套筒停在後面
+// burst：點放 { n 一次幾發, gapMs 每發間隔 }（fireMs = 一串打完後要等多久）
+// settle：輕機槍站著連射越打越準 { per 每發縮小多少, min 最小倍率 }   quiet：消音（槍聲小、聽得到的距離短）
+// 近戰：range 距離  back 從背後  head 打頭（重擊）  knock 把人打退（公尺／秒）  stun 電擊讓對方晃（毫秒）
+// throwable：飛刀（右鍵丟出去，要撿回來） { speed, body, head }
 (function (root) {
   const WEAPONS = {
     rifle: {
@@ -69,17 +73,107 @@
       heavy: { body: 80, back: 100, range: 2.0, windMs: 300, fireMs: 1100 },
       desc: '輕擊兩刀擊倒；重擊（右鍵／手機長按）傷害 80；從背後一刀擊倒；拿著跑得最快',
     },
+    // ---------- 第二批：新槍 ----------
+    lmg: {
+      id: 'lmg', slot: 'primary', name: '輕機槍', short: '機槍', icon: '🔫',
+      mag: 100, fireMs: 88, reloadMs: 4300, reloadEmptyMs: 4900, body: 24, head: 60, speed: 0.82,
+      spread: [0.014, 0.075, 0.13], recoil: 0.12, kick: 0.0055, falloff: [25, 60, 0.8], settle: { per: 0.06, min: 0.35 },
+      ads: { zoom: 1.35, ms: 330, spread: 0.5, speed: 0.6 },
+      desc: '100 發彈匣；站著連射越打越準，邊走邊打很散；換彈超久、走路很慢',
+    },
+    burst: {
+      id: 'burst', slot: 'primary', name: '三連發步槍', short: '三連發', icon: '🔫',
+      mag: 30, fireMs: 260, reloadMs: 2000, reloadEmptyMs: 2400, body: 30, head: 75, speed: 1,
+      spread: [0.0022, 0.045, 0.09], recoil: 0.2, kick: 0.008, falloff: [35, 70, 0.9], burst: { n: 3, gapMs: 62 },
+      ads: { zoom: 1.6, ms: 220, spread: 0.3, speed: 0.72 },
+      desc: '按一下打三發；中距離很準，兩串（四發）擊倒；貼臉輸給衝鋒槍',
+    },
+    carbine: {
+      id: 'carbine', slot: 'primary', name: '消音卡賓槍', short: '卡賓槍', icon: '🔫', quiet: true,
+      mag: 25, fireMs: 95, reloadMs: 1900, reloadEmptyMs: 2300, body: 24, head: 62, speed: 1.03,
+      spread: [0.004, 0.04, 0.085], recoil: 0.15, kick: 0.006, falloff: [18, 45, 0.75],
+      ads: { zoom: 1.45, ms: 190, spread: 0.35, speed: 0.78 },
+      desc: '有消音器：槍聲很小，遠一點的人聽不到；傷害比步槍低一點',
+    },
+    autoshotgun: {
+      id: 'autoshotgun', slot: 'primary', name: '自動霰彈槍', short: '自動霰彈', icon: '💥',
+      mag: 8, fireMs: 260, reloadMs: 2600, reloadEmptyMs: 3000, body: 11, head: 16, speed: 0.95,
+      spread: [0.01, 0.05, 0.09], recoil: 0.5, kick: 0.025, pellets: 8, pelletSpread: 0.085, moveSpread: 1.3, falloff: [5, 18, 0.25],
+      ads: { zoom: 1.15, ms: 180, spread: 0.8, speed: 0.8 },
+      desc: '不用泵動、可以連發，近距離兩發擊倒；彈丸傷害比較低、彈匣小',
+    },
+    mpistol: {
+      id: 'mpistol', slot: 'secondary', name: '機槍手槍', short: '機槍手槍', icon: '🔫',
+      mag: 18, fireMs: 62, reloadMs: 1500, reloadEmptyMs: 1800, body: 15, head: 40, speed: 1.05,
+      spread: [0.012, 0.045, 0.08], recoil: 0.2, kick: 0.009, falloff: [6, 18, 0.55], lockBack: true,
+      ads: { zoom: 1.15, ms: 120, spread: 0.6, speed: 0.85 },
+      desc: '全自動手槍，射速超快但很散；近距離救命用',
+    },
+    revolver: {
+      id: 'revolver', slot: 'secondary', name: '左輪手槍', short: '左輪', icon: '🤠',
+      mag: 6, fireMs: 390, reloadMs: 2300, reloadEmptyMs: 2300, body: 45, head: 105, speed: 1.05,
+      spread: [0.0018, 0.05, 0.1], recoil: 0.8, kick: 0.04, falloff: [30, 60, 0.9],
+      ads: { zoom: 1.3, ms: 170, spread: 0.3, speed: 0.85 },
+      desc: '6 發；很準、遠距離也有力，身體三發、爆頭一發；射速慢、換彈慢',
+    },
+    // ---------- 近戰 ----------
+    butterfly: {
+      id: 'butterfly', slot: 'melee', name: '蝴蝶刀', short: '蝴蝶刀', icon: '🦋', melee: true,
+      fireMs: 360, range: 2.0, body: 38, back: 100, speed: 1.12,
+      heavy: { body: 62, back: 100, range: 1.9, windMs: 220, fireMs: 800 },
+      desc: '揮得最快、距離最短；從背後一刀擊倒',
+    },
+    bat: {
+      id: 'bat', slot: 'melee', name: '球棒', short: '球棒', icon: '⚾', melee: true,
+      fireMs: 650, range: 2.6, body: 45, back: 55, speed: 1.0,
+      heavy: { body: 70, back: 80, range: 2.6, windMs: 380, fireMs: 1150, knock: 9 },
+      desc: '重擊會把人打飛退後幾步',
+    },
+    axe: {
+      id: 'axe', slot: 'melee', name: '斧頭', short: '斧頭', icon: '🪓', melee: true,
+      fireMs: 780, range: 2.5, body: 50, back: 60, speed: 1.0,
+      heavy: { body: 80, back: 90, head: 120, range: 2.4, windMs: 450, fireMs: 1300 },
+      desc: '重擊打中頭一下擊倒；揮得比較慢',
+    },
+    hammer: {
+      id: 'hammer', slot: 'melee', name: '大錘', short: '大錘', icon: '🔨', melee: true,
+      fireMs: 1000, range: 2.5, body: 60, back: 70, speed: 0.85,
+      heavy: { body: 95, back: 100, head: 130, range: 2.5, windMs: 650, fireMs: 1600, knock: 5 },
+      desc: '重擊幾乎一下擊倒；很慢，拿著走路也慢',
+    },
+    baton: {
+      id: 'baton', slot: 'melee', name: '電擊棍', short: '電擊棍', icon: '⚡', melee: true,
+      fireMs: 560, range: 2.1, body: 35, back: 45, speed: 1.05, stun: 500,
+      heavy: { body: 50, back: 60, range: 2.1, windMs: 300, fireMs: 1000, stun: 1300 },
+      desc: '打中會電到對方：畫面晃、移動變慢（重擊比較久）',
+    },
+    katana: {
+      id: 'katana', slot: 'melee', name: '武士刀', short: '武士刀', icon: '⚔', melee: true,
+      fireMs: 520, range: 3.2, body: 45, back: 70, speed: 1.0,
+      heavy: { body: 75, back: 90, range: 3.4, windMs: 350, fireMs: 1050 },
+      desc: '攻擊距離最長，可以連揮',
+    },
+    tknife: {
+      id: 'tknife', slot: 'melee', name: '飛刀', short: '飛刀', icon: '🗡', melee: true,
+      fireMs: 450, range: 2.0, body: 40, back: 70, speed: 1.08,
+      heavy: { body: 40, back: 70, range: 2.0, windMs: 160, fireMs: 600 },
+      throwable: { speed: 32, body: 75, head: 150 },
+      desc: '右鍵（手機長按）把刀丟出去：打身體 75、爆頭一發擊倒；丟出去要走過去撿回來',
+    },
     // 投擲物（爆破模式限定）：每回合各一顆；數值在 nades.js
     frag: { id: 'frag', slot: 'throw', name: '手榴彈', short: '手榴彈', icon: '💣', nade: true, speed: 1.05, desc: '1.6 秒後爆炸，範圍 6.5 公尺、最多 100 傷害；會炸到自己，不會炸到隊友；可以暫時炸開煙霧' },
     flash: { id: 'flash', slot: 'throw', name: '閃光彈', short: '閃光彈', icon: '✨', nade: true, speed: 1.05, desc: '1.4 秒後爆開，看著它的人白畫面約 3 秒（側面 1.5 秒）；自己也會被閃' },
     smoke: { id: 'smoke', slot: 'throw', name: '煙霧彈', short: '煙霧彈', icon: '💨', nade: true, speed: 1.05, desc: '停下來後冒出半徑 4.5 公尺的濃煙，維持 15 秒；會蓋掉火焰' },
     molotov: { id: 'molotov', slot: 'throw', name: '火焰彈', short: '火焰彈', icon: '🔥', nade: true, speed: 1.05, desc: '碰到地面就燒起來，半徑 3 公尺、7 秒，每秒約 32 傷害；隊友和自己也會被燒；被煙霧蓋掉' },
     stun: { id: 'stun', slot: 'throw', name: '震撼彈', short: '震撼彈', icon: '🚨', nade: true, speed: 1.05, desc: '1.4 秒後爆開，8 公尺內看得到它的人 3 秒內畫面搖晃、移動和轉身變慢' },
+    decoy: { id: 'decoy', slot: 'throw', name: '誘餌彈', short: '誘餌彈', icon: '🎭', nade: true, speed: 1.05, desc: '落地後 8 秒內一直發出你主武器的假槍聲，騙敵人往那邊看' },
   };
   // 每個欄位可以選的武器
   const CHOICES = {
-    primary: ['rifle', 'smg', 'shotgun', 'sniper', 'dmr'], secondary: ['pistol', 'deagle'], melee: ['knife'],
-    throw1: ['frag', 'flash', 'smoke', 'molotov', 'stun'], throw2: ['frag', 'flash', 'smoke', 'molotov', 'stun'],
+    primary: ['rifle', 'burst', 'carbine', 'smg', 'lmg', 'shotgun', 'autoshotgun', 'sniper', 'dmr'],
+    secondary: ['pistol', 'mpistol', 'deagle', 'revolver'],
+    melee: ['knife', 'butterfly', 'bat', 'axe', 'hammer', 'baton', 'katana', 'tknife'],
+    throw1: ['frag', 'flash', 'smoke', 'molotov', 'stun', 'decoy'], throw2: ['frag', 'flash', 'smoke', 'molotov', 'stun', 'decoy'],
   };
   const SLOT_OF = { primary: 'primary', secondary: 'secondary', melee: 'melee', throw1: 'throw', throw2: 'throw' };
   const DEFAULT_LOADOUT = { primary: 'rifle', secondary: 'pistol', melee: 'knife', throw1: 'flash', throw2: 'smoke' };

@@ -5,16 +5,21 @@ import { uiClick } from './audio.js';
 const $ = (id) => document.getElementById(id);
 const { WEAPONS, CHOICES } = window.GAME_WEAPONS;
 const ROWS = [
-  ['primary', '主武器'], ['secondary', '副武器'], ['melee', '刀'], ['throw1', '投擲物 1'], ['throw2', '投擲物 2'],
+  ['primary', '主武器'], ['secondary', '副武器'], ['melee', '近戰'], ['throw1', '投擲物 1'], ['throw2', '投擲物 2'],
 ];
 let editing = 0;
 
 function stats(w) {
   if (w.disabled) return w.desc;
   if (w.nade) return `${w.desc}\n（爆破模式限定，每回合一顆）`;
-  if (w.melee) return `傷害 ${w.body}（背刺 ${w.back}）· 距離 ${w.range} 公尺 · 移動 ${Math.round(w.speed * 100)}%`;
-  const dmg = w.pellets ? `傷害 ${w.pellets}×${w.body}` : w.chest ? `傷害 胸口 ${w.chest} / 腹腿 ${w.body} / 爆頭 ${w.head}` : `傷害 ${w.body} / 爆頭 ${w.head}`;
-  const rate = w.fireMs >= 300 ? `每發間隔 ${(w.fireMs / 1000).toFixed(2)} 秒` : `每秒 ${(1000 / w.fireMs).toFixed(1)} 發`;
+  if (w.melee) {
+    const h = w.heavy;
+    const heavy = w.throwable ? `丟出去 ${w.throwable.body}（爆頭 ${w.throwable.head}）` : `重擊 ${h.body}${h.head ? `（打頭 ${h.head}）` : ''}`;
+    const speed = w.fireMs <= 400 ? '很快' : w.fireMs <= 560 ? '快' : w.fireMs <= 800 ? '中' : '慢';
+    return `輕擊 ${w.body}（背刺 ${w.back}）· ${heavy} · 揮速 ${speed} · 距離 ${w.range} 公尺 · 移動 ${Math.round(w.speed * 100)}%\n${w.desc}`;
+  }
+  const dmg = w.pellets ? `傷害 ${w.pellets}×${w.body}` : w.burst ? `傷害 ${w.body} / 爆頭 ${w.head}（一次 ${w.burst.n} 發）` : w.chest ? `傷害 胸口 ${w.chest} / 腹腿 ${w.body} / 爆頭 ${w.head}` : `傷害 ${w.body} / 爆頭 ${w.head}`;
+  const rate = w.burst ? `每串間隔 ${((w.fireMs + w.burst.gapMs * (w.burst.n - 1)) / 1000).toFixed(2)} 秒` : w.fireMs >= 300 ? `每發間隔 ${(w.fireMs / 1000).toFixed(2)} 秒` : `每秒 ${(1000 / w.fireMs).toFixed(1)} 發`;
   const range = w.falloff ? `有效距離 ${w.falloff[0]} 公尺` : '有效距離 不衰減';
   const zoom = w.ads ? `瞄準 ${w.ads.zoom} 倍` : '';
   return [dmg, rate, `彈匣 ${w.mag}`, range, zoom, `移動 ${Math.round(w.speed * 100)}%`].filter(Boolean).join(' · ') + `\n${w.desc}`;

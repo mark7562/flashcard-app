@@ -36,7 +36,10 @@ const me = {
 // 目前模式能拿的欄位（爆破模式多了兩個投擲物）
 const isRounds = () => !!room && room.mode !== 'tdm';
 function slotList() { return WPN.slotsFor(room?.mode); }
-function slotUsable(slot) { return !slot.startsWith('throw') || (me.nadesLeft[slot] > 0 && WEAPONS[me.kit[slot]]?.nade); }
+function slotUsable(slot) {
+  if (slot === 'melee' && me.tknifeOut) return false; // 飛刀丟出去了，還沒撿回來
+  return !slot.startsWith('throw') || (me.nadesLeft[slot] > 0 && WEAPONS[me.kit[slot]]?.nade);
+}
 const roster = new Map(); // id -> { name, color, kills, deaths }
 const remotes = new Map(); // id -> { group, buf: [...], alive }
 const keys = {};
@@ -153,6 +156,7 @@ function physics(dt) {
   const k = 1 - Math.exp(-accel * dt);
   me.vx += (wx - me.vx) * k;
   me.vz += (wz - me.vz) * k;
+  if (me.knock && performance.now() < me.knock.until) { me.vx = me.knock.vx; me.vz = me.knock.vz; } // 被球棒／大錘打退
 
   if (jumpQueued && me.onGround) { me.vy = JUMP; me.onGround = false; }
   jumpQueued = false;
@@ -206,6 +210,9 @@ function applyKit(kit) {
   me.weapon = 'primary';
   me.prevWeapon = 'primary';
   me.nadesLeft = { throw1: 1, throw2: 1 };
+  me.tknifeOut = 0;
+  me.burstN = 0;
+  views.knifeBack();
   me.nadeHold = null;
   effects.showArc(null);
   me.reloadEnd = 0;
@@ -356,6 +363,8 @@ function shoot(now) {
     startReload();
     return;
   }
+  if (w.burst) me.burstN = me.burstN > 0 && me.burstN < w.burst.n && now - me.lastShot < w.fireMs ? me.burstN + 1 : 1;
+  me.spray = now - me.lastShot < Math.max(w.fireMs, 60) * 2.5 ? (me.spray || 0) + 1 : 1; // 連射了幾發（輕機槍越打越準）
   me.lastShot = now;
   me.ammoBy[me.weapon] -= 1;
   me.firedSince = true;
@@ -405,9 +414,14 @@ function currentSpread(w) {
   let sp = me.onGround ? w.spread[0] + (w.spread[1] - w.spread[0]) * moveFactor(w) : w.spread[2];
   sp += me.recoil * 0.03;
   if (w.ads) sp *= 1 + (w.ads.spread - 1) * me.adsK;
+  // 輕機槍：站穩連射，越打越準
+  if (w.settle && me.onGround && moveFactor(w) < 0.2 && performance.now() - me.lastShot < w.fireMs * 2.5) sp *= Math.max(w.settle.min, 1 - w.settle.per * (me.spray || 0));
   return sp;
 }
-function cooldown(w) { return me.lastHeavy && w.heavy ? w.heavy.fireMs : w.fireMs; }
+function cooldown(w) {
+  if (w.burst && me.burstN > 0 && me.burstN < w.burst.n) return w.burst.gapMs; // 同一串裡的下一發
+  return me.lastHeavy && w.heavy ? w.heavy.fireMs : w.fireMs;
+}
 // 揮刀（輕擊）：三種揮法輪流，超過 1 秒沒揮就從第一招開始；命中由伺服器判定
 function swing(now, w) {
   me.combo = now - me.swingAt > 1000 ? 0 : (me.combo + 1) % 3;
@@ -447,6 +461,14 @@ function strikeHeavy() {
   me.combo = 2;
   camera.getWorldDirection(camDir);
   send({ t: 'melee', heavy: true, d: camDir.toArray().map((v) => +v.toFixed(4)), o: [+me.x.toFixed(3), +(me.y + EYE).toFixed(3), +me.z.toFixed(3)] });
+  if (w.throwable) {
+    // 飛刀丟出去：手上沒刀了，換回上一把武器，要走過去撿
+    views.knifeThrow(now);
+    me.tknifeOut = -1;
+    setTimeout(() => { if (me.tknifeOut === -1) { me.tknifeOut = 0; views.knifeBack(); } }, 1500); // 伺服器沒收到：刀還在手上
+    setTimeout(() => { if (me.weapon === 'melee') switchWeapon(me.prevWeapon && me.prevWeapon !== 'melee' ? me.prevWeapon : 'primary'); }, 280);
+    return;
+  }
   views.strike(now);
   meleeSound(w.heavy.range, 0.1);
 }
@@ -1139,8 +1161,32 @@ function handle(m) {
       break;
     }
     case 'stunned':
-      me.stunUntil = performance.now() + m.ms;
-      shake = Math.max(shake, 0.5);
+      me.stunUntil = Math.max(me.stunUntil || 0, performance.now() + m.ms);
+      shake = Math.max(shake, m.ms < 2000 ? 0.3 : 0.5);
+      break;
+    case 'knock':
+      me.knock = { vx: m.vx, vz: m.vz, until: performance.now() + 260 };
+      shake = Math.max(shake, 0.4);
+      break;
+    // ---------- 飛刀 ----------
+    case 'tknife':
+      effects.addKnife(m.kid, m.o, m.v, performance.now());
+      if (m.id === me.id) me.tknifeOut = m.kid;
+      else { const r = remotes.get(m.id); if (r) { r.swingAt = performance.now(); r.swingV = 3; } }
+      break;
+    case 'tkland':
+      effects.landKnife(m.kid, m.pos, m.hit);
+      break;
+    case 'tkpick':
+      effects.removeKnife(m.kid);
+      if (m.id === me.id && m.id) { me.tknifeOut = 0; views.knifeBack(); toast('🗡 撿回飛刀'); sfx('flip', 0.4); }
+      break;
+    // ---------- 誘餌彈 ----------
+    case 'decoyShot':
+      effects.decoyShot({ ...m, quiet: !!WEAPONS[m.w]?.quiet }, performance.now());
+      break;
+    case 'decoyEnd':
+      effects.decoyEnd(m.id);
       break;
     // ---------- 爆破模式：炸彈 ----------
     case 'bomb':
@@ -1204,8 +1250,9 @@ function handle(m) {
       }
       const dist = Math.hypot(o.x - me.x, o.z - me.z);
       const sw = WEAPONS[m.w] && !WEAPONS[m.w].melee ? m.w : 'rifle';
-      const loud = sw === 'sniper' || sw === 'shotgun' ? 0.05 : 0.07; // 狙擊槍、霰彈槍傳得比較遠
-      sfx(sw, 0.45 / (1 + dist * loud), dist / 70); // 越遠越小聲、越悶
+      const quiet = !!WEAPONS[sw]?.quiet;
+      const loud = quiet ? 0.3 : sw === 'sniper' || sw === 'shotgun' || sw === 'lmg' ? 0.05 : 0.07; // 狙擊槍、霰彈槍傳得比較遠；消音槍很快就聽不到
+      sfx(sw, (quiet ? 0.32 : 0.45) / (1 + dist * loud), dist / 70); // 越遠越小聲、越悶
       // 附近的人拉栓／泵動也聽得到（觀戰時由手上的動畫播）
       if (dist < 30 && m.id !== specActive) {
         const v = 0.3 / (1 + dist * 0.15);
@@ -1248,7 +1295,11 @@ function handle(m) {
     }
     case 'hit':
       showHit(m.head, m.kill);
-      if (curW().melee && performance.now() - me.swingAt < 700) { me.meleeHitAt = performance.now(); sfx('stab', 0.5); }
+      if (curW().melee && performance.now() - me.swingAt < 700) {
+        me.meleeHitAt = performance.now();
+        const mw = curW().id;
+        sfx(mw === 'bat' ? 'bonk' : mw === 'hammer' ? 'thud' : mw === 'baton' ? 'zap' : 'stab', 0.5);
+      }
       beep(m.head ? 1400 : 900, 0.05, 0.1);
       if (m.kill) beep(1600, 0.12, 0.12, 'triangle', 0.06);
       break;
@@ -1932,7 +1983,8 @@ function frame() {
     me.pitch = Math.max(-1.5, Math.min(1.5, me.pitch));
     if (me.alive) {
       if (frozen(now)) { me.vx = me.vz = 0; jumpQueued = false; } else physics(dt);
-      if (firing) shoot(now);
+      const bw = curW();
+      if (firing || (bw.burst && me.burstN > 0 && me.burstN < bw.burst.n)) shoot(now);
       updateReload(now);
     } else if (room?.mode === 'tdm') {
       $('respawn').textContent = `${Math.max(0, Math.ceil((respawnAt - now) / 1000))} 秒後重生…`;

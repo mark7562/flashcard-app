@@ -36,9 +36,9 @@ const LEVELS = {
 
 // 每個難度挑主武器的比例（新手比較少拿狙擊槍）；scope：開好鏡之後還要再瞄多久才開槍
 const KIT_WEIGHTS = {
-  easy: { primary: { rifle: 5, smg: 3, shotgun: 2, sniper: 0.5, dmr: 1 }, secondary: { pistol: 3, deagle: 1 }, scope: [900, 1500] },
-  normal: { primary: { rifle: 4, smg: 3, shotgun: 2, sniper: 1.2, dmr: 1.5 }, secondary: { pistol: 2, deagle: 1.5 }, scope: [550, 1000] },
-  hard: { primary: { rifle: 4, smg: 3, shotgun: 2, sniper: 2, dmr: 2 }, secondary: { pistol: 1.5, deagle: 2 }, scope: [320, 650] },
+  easy: { primary: { rifle: 4, burst: 1, carbine: 1.5, smg: 3, lmg: 1, shotgun: 1.5, autoshotgun: 1, sniper: 0.5, dmr: 1 }, secondary: { pistol: 3, mpistol: 1.5, deagle: 1, revolver: 0.5 }, scope: [900, 1500] },
+  normal: { primary: { rifle: 3, burst: 1.5, carbine: 1.5, smg: 2.5, lmg: 1, shotgun: 1.5, autoshotgun: 1, sniper: 1.2, dmr: 1.5 }, secondary: { pistol: 2, mpistol: 1.5, deagle: 1.5, revolver: 1 }, scope: [550, 1000] },
+  hard: { primary: { rifle: 3, burst: 2, carbine: 1.5, smg: 2.5, lmg: 1, shotgun: 1.5, autoshotgun: 1, sniper: 2, dmr: 2 }, secondary: { pistol: 1.5, mpistol: 1.5, deagle: 2, revolver: 1.5 }, scope: [320, 650] },
 };
 function weighted(table) {
   const entries = Object.entries(table);
@@ -48,8 +48,9 @@ function weighted(table) {
 }
 function pickLoadout(level) {
   const t = KIT_WEIGHTS[level] || KIT_WEIGHTS.normal;
-  const nades = { flash: 3, smoke: 3, frag: 2.5, molotov: 2, stun: 1.5 };
-  return WPN.clean({ primary: weighted(t.primary), secondary: weighted(t.secondary), melee: 'knife', throw1: weighted(nades), throw2: weighted(nades) });
+  const nades = { flash: 3, smoke: 3, frag: 2.5, molotov: 2, stun: 1.5, decoy: 1 };
+  const melee = { knife: 3, butterfly: 1, bat: 1, axe: 1, hammer: 0.7, baton: 1, katana: 1, tknife: 0.7 };
+  return WPN.clean({ primary: weighted(t.primary), secondary: weighted(t.secondary), melee: weighted(melee), throw1: weighted(nades), throw2: weighted(nades) });
 }
 
 const NAMES = [
@@ -415,11 +416,12 @@ function findCover(p, enemy, nav) {
 }
 
 // 聽到槍聲
-function hear(p, shooter, now) {
+function hear(p, shooter, now, range = Infinity) {
   const b = p.bot, c = b.cfg;
   if (!c.hear || !p.alive || b.state === 'engage' || b.state === 'retreat') return;
   if (b.state === 'investigate' && now - b.heardAt < 1500) return; // 不要每一發槍聲都重新找路
   const d = Math.hypot(shooter.x - p.x, shooter.z - p.z);
+  if (d > range) return; // 消音槍：太遠聽不到
   if (p.room.mode === 'bomb') {
     // 爆破模式：不離開崗位去找人；聽到包點附近有槍聲就通知隊友轉點，很近的話轉頭看
     if (shooter.team !== p.team) bombAlert(p.room, p, shooter, now);
@@ -683,10 +685,11 @@ function think(p, r, now, dt, api) {
       let err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray) * (b.ground ? 1 : 2.2);
       // 開鏡：子彈幾乎就落在準心上（觀戰看到準心在人身上就會打中）；
       // 失誤改成「準心還沒對好就開槍」（看得到的偏差），開鏡後也要多瞄一下
-      if (scopeGun) err = c.error * 0.3 * (0.5 + dist / (c.rangeFalloff * 3));
+      if (scopeGun) err = c.error * (W.bolt ? 0.3 : 0.42) * (0.5 + dist / (c.rangeFalloff * 3)); // 半自動狙擊連發快，準度給低一點
       // 邊走邊開槍比較不準（跟玩家一樣：看這把槍移動時的散布、走得多快）
       err = Math.hypot(err, W.spread[1] * 0.3 * (b.moveK || 0)) * (1 + 0.8 * (b.moveK || 0));
       if ((b.stunUntil || 0) > now) err *= 2.5; // 被震撼彈震到：很難瞄
+      if (W.settle && (b.moveK || 0) < 0.2) err *= Math.max(W.settle.min, 1 - W.settle.per * b.sprayN); // 輕機槍站穩越打越準
       const jy = p.yaw + randn() * err;
       const jp = p.pitch + randn() * err;
       b.sprayN += 1;
@@ -694,7 +697,12 @@ function think(p, r, now, dt, api) {
       api.shoot(p, { d: [-Math.sin(jy) * cp, Math.sin(jp), -Math.cos(jy) * cp], o: [p.x, eyeY, p.z], s: (Math.random() * 1e9) | 0, a: scopeGun ? 1 : 0, m: +(b.moveK || 0).toFixed(2) });
       b.burstLeft -= 1;
       if (W.bolt) p.adsSince = 0; // 拉栓：先退出狙擊鏡
-      if (W.fireMs >= 300) {
+      if (W.burst) {
+        // 三連發：一串打完再停一下
+        b.burstIdx = ((b.burstIdx || 0) + 1) % W.burst.n;
+        if (b.burstIdx) b.nextShotAt = now + W.burst.gapMs + 5;
+        else { b.sprayN = 0; b.nextShotAt = now + W.fireMs * 1.05 + rand(c.pause[0] * 0.3, c.pause[1] * 0.5); }
+      } else if (W.fireMs >= 300) {
         // 半自動、栓動、泵動：一發一發打
         b.sprayN = 0;
         b.nextShotAt = now + W.fireMs * 1.05 + rand(c.pause[0] * 0.4, c.pause[1] * 0.6);
@@ -839,7 +847,12 @@ function think(p, r, now, dt, api) {
   if (wantJump) jump(b, now);
   const speed = (b.state === 'engage' && !W.melee ? c.speed * (b.pushing ? 0.9 : 0.6) : b.state === 'guard' ? 0 : c.speed) * (W.speed || 1) * (p.adsSince ? W.ads.speed : 1) * ((b.stunUntil || 0) > now ? 0.5 : 1);
   const ox = p.x, oz = p.z;
-  const blocked = move(p, b, nav, mx, mz, speed, dt);
+  let blocked = move(p, b, nav, mx, mz, speed, dt);
+  // 被球棒／大錘打退：往後滑一小段
+  if (b.knock && now < b.knock.until) {
+    const kv = Math.hypot(b.knock.vx, b.knock.vz);
+    move(p, b, nav, b.knock.vx / kv, b.knock.vz / kv, kv, dt);
+  } else b.knock = null;
   b.moveK = Math.min(1, Math.hypot(p.x - ox, p.z - oz) / (6.5 * W.speed * dt)); // 這一格走多快（0 = 站著，1 = 全速）
   if (blocked && b.state !== 'engage') {
     // 被擋住：先試著跳，跳了還是過不去就換條路
@@ -1045,7 +1058,13 @@ function nadeBrain(p, b, r, now, api, enemy) {
   if (attack && plan && bomb && bomb.state !== 'planted' && now >= plan.execAt && now - plan.execAt < 6000 && b.stagePt && Math.hypot(b.stagePt[0] - p.x, b.stagePt[1] - p.z) < 8) {
     // 進攻：衝點前對包點丟煙（擋住守點的人）和閃光
     const site = map.sites.find((s) => s.id === plan.site);
-    const slot = want(['smoke']) || want(['flash', 'stun']);
+    const decoy = want(['decoy']);
+    const other = map.sites.find((s) => s.id !== plan.site);
+    if (decoy && other && Math.random() < 0.5) {
+      const dx = other.c[0] - p.x, dz = other.c[1] - p.z, dl = Math.hypot(dx, dz) || 1;
+      pick = { slot: decoy, target: [p.x + dx / dl * 14, 0, p.z + dz / dl * 14] };
+    }
+    const slot = pick ? null : want(['smoke']) || want(['flash', 'stun']);
     if (slot) {
       const kind = p.loadout[slot];
       const h = map.holds[plan.site][p.id % map.holds[plan.site].length];

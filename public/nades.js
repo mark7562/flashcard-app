@@ -7,6 +7,7 @@
     smoke: { maxT: 3000, radius: 4.5, life: 15000, grow: 1200, clearMs: 2500 }, // 煙霧彈：停下來才冒煙
     molotov: { maxT: 2200, radius: 3, life: 7000, tickMs: 250, tickDmg: 8 }, // 火焰彈：碰到地面就燒
     stun: { fuse: 1400, radius: 8, ms: 3000 }, // 震撼彈
+    decoy: { maxT: 3000, life: 8000 }, // 誘餌彈：停下來後一直發出假槍聲
   };
   const G = 18, R = 0.08, DT = 1 / 60;
   const FAR = 17, NEAR = 8.5, UP = 2.2; // 丟遠 / 丟近的力道
@@ -53,7 +54,7 @@
       }
       pts.push([...p]);
       const speed = Math.hypot(u[0], u[1], u[2]);
-      if (speed < 0.35) { restT += DT; if (kind === 'smoke' && restT > 0.3) { end = 'rest'; break; } } else restT = 0;
+      if (speed < 0.35) { restT += DT; if ((kind === 'smoke' || kind === 'decoy') && restT > 0.3) { end = 'rest'; break; } } else restT = 0;
     }
     return { pts, bounces, end, t };
   }

@@ -193,6 +193,63 @@ const SFX = {
   stab(t, v) { noise(t, 0.08, v * 0.6, 'lowpass', 700, 200); tone(t, 0.1, v * 0.5, 'sine', 110, 60); },
   clang(t, v) { tone(t, 0.18, v * 0.25, 'triangle', 2450, 2300); tone(t, 0.14, v * 0.18, 'triangle', 3170, 3000); noise(t, 0.04, v * 0.3, 'highpass', 3000, 3000); },
   flip(t, v) { noise(t, 0.06, v * 0.2, 'bandpass', 2500, 3500, 3); },
+  // ---------- 第二批武器 ----------
+  // 輕機槍：比步槍粗、低
+  lmg(t, v, m) {
+    const top = 4600 * (1 - m * 0.8);
+    noise(t, 0.1, v * 0.95, 'lowpass', top, 500);
+    tone(t, 0.13, v * 0.85, 'sine', 115, 40);
+    noise(t + 0.02, 0.3, v * 0.22, 'bandpass', 800 * (1 - m * 0.5), 260, 0.8);
+  },
+  // 三連發步槍：乾淨、清脆
+  burst(t, v, m) {
+    const top = 6000 * (1 - m * 0.8);
+    noise(t, 0.07, v * 0.85, 'lowpass', top, 800);
+    tone(t, 0.09, v * 0.7, 'sine', 170, 55);
+    tone(t, 0.02, v * 0.2, 'square', 1300 * (1 - m * 0.5), 800);
+    noise(t + 0.02, 0.22, v * 0.18, 'bandpass', 1100 * (1 - m * 0.5), 350, 0.8);
+  },
+  // 消音卡賓槍：悶悶的「噗」＋槍機聲
+  carbine(t, v, m) {
+    noise(t, 0.05, v * 0.55, 'bandpass', 1400 * (1 - m * 0.5), 600, 1.2);
+    tone(t, 0.05, v * 0.3, 'sine', 260, 120);
+    noise(t + 0.02, 0.03, v * 0.25, 'bandpass', 3200, 2500, 4);
+  },
+  // 自動霰彈槍：比泵動短一點
+  autoshotgun(t, v, m) {
+    const top = 4500 * (1 - m * 0.8);
+    noise(t, 0.13, v * 1.0, 'lowpass', top, 400);
+    tone(t, 0.16, v * 0.9, 'sine', 105, 40);
+    noise(t + 0.01, 0.05, v * 0.45, 'bandpass', 2000 * (1 - m * 0.5), 800, 0.6);
+    noise(t + 0.04, 0.35, v * 0.18, 'lowpass', 900 * (1 - m * 0.5), 220);
+  },
+  // 機槍手槍：又快又尖
+  mpistol(t, v, m) {
+    const top = 7500 * (1 - m * 0.8);
+    noise(t, 0.04, v * 0.7, 'bandpass', top * 0.5, 1300, 0.9);
+    tone(t, 0.03, v * 0.3, 'square', 2100 * (1 - m * 0.5), 900);
+    tone(t, 0.05, v * 0.35, 'sine', 260, 100);
+  },
+  // 左輪：響亮的「砰」＋長尾音
+  revolver(t, v, m) {
+    const top = 5600 * (1 - m * 0.8);
+    noise(t, 0.1, v * 1.05, 'lowpass', top, 420);
+    tone(t, 0.16, v * 0.85, 'sine', 110, 38);
+    tone(t, 0.04, v * 0.3, 'square', 800 * (1 - m * 0.5), 350);
+    noise(t + 0.04, 0.55, v * 0.2, 'bandpass', 650 * (1 - m * 0.5), 200, 0.8);
+  },
+  cylOpen(t, v) { noise(t, 0.05, v * 0.4, 'bandpass', 2400, 1600, 3); tone(t, 0.05, v * 0.2, 'triangle', 1400, 1000); },
+  cylClose(t, v) { noise(t, 0.04, v * 0.5, 'bandpass', 1800, 2600, 3); tone(t + 0.02, 0.05, v * 0.3, 'square', 600, 420); },
+  cylSpin(t, v) { for (let i = 0; i < 6; i++) noise(t + i * 0.045, 0.02, v * 0.22, 'bandpass', 3400, 3000, 5); },
+  shellsOut(t, v) { for (let i = 0; i < 6; i++) tone(t + i * 0.03 + Math.random() * 0.02, 0.06, v * 0.18, 'triangle', 2400 + Math.random() * 800, 1600); },
+  cover(t, v) { noise(t, 0.07, v * 0.5, 'bandpass', 1500, 900, 2); tone(t + 0.04, 0.05, v * 0.25, 'square', 500, 350); },
+  // 近戰
+  bonk(t, v) { tone(t, 0.12, v * 0.6, 'triangle', 420, 180); noise(t, 0.06, v * 0.5, 'lowpass', 1200, 300); },
+  thud(t, v) { tone(t, 0.2, v * 0.7, 'sine', 90, 40); noise(t, 0.1, v * 0.6, 'lowpass', 600, 150); },
+  zap(t, v) { for (let i = 0; i < 5; i++) noise(t + i * 0.025, 0.03, v * 0.35, 'bandpass', 4000 + Math.random() * 2500, 3000, 6); tone(t, 0.15, v * 0.15, 'sawtooth', 120, 120); },
+  shing(t, v) { tone(t, 0.4, v * 0.18, 'triangle', 3600, 3300); tone(t, 0.3, v * 0.12, 'triangle', 5200, 5000); noise(t, 0.15, v * 0.25, 'highpass', 5000, 3000); },
+  whoosh(t, v) { noise(t, 0.3, v * 0.5, 'bandpass', 500, 1400, 1.5); },
+  click(t, v) { noise(t, 0.02, v * 0.4, 'bandpass', 3800, 3800, 6); },
 };
 export function sfx(name, volume = 0.5, muffle = 0, when = 0) {
   if (!ctx || volume < 0.02 || !SFX[name]) return;

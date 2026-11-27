@@ -25,6 +25,8 @@ const COUNTDOWN_MS = 5000; // 開場倒數
 const RESPAWN_MS = 3000;
 const SPAWN_PROTECT_MS = 1500;
 const MAX_SPEED = 7.5;
+const QUIET_HEAR = 10; // 消音槍：機器人 10 公尺內才聽得到
+const TKNIFE = { g: 12, pickR: 1.7, maxMs: 3000 }; // 飛刀：重力、撿回來的距離、最多飛多久
 const EYE = 1.6;
 const FREEZE_MS = 3000; // 回合開始前的準備時間
 const ROUND_MS = 120000; // 每回合 2 分鐘
@@ -266,7 +268,7 @@ function startMatch(r) {
   r.roundWins = [0, 0];
   r.round = 0;
   r.pendingEnd = null;
-  r.attackTeam = 1; r.bomb = null; r.roundLog = []; r.nades = []; r.smokes = []; r.fires = [];
+  r.attackTeam = 1; r.bomb = null; r.roundLog = []; r.nades = []; r.smokes = []; r.fires = []; r.knives = []; r.decoys = [];
   r.rec = []; r.recEv = []; r.best = null; r.bestScore = 0; r.pendingBest = null;
   for (const p of r.players.values()) { p.kills = 0; p.deaths = 0; p.alive = false; p.respawnAt = 0; p.ready = !!p.bot; }
   console.log(`[房] ${r.code} 開戰（${{ tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式' }[r.mode]}，${mapOf(r).name}，${r.players.size} 人）`);
@@ -291,7 +293,7 @@ function startRound(r, first = false) {
     const list = mapOf(r).teamSpawns[sd];
     spawnAt(p, list[idx[sd]++ % list.length], 0);
   }
-  r.nades = []; r.smokes = []; r.fires = [];
+  r.nades = []; r.smokes = []; r.fires = []; r.knives = []; r.decoys = [];
   if (r.mode === 'bomb') giveBomb(r);
   if (!first) toRoom(r, { t: 'round', n: r.round, freeze: freezeMs(r), swap, attack: r.attackTeam });
   syncRoom(r);
@@ -555,6 +557,8 @@ function resetKit(p) {
   p.ammoBy = {};
   for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[p.loadout[slot]]; if (w.mag) p.ammoBy[slot] = w.mag; }
   p.nadesLeft = { throw1: 1, throw2: 1 }; // 投擲物：每回合各一顆
+  p.tknifeOut = 0; // 飛刀丟出去了沒（還沒撿回來就不能用近戰）
+  p.burstN = 0;
   p.reloadUntil = 0;
   p.switchUntil = 0;
   p.heavyAt = 0;
@@ -589,7 +593,9 @@ function startReload(p) {
 function switchWeapon(p, slot) {
   if (!WPN.slotsFor(p.room?.mode).includes(slot) || p.weapon === slot) return;
   if (slot.startsWith('throw') && !(p.nadesLeft && p.nadesLeft[slot] > 0)) return;
+  if (slot === 'melee' && p.tknifeOut) return; // 飛刀還沒撿回來
   p.weapon = slot;
+  p.burstN = 0;
   p.reloadUntil = 0; // 換武器會中斷換彈
   p.heavyAt = 0;
   p.adsSince = 0;
@@ -680,6 +686,8 @@ function detonate(r, n, now) {
     const inSmoke = r.smokes.some((sm) => Math.hypot(sm.x - x, sm.z - z) < NADE.smokeRadius(sm, now));
     if (inSmoke) ev.fizzle = true;
     else r.fires.push({ id: n.nid, x, y: fy, z, at: now, until: now + cfg.life, owner: n.owner, next: now });
+  } else if (n.kind === 'decoy') {
+    r.decoys.push({ id: n.nid, x, y, z, owner: n.owner, team: n.team, w: owner ? owner.loadout.primary : 'rifle', until: now + cfg.life, next: now + 300 });
   } else if (n.kind === 'stun') {
     for (const q of r.players.values()) {
       if (!q.alive) continue;
@@ -726,6 +734,19 @@ function nadeTick(r, now) {
     }
   }
   r.smokes = r.smokes.filter((sm) => now - sm.at < NADE.NADES.smoke.life);
+  // 誘餌彈：一陣一陣發出假槍聲（用主人主武器的聲音），機器人也會被騙
+  for (let i = r.decoys.length - 1; i >= 0; i--) {
+    const dc = r.decoys[i];
+    if (now >= dc.until) { r.decoys.splice(i, 1); toRoom(r, { t: 'decoyEnd', id: dc.id }); continue; }
+    if (now < dc.next) continue;
+    const w = WEAPONS[dc.w] || WEAPONS.rifle;
+    const n = w.fireMs >= 300 ? 1 : w.burst ? w.burst.n : 2 + Math.floor(Math.random() * 4);
+    const gap = w.burst ? w.burst.gapMs : Math.max(w.fireMs, 60);
+    dc.next = now + n * gap + 500 + Math.random() * 1100;
+    toRoom(r, { t: 'decoyShot', id: dc.id, x: +dc.x.toFixed(2), y: +dc.y.toFixed(2), z: +dc.z.toFixed(2), w: w.id, n, gap });
+    const fake = { id: 0, x: dc.x, y: dc.y, z: dc.z, team: dc.team };
+    for (const q of r.players.values()) if (q.bot && q.team !== dc.team) BOT.hear(q, fake, now, w.quiet ? QUIET_HEAR : Infinity);
+  }
 }
 
 // 開火前的共同檢查
@@ -733,7 +754,8 @@ function readyToFire(p, now) {
   const r = p.room;
   if (!r || r.state !== 'playing' || !p.alive || r.phase !== 'live') return null;
   const w = weaponOf(p);
-  const cd = p.lastHeavy && w.heavy ? w.heavy.fireMs : w.fireMs; // 重擊之後要等比較久
+  let cd = p.lastHeavy && w.heavy ? w.heavy.fireMs : w.fireMs; // 重擊之後要等比較久
+  if (w.burst && p.burstN > 0 && p.burstN < w.burst.n) cd = w.burst.gapMs; // 三連發：同一串裡的下一發
   if (now < p.switchUntil || now - p.lastShot < cd * FIRE_SLACK) return null;
   return w;
 }
@@ -789,6 +811,7 @@ function handleShoot(p, msg) {
   if (p.reloadUntil || p.ammoBy[p.weapon] <= 0) return;
   let d = aimDir(msg);
   if (!d) return;
+  if (w.burst) p.burstN = p.burstN > 0 && p.burstN < w.burst.n && now - p.lastShot < w.fireMs ? p.burstN + 1 : 1;
   p.lastShot = now;
   p.ammoBy[p.weapon] -= 1;
   p.firedSince = true;
@@ -836,7 +859,7 @@ function handleShoot(p, msg) {
   toRoom(r, { t: 'shot', id: p.id, o, e: ends[0], es: ends.length > 1 ? ends : undefined, w: w.id }, p.id);
   recEvent(r, { k: 'shot', id: p.id, e: ends[0], es: ends.length > 1 ? ends : undefined, w: w.id });
   p.lastHip = !!(w.hipCone && (msg.h || !isScoped));
-  for (const q of r.players.values()) if (q.bot && q.team !== p.team) BOT.hear(q, p, now);
+  for (const q of r.players.values()) if (q.bot && q.team !== p.team) BOT.hear(q, p, now, w.quiet ? QUIET_HEAR : Infinity);
   for (const [q, h] of dmgBy) if (q.alive) applyDamage(p, q, Math.round(h.dmg), h.head, w.id, now);
 }
 
@@ -861,20 +884,23 @@ function handleMelee(p, msg) {
   const w = heavy ? { ...w0, ...w0.heavy } : w0;
   const d = aimDir(msg);
   if (!d) return;
+  if (p.weapon === 'melee' && p.tknifeOut) return;
   p.lastShot = now;
   p.lastHeavy = heavy;
   p.heavyAt = 0;
   p.firedSince = true;
   const o = eyeOrigin(p, msg);
+  // 飛刀：重擊 = 丟出去
+  if (heavy && w0.throwable) { throwKnife(r, p, o, d, w0, now); return; }
   let best = w.range;
   for (const b of mapOf(r).boxes) best = Math.min(best, rayBox(o, d, b.min, b.max));
   const rewind = p.bot ? 0 : Math.min(250, p.rtt / 2 + 100);
-  let target = null;
+  let target = null, headHit = false;
   for (const q of r.players.values()) {
     if (q.id === p.id || !q.alive || q.team === p.team) continue;
     const pos = positionAt(q, now - rewind);
     const t = rayBox(o, d, [pos.x - 0.6, pos.y, pos.z - 0.6], [pos.x + 0.6, pos.y + 1.95, pos.z + 0.6]);
-    if (t < best) { best = t; target = q; }
+    if (t < best) { best = t; target = q; headHit = raySphere(o, d, [pos.x, pos.y + 1.6, pos.z], 0.36) <= w.range; }
   }
   const v = heavy ? 3 : Math.max(0, Math.min(2, num(msg.v, 0) | 0));
   toRoom(r, { t: 'swing', id: p.id, v }, p.id);
@@ -884,7 +910,95 @@ function handleMelee(p, msg) {
   const fx = -Math.sin(target.yaw), fz = -Math.cos(target.yaw);
   const ax = p.x - target.x, az = p.z - target.z, al = Math.hypot(ax, az) || 1;
   const back = (fx * ax + fz * az) / al < -0.3;
-  applyDamage(p, target, back ? w.back : w.body, false, w0.id, now);
+  let dmg = back ? w.back : w.body;
+  if (w.head && headHit) dmg = Math.max(dmg, w.head); // 斧頭、大錘的重擊打頭
+  applyDamage(p, target, dmg, !!(w.head && headHit), w0.id, now);
+  if (!target.alive) return;
+  // 球棒、大錘：把人打退
+  if (w.knock) {
+    const kx = target.x - p.x, kz = target.z - p.z, kl = Math.hypot(kx, kz) || 1;
+    const vx = kx / kl * w.knock, vz = kz / kl * w.knock;
+    target.knockUntil = now + 600;
+    if (target.bot) target.bot.knock = { vx, vz, until: now + 280 };
+    else send(target.ws, { t: 'knock', vx: +vx.toFixed(2), vz: +vz.toFixed(2) });
+  }
+  // 電擊棍：畫面晃、移動變慢
+  if (w.stun) {
+    send(target.ws, { t: 'stunned', ms: w.stun });
+    if (target.bot) target.bot.stunUntil = Math.max(target.bot.stunUntil || 0, now + w.stun);
+  }
+}
+
+// ---------- 飛刀 ----------
+let knifeSeq = 0;
+function throwKnife(r, p, o, d, w, now) {
+  const T = w.throwable;
+  const kid = ++knifeSeq;
+  const v = [d[0] * T.speed, d[1] * T.speed + 1.2, d[2] * T.speed];
+  p.tknifeOut = kid;
+  r.knives = r.knives || [];
+  r.knives.push({ kid, owner: p.id, team: p.team, pos: [...o], v, at: now, last: now, state: 'fly' });
+  toRoom(r, { t: 'tknife', kid, id: p.id, o: o.map((x) => +x.toFixed(3)), v: v.map((x) => +x.toFixed(3)) });
+  recEvent(r, { k: 'swing', id: p.id, v: 3 });
+}
+function knifeTick(r, now) {
+  if (!r.knives?.length) return;
+  const boxes = mapOf(r).boxes;
+  for (let i = r.knives.length - 1; i >= 0; i--) {
+    const k = r.knives[i];
+    const owner = r.players.get(k.owner);
+    // 主人離開、或重生拿到新的刀：舊的那把消失
+    if (!owner || owner.tknifeOut !== k.kid) { r.knives.splice(i, 1); toRoom(r, { t: 'tkpick', kid: k.kid, id: 0 }); continue; }
+    if (k.state === 'ground') {
+      // 主人走過去就撿回來
+      if (owner.alive && Math.hypot(owner.x - k.pos[0], owner.z - k.pos[2]) < TKNIFE.pickR && Math.abs(owner.y + 0.8 - k.pos[1]) < 2.2) {
+        r.knives.splice(i, 1);
+        owner.tknifeOut = 0;
+        toRoom(r, { t: 'tkpick', kid: k.kid, id: owner.id });
+      }
+      continue;
+    }
+    // 飛行中：分小步走（每步 1/120 秒），撞到人或牆就停
+    let t = k.last;
+    while (t < now && k.state === 'fly') {
+      const dt = Math.min(1 / 120, (now - t) / 1000);
+      t += dt * 1000;
+      k.v[1] -= TKNIFE.g * dt;
+      const a = [...k.pos];
+      const step = [k.v[0] * dt, k.v[1] * dt, k.v[2] * dt];
+      const len = Math.hypot(...step) || 1e-6;
+      const dir = step.map((x) => x / len);
+      let best = len, wall = false, hitQ = null, head = false;
+      for (const b of boxes) { const h = rayBox(a, dir, b.min, b.max); if (h < best) { best = h; wall = true; } }
+      if (dir[1] < 0 && a[1] + dir[1] * best < 0) { best = Math.min(best, -a[1] / dir[1]); wall = true; }
+      for (const q of r.players.values()) {
+        if (!q.alive || q.team === k.team) continue;
+        const th = raySphere(a, dir, [q.x, q.y + 1.6, q.z], 0.3);
+        const tb = rayBox(a, dir, [q.x - 0.42, q.y, q.z - 0.42], [q.x + 0.42, q.y + 1.42, q.z + 0.42]);
+        const tt = Math.min(th, tb);
+        if (tt < best) { best = tt; hitQ = q; head = th <= tb; wall = false; }
+      }
+      k.pos = [a[0] + dir[0] * best, a[1] + dir[1] * best, a[2] + dir[2] * best];
+      if (hitQ || wall || now - k.at > TKNIFE.maxMs) {
+        k.state = 'ground';
+        let hitId = 0;
+        if (hitQ) {
+          hitId = hitQ.id;
+          applyDamage(owner, hitQ, head ? WEAPONS.tknife.throwable.head : WEAPONS.tknife.throwable.body, head, 'tknife', now);
+          // 打中人：刀掉在他腳邊
+          k.pos = [hitQ.x, MAP.surfaceAt(boxes, hitQ.x, hitQ.z) + 0.05, hitQ.z];
+        } else if (k.pos[1] > 0.05) {
+          // 插在牆上：太高的話掉到地上（撿得到）
+          const back = [k.pos[0] - dir[0] * 0.3, k.pos[2] - dir[2] * 0.3];
+          const floor = MAP.surfaceAt(boxes, back[0], back[1]);
+          if (k.pos[1] - floor > 1.6) k.pos = [back[0], floor + 0.05, back[1]];
+        }
+        toRoom(r, { t: 'tkland', kid: k.kid, pos: k.pos.map((x) => +x.toFixed(2)), hit: hitId });
+        if (r.state !== 'playing') return;
+      }
+    }
+    k.last = now;
+  }
 }
 
 function handleState(p, msg) {
@@ -894,7 +1008,7 @@ function handleState(p, msg) {
   const x = num(msg.x, p.x), y = num(msg.y, p.y), z = num(msg.z, p.z);
   const dt = Math.max(0.05, (now - p.lastStateAt) / 1000);
   const horiz = Math.hypot(x - p.x, z - p.z);
-  if (horiz > MAX_SPEED * dt * 1.6 + 0.6 || Math.abs(x) > mapOf(r).half || Math.abs(z) > mapOf(r).half || y < -1 || y > 20) {
+  if (horiz > MAX_SPEED * dt * 1.6 + 0.6 + (now < (p.knockUntil || 0) ? 3 : 0) || Math.abs(x) > mapOf(r).half || Math.abs(z) > mapOf(r).half || y < -1 || y > 20) {
     send(p.ws, { t: 'correct', x: p.x, y: p.y, z: p.z, seq: p.seq });
     return;
   }
@@ -1103,6 +1217,8 @@ function tick() {
         startRound(r);
       }
     }
+    if (r.state !== 'playing') continue;
+    if (r.phase === 'live' || r.mode === 'tdm') knifeTick(r, now);
     if (r.state !== 'playing') continue;
     if (r.mode === 'bomb') {
       bombTick(r, now);
