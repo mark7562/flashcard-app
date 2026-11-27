@@ -176,7 +176,8 @@ export function renderRoom(r) {
   $('fillBots').textContent = zm ? '🤖 自動補滿 12 人' : '🤖 自動補滿兩隊';
   const mark = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === String(v)); };
   mark('ruleMap', r.rules.map);
-  document.querySelector('#ruleMap [data-v="ship"]').classList.toggle('hidden', zm); // 生化模式不開放貨輪
+  // 生化模式只顯示適合的地圖
+  for (const b of $('ruleMap').querySelectorAll('button')) b.classList.toggle('hidden', zm && !window.GAME_MAP.zombieMaps.includes(b.dataset.v));
   mark('ruleMode', r.mode);
   mark('ruleScore', r.rules.scoreLimit);
   mark('ruleTime', r.rules.timeLimit);

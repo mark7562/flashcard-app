@@ -701,7 +701,11 @@
     ...wallX(2.8, 3.2, RH, HW, [[10, 16, 'solid'], [18, 24, 'solid']]),
     ...wallX(-10.4, -10, RH, HW2, [[10, 20, 'solid'], [22, 24, 'solid']]),
     ...wallX(10, 10.4, RH, HW2, [[10, 20, 'solid'], [22, 24, 'solid']]),
-    B(10, -10.4, 24, 10.4, RH, RH + 0.3, HROOF, 'roof'),
+    // 屋頂：樓梯上方挖高（不然走到最上面一階頭會撞到天花板，上不了二樓）
+    B(10, -10.4, 20, 10.4, RH, RH + 0.3, HROOF, 'roof'),
+    B(20, -10.4, 24, -3.2, RH, RH + 0.3, HROOF, 'roof'), B(20, 3.2, 24, 10.4, RH, RH + 0.3, HROOF, 'roof'),
+    B(20, -3.2, 24, -2.8, RH, HD + 3.6, HW), B(20, 2.8, 24, 3.2, RH, HD + 3.6, HW), // 樓梯兩邊的牆往上加高
+    B(20, -3.2, 24, 3.2, HD + 3.6, HD + 3.9, HROOF, 'roof'),
     ...stairs('x', 20, 1, 5, 0.8, HD, -2.8, 2.8, 0x8d99a6),
 
     // ===== 高樓層病房（x 24 ~ 38、z -10 ~ 10，地板墊高 2.6）=====
@@ -854,6 +858,8 @@
     ],
     maps: { docks, arena, metro, ship, hospital },
     order: ['docks', 'ship', 'arena', 'metro', 'hospital'],
+    // 生化模式可以選的地圖（要有地方守、有路可以繞；碼頭太空曠、競技場太小、貨輪的貨艙殭屍追不到）
+    zombieMaps: ['hospital', 'metro'],
     defaultMap: 'docks',
   };
   MAP.get = (id) => MAP.maps[id] || MAP.maps[MAP.defaultMap];

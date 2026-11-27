@@ -220,7 +220,7 @@ function createRoom(p, msg) {
     rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null, nades: [], smokes: [], fires: [],
   };
   if (r.mode === 'bomb') { r.rules.map = BOMB.map; r.rules.rounds = 7; }
-  if (isZ(r)) { r.rules.map = MAP.order.includes(msg.map) && msg.map !== 'ship' ? msg.map : 'hospital'; r.rules.rounds = 7; }
+  if (isZ(r)) { r.rules.map = MAP.zombieMaps.includes(msg.map) ? msg.map : 'hospital'; r.rules.rounds = 7; }
   rooms.set(r.code, r);
   console.log(`[房] ${p.name} 建立房間 ${r.code}「${r.name}」`);
   addToRoom(p, r);
@@ -600,7 +600,10 @@ function zSend(p) {
 function zStartRound(r) {
   const holds = mapOf(r).zHolds || mapOf(r).spots || [[0, 0]];
   // 機器人人類這回合要一起守的地方
-  r.z = { started: false, infectAt: Infinity, heroOn: false, pickups: [], nextAmmo: Infinity, nextBio: Infinity, seq: 0, hold: holds[Math.floor(Math.random() * holds.length)] };
+  // 機器人人類分成 2～3 群，各自守一個地方（不會全部擠在一起走）
+  const pool = [...holds].sort(() => Math.random() - 0.5);
+  const n = 1; // 分兩群火力太分散，機器人人類守不住；改成一群但各自站開、錯開出發
+  r.z = { started: false, infectAt: Infinity, heroOn: false, pickups: [], nextAmmo: Infinity, nextBio: Infinity, seq: 0, holds: pool.slice(0, n), hold: pool[0] };
   for (const p of r.players.values()) {
     p.team = 0; p.zrole = 'human'; p.out = false; p.hxp = 0; p.hlvl = 1; p.zxp = 0; p.zlvl = 1; p.dmgAcc = 0; p.maxHp = 100;
   }
@@ -1336,8 +1339,8 @@ function setRules(p, msg) {
     if (![5, 7, 9].includes(r.rules.rounds)) r.rules.rounds = 7;
   } else if (r.mode === 'elim' && r.rules.rounds === 9) r.rules.rounds = 7;
   if (was === 'bomb' && r.mode !== 'bomb' && r.rules.map === BOMB.map) r.rules.map = MAP.defaultMap;
-  // 夕陽貨輪的甲板下貨艙機器人進不去（殭屍追不到），生化模式不開放
-  if (isZ(r) && r.rules.map === 'ship') r.rules.map = 'hospital';
+  // 生化模式只開放適合的地圖
+  if (isZ(r) && !MAP.zombieMaps.includes(r.rules.map)) r.rules.map = 'hospital';
   syncRoom(r);
 }
 function switchTeam(p, msg) {

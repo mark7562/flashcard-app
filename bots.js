@@ -517,11 +517,23 @@ function damaged(p, attacker, now) {
 // 選下一個巡邏目標：有機率去搶戰術位置（高台、掩體），到了會守一陣子
 function nextPatrol(p, b, nav, r, now) {
   const c = b.cfg;
-  // 生化模式：人類機器人集合到同一個地方一起守（火力集中才擋得住殭屍）
-  if (r.z && p.zrole === 'human' && r.z.hold && !(p.reserve && (p.reserve.primary || 0) < (WEAPONS[p.loadout.primary].mag || 0) && r.z.pickups?.some((k) => k.kind === 'ammo'))) {
-    const [hx, hz] = r.z.hold;
-    const pt = nearPt(nav, hx, hz, 3.5);
-    if (Math.hypot(pt[0] - p.x, pt[1] - p.z) > 1.5) { b.guard = pt; setGoal(p, b, nav, pt[0], pt[1]); return; }
+  // 生化模式：人類機器人分成幾群，各自守一個集合點（火力集中才擋得住殭屍）
+  if (r.z && p.zrole === 'human' && r.z.holds?.length && !(p.reserve && (p.reserve.primary || 0) < (WEAPONS[p.loadout.primary].mag || 0) && r.z.pickups?.some((k) => k.kind === 'ammo'))) {
+    if (b.zhRound !== r.round) { b.zhRound = r.round; b.zh = Math.floor(Math.random() * r.z.holds.length); }
+    const quiet = ![...r.players.values()].some((q) => q.alive && q.team === 1); // 場上沒有殭屍（還沒感染、母體剛死）
+    const roll = Math.random();
+    // 偶爾換到另一個集合點；沒有殭屍的時候比較常走動、順便去撿彈藥箱
+    if (r.z.holds.length > 1 && roll < (quiet ? 0.15 : 0.03)) b.zh = (b.zh + 1 + Math.floor(Math.random() * (r.z.holds.length - 1))) % r.z.holds.length;
+    if (quiet && roll > 0.8 && r.z.pickups?.some((k) => k.kind === 'ammo')) {
+      const k = r.z.pickups.filter((k) => k.kind === 'ammo').sort((a, c) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(c.x - p.x, c.z - p.z))[0];
+      b.guard = null; setGoal(p, b, nav, k.x, k.z); return;
+    }
+    // 開場錯開出發（不會一整排同時走）
+    if (b.zhLeave === undefined || b.zhLeaveRound !== r.round) { b.zhLeaveRound = r.round; b.zhLeave = now + rand(0, 3000); }
+    if (now < b.zhLeave) { b.idleUntil = b.zhLeave; return; }
+    const [hx, hz] = r.z.holds[b.zh];
+    const pt = nearPt(nav, hx, hz, 6);
+    if (Math.hypot(pt[0] - p.x, pt[1] - p.z) > 1.2) { b.guard = pt; setGoal(p, b, nav, pt[0], pt[1]); return; }
   }
   // 生化模式：備用子彈不多了，去撿最近的彈藥箱
   if (r.z && p.zrole === 'human' && p.reserve && r.z.pickups?.length) {
@@ -930,6 +942,8 @@ function think(p, r, now, dt, api) {
       }
       lookYaw = glance(b, now, b.looks);
       if (b.alert && now - b.heardAt < 4000) lookYaw = yawTo(b.alert[0] - p.x, b.alert[1] - p.z);
+      // 生化模式：場上沒有殭屍時不要一直站著發呆，守一下就換個位置
+      if (r.z && b.guardUntil - now > 3500 && ![...r.players.values()].some((q) => q.alive && q.team === 1)) b.guardUntil = now + rand(1500, 3500);
       if (now >= b.guardUntil) { b.state = 'patrol'; b.guard = null; nextPatrol(p, b, nav, r, now); }
       if (W.mag && !p.reloadUntil && ammo < W.mag && now >= b.guardUntil - 1500) api.reload(p);
     } else if (!b.path || b.pathIdx >= b.path.length) {
