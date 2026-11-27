@@ -1,5 +1,10 @@
 // 方塊戰場 Block Arena — 瀏覽器端
 import * as THREE from 'three';
+import { makeFigure } from './figure.js';
+import { settings, onSettingsChange, profile, IS_TOUCH } from './settings.js';
+import { initAudio, setVolumes, playShot, beep, uiStart, uiClick } from './audio.js';
+import { initMenu, showTitle, hideTitle, setStatus, openSettings, updatePreview } from './menu.js';
+import { createTitleScene } from './title.js';
 
 const MAP = window.GAME_MAP;
 const $ = (id) => document.getElementById(id);
@@ -9,7 +14,6 @@ const EYE = 1.6, PH = 1.8, PW = 0.35;
 const SPEED = 6.5, JUMP = 8, GRAVITY = 22;
 const MAG = 30, FIRE_MS = 100, RELOAD_MS = 1800;
 const SEND_MS = 50, INTERP_MS = 100;
-const IS_TOUCH = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0 && !matchMedia('(pointer: fine)').matches;
 if (IS_TOUCH) document.body.classList.add('touch');
 
 // ---------- 狀態 ----------
@@ -20,15 +24,13 @@ const me = {
 const roster = new Map(); // id -> { name, color, kills, deaths }
 const remotes = new Map(); // id -> { group, buf: [...], alive }
 const keys = {};
-let ws = null, playing = false, firing = false, jumpQueued = false;
+let ws = null, playing = false, leaving = false, firing = false, jumpQueued = false;
 let moveVec = { x: 0, y: 0 }; // 手機搖桿
-let rtt = 0, lastSend = 0, respawnAt = 0;
+let rtt = 0, lastSend = 0, respawnAt = 0, roomFull = false;
 
 // ---------- Three.js 場景 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: !IS_TOUCH, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = !IS_TOUCH;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 $('game').appendChild(renderer.domElement);
 
@@ -40,7 +42,8 @@ const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 2
 camera.rotation.order = 'YXZ';
 scene.add(camera);
 
-scene.add(new THREE.HemisphereLight(0xdfefff, 0x5a5040, 1.1));
+const hemi = new THREE.HemisphereLight(0xdfefff, 0x5a5040, 1.1);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 1.6);
 sun.position.set(18, 30, 12);
 sun.castShadow = true;
@@ -64,7 +67,24 @@ function gridTexture() {
   t.anisotropy = 4;
   return t;
 }
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(52, 52), new THREE.MeshStandardMaterial({ map: gridTexture(), roughness: 1 }));
+// 夜晚霓虹版的地板：深色底加發光格線
+function neonTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0b0820'; g.fillRect(0, 0, 128, 128);
+  g.strokeStyle = 'rgba(0, 229, 255, 0.85)'; g.lineWidth = 3; g.strokeRect(0, 0, 128, 128);
+  g.strokeStyle = 'rgba(123, 43, 255, 0.45)'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(64, 0); g.lineTo(64, 128); g.moveTo(0, 64); g.lineTo(128, 64); g.stroke();
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(13, 13);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+const dayFloor = gridTexture(), nightFloor = neonTexture();
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(52, 52), new THREE.MeshStandardMaterial({ map: dayFloor, roughness: 1 }));
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
@@ -81,6 +101,31 @@ for (const b of MAP.boxes) {
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), edgeMat);
   edges.position.copy(mesh.position);
   scene.add(edges);
+}
+
+// 標題畫面用夜晚霓虹風格，進入對戰換回白天（比較看得清楚敵人）
+const neonLights = [
+  new THREE.PointLight(0x00e5ff, 0, 40), new THREE.PointLight(0xff2bd6, 0, 40), new THREE.PointLight(0x7b2bff, 0, 40),
+];
+neonLights[0].position.set(-14, 6, -10);
+neonLights[1].position.set(14, 6, 10);
+neonLights[2].position.set(0, 8, 0);
+for (const l of neonLights) scene.add(l);
+function setNight(night) {
+  scene.background.set(night ? 0x070418 : 0x9fc9ef);
+  scene.fog.color.set(night ? 0x1a0b3d : 0x9fc9ef);
+  scene.fog.near = night ? 20 : 30;
+  scene.fog.far = night ? 75 : 85;
+  hemi.intensity = night ? 0.35 : 1.1;
+  hemi.color.set(night ? 0x8a7dff : 0xdfefff);
+  sun.intensity = night ? 0.25 : 1.6;
+  edgeMat.color.set(night ? 0x00e5ff : 0x000000);
+  edgeMat.opacity = night ? 0.9 : 0.25;
+  edgeMat.blending = night ? THREE.AdditiveBlending : THREE.NormalBlending;
+  edgeMat.needsUpdate = true;
+  floor.material.map = night ? nightFloor : dayFloor;
+  floor.material.needsUpdate = true;
+  for (const l of neonLights) l.intensity = night ? 60 : 0;
 }
 
 // ---------- 自己的槍（第一人稱視角模型） ----------
@@ -110,46 +155,12 @@ gun.scale.setScalar(0.65);
 camera.add(gun);
 
 // ---------- 其他玩家的模型 ----------
-function nameSprite(text, color) {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 64;
-  const g = c.getContext('2d');
-  g.font = 'bold 34px system-ui, sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.lineWidth = 6; g.strokeStyle = 'rgba(0,0,0,0.7)';
-  g.strokeText(text, 128, 32);
-  g.fillStyle = '#' + color.toString(16).padStart(6, '0');
-  g.fillText(text, 128, 32);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-  s.scale.set(1.8, 0.45, 1);
-  s.renderOrder = 10;
-  return s;
-}
 function makeRemote(id) {
   const info = roster.get(id) || { name: '?', color: 0xffffff };
-  const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color: info.color, roughness: 0.6 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x22262d, roughness: 0.5 });
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 0.7, 4, 12), mat);
-  body.position.y = 0.7;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 16, 12), mat);
-  head.position.y = 1.6;
-  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.12), dark);
-  visor.position.set(0, 1.63, -0.2);
-  const arm = new THREE.Group();
-  arm.position.set(0.28, 1.3, -0.1);
-  const rgun = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.6), dark);
-  rgun.position.z = -0.3;
-  arm.add(rgun);
-  for (const m of [body, head, visor, rgun]) m.castShadow = true;
-  const label = nameSprite(info.name, info.color);
-  label.position.y = 2.25;
-  group.add(body, head, visor, arm, label);
-  scene.add(group);
-  const r = { group, arm, buf: [], alive: false };
-  group.visible = false;
+  const fig = makeFigure(info.color, info.name);
+  fig.group.visible = false;
+  scene.add(fig.group);
+  const r = { fig, group: fig.group, arm: fig.arm, buf: [], alive: false };
   remotes.set(id, r);
   return r;
 }
@@ -157,7 +168,7 @@ function removeRemote(id) {
   const r = remotes.get(id);
   if (!r) return;
   scene.remove(r.group);
-  r.group.traverse((o) => { o.geometry?.dispose(); o.material?.map?.dispose(); o.material?.dispose(); });
+  r.fig.dispose();
   remotes.delete(id);
 }
 
@@ -177,47 +188,6 @@ function addSpark(p, color = 0xffd27a) {
   m.position.copy(p);
   scene.add(m);
   sparks.push({ m, life: 0.15 });
-}
-
-// ---------- 音效（不用音檔，直接合成） ----------
-let audio = null, noiseBuf = null;
-function initAudio() {
-  if (audio) return;
-  try {
-    audio = new (window.AudioContext || window.webkitAudioContext)();
-    noiseBuf = audio.createBuffer(1, audio.sampleRate * 0.25, audio.sampleRate);
-    const d = noiseBuf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  } catch { audio = null; }
-}
-function playShot(volume = 0.5) {
-  if (!audio || volume < 0.02) return;
-  const t = audio.currentTime;
-  const src = audio.createBufferSource();
-  src.buffer = noiseBuf;
-  const filt = audio.createBiquadFilter();
-  filt.type = 'lowpass';
-  filt.frequency.setValueAtTime(3200, t);
-  filt.frequency.exponentialRampToValueAtTime(300, t + 0.15);
-  const g = audio.createGain();
-  g.gain.setValueAtTime(volume, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
-  src.connect(filt).connect(g).connect(audio.destination);
-  src.start(t);
-  src.stop(t + 0.2);
-}
-function beep(freq, dur = 0.07, vol = 0.15, type = 'square') {
-  if (!audio) return;
-  const t = audio.currentTime;
-  const o = audio.createOscillator();
-  const g = audio.createGain();
-  o.type = type;
-  o.frequency.value = freq;
-  g.gain.setValueAtTime(vol, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g).connect(audio.destination);
-  o.start(t);
-  o.stop(t + dur);
 }
 
 // ---------- 碰撞 ----------
@@ -408,11 +378,11 @@ function setScoreboard(show) { $('scoreboard').classList.toggle('hidden', !show)
 function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
 
 function connect(name) {
-  $('status').textContent = '連線中…';
-  $('play').disabled = true;
+  setStatus('連線中…');
+  leaving = false;
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
   ws = new WebSocket(url);
-  ws.onopen = () => send({ t: 'join', name });
+  ws.onopen = () => send({ t: 'join', name, color: profile.color });
   ws.onmessage = (ev) => handle(JSON.parse(ev.data));
   ws.onclose = () => {
     const wasPlaying = playing;
@@ -423,10 +393,16 @@ function connect(name) {
     $('hud').classList.add('hidden');
     $('touch').classList.add('hidden');
     $('paused').classList.add('hidden');
-    $('menu').classList.remove('hidden');
-    $('play').disabled = false;
+    $('settings').classList.add('hidden');
+    $('rotate').classList.add('hidden');
     if (document.pointerLockElement) document.exitPointerLock();
-    if (wasPlaying || !$('status').textContent.includes('滿')) $('status').textContent = wasPlaying ? '連線中斷了，請重新加入' : '連不上伺服器';
+    setNight(true);
+    title.visible = true;
+    let msg = '';
+    if (roomFull) msg = '戰場已滿（最多 16 人），請稍後再試';
+    else if (!leaving) msg = wasPlaying ? '連線中斷了，請重新加入' : '連不上伺服器，請稍後再試';
+    roomFull = false;
+    showTitle(msg);
   };
 }
 
@@ -437,15 +413,18 @@ function handle(m) {
       for (const p of m.players) roster.set(p.id, p);
       for (const p of m.players) if (p.id !== me.id) makeRemote(p.id);
       playing = true;
-      $('menu').classList.add('hidden');
+      hideTitle();
+      setNight(false);
+      title.visible = false;
+      uiStart();
       $('hud').classList.remove('hidden');
       if (IS_TOUCH) $('touch').classList.remove('hidden');
-      $('status').textContent = '';
+      checkOrientation();
       renderScores();
       toast('進入戰場！');
       break;
     case 'full':
-      $('status').textContent = '房間已滿（最多 16 人）';
+      roomFull = true;
       break;
     case 'joined':
       roster.set(m.p.id, m.p);
@@ -543,13 +522,15 @@ function lockPointer() {
 document.addEventListener('pointerlockchange', () => {
   if (IS_TOUCH || !playing) return;
   const locked = document.pointerLockElement === canvas;
-  $('paused').classList.toggle('hidden', locked);
+  if (locked) { $('paused').classList.add('hidden'); $('settings').classList.add('hidden'); }
+  else if ($('settings').classList.contains('hidden')) $('paused').classList.remove('hidden');
   if (!locked) firing = false;
 });
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
-  me.yaw -= e.movementX * 0.0022;
-  me.pitch -= e.movementY * 0.0022;
+  const k = 0.0022 * settings.mouse;
+  me.yaw -= e.movementX * k;
+  me.pitch -= e.movementY * k;
 });
 canvas.addEventListener('mousedown', (e) => {
   if (IS_TOUCH || !playing) return;
@@ -569,7 +550,26 @@ document.addEventListener('keyup', (e) => {
   if (e.code === 'Tab') setScoreboard(false);
 });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; });
-$('resume').addEventListener('click', lockPointer);
+function resume() {
+  $('paused').classList.add('hidden');
+  uiClick();
+  lockPointer();
+}
+$('resume').addEventListener('click', resume);
+$('pauseSettings').addEventListener('click', () => {
+  $('paused').classList.add('hidden');
+  openSettings(() => $('paused').classList.remove('hidden'));
+});
+$('leave').addEventListener('click', () => {
+  leaving = true;
+  uiClick();
+  ws?.close();
+});
+function openPauseMenu() {
+  firing = false;
+  for (const k in keys) keys[k] = false;
+  $('paused').classList.remove('hidden');
+}
 
 // ---------- 手機操作 ----------
 const touches = new Map(); // identifier -> { role, x, y, ox, oy }
@@ -577,6 +577,8 @@ const LOOK_SENS = 0.0065;
 function onTouchStart(e) {
   if (!playing) return;
   for (const t of e.changedTouches) {
+    // 暫停選單或設定開著的時候，讓按鈕和滑桿正常運作
+    if (t.target.closest?.('.overlay')) continue;
     const btn = t.target.closest?.('.tbtn');
     if (btn) {
       e.preventDefault();
@@ -587,6 +589,7 @@ function onTouchStart(e) {
         if (btn.id === 'btnJump') jumpQueued = true;
         if (btn.id === 'btnReload') startReload();
         if (btn.id === 'btnScore') setScoreboard($('scoreboard').classList.contains('hidden'));
+        if (btn.id === 'btnMenu') { btn.classList.remove('on'); touches.delete(t.identifier); moveVec = { x: 0, y: 0 }; $('stick').classList.remove('on'); openPauseMenu(); }
       }
       continue;
     }
@@ -605,9 +608,9 @@ function onTouchStart(e) {
 }
 function onTouchMove(e) {
   if (!playing) return;
-  e.preventDefault();
   for (const t of e.changedTouches) {
     const s = touches.get(t.identifier);
+    if (s) e.preventDefault();
     if (!s) continue;
     if (s.role === 'move') {
       let dx = t.clientX - s.ox, dy = t.clientY - s.oy;
@@ -616,8 +619,8 @@ function onTouchMove(e) {
       moveVec = { x: dx / max, y: dy / max };
       $('knob').style.transform = `translate(${dx}px, ${dy}px)`;
     } else if (s.role === 'look' || s.role === 'fire') {
-      me.yaw -= (t.clientX - s.x) * LOOK_SENS;
-      me.pitch -= (t.clientY - s.y) * LOOK_SENS;
+      me.yaw -= (t.clientX - s.x) * LOOK_SENS * settings.touch;
+      me.pitch -= (t.clientY - s.y) * LOOK_SENS * settings.touch;
       s.x = t.clientX; s.y = t.clientY;
     }
   }
@@ -644,22 +647,32 @@ function checkOrientation() {
 }
 
 // ---------- 開始遊戲 ----------
-try { $('name').value = localStorage.getItem('ba-name') || ''; } catch {}
-function start() {
-  const name = $('name').value.trim();
-  try { localStorage.setItem('ba-name', name); } catch {}
+function start(p) {
   initAudio();
-  audio?.resume?.();
   if (IS_TOUCH) {
     document.documentElement.requestFullscreen?.().catch(() => {});
     screen.orientation?.lock?.('landscape').catch(() => {});
   } else {
     lockPointer();
   }
-  connect(name);
+  connect(p.name.trim());
 }
-$('play').addEventListener('click', start);
-$('name').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
+
+// ---------- 設定套用 ----------
+let lastQuality = null;
+onSettingsChange((s) => {
+  setVolumes(s.sfx, s.music);
+  camera.fov = s.fov;
+  camera.updateProjectionMatrix();
+  if (s.quality !== lastQuality) {
+    lastQuality = s.quality;
+    const high = s.quality === 'high';
+    renderer.setPixelRatio(Math.min(devicePixelRatio, high ? 2 : 1.25));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.shadowMap.enabled = high;
+    scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+  }
+});
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
@@ -693,8 +706,10 @@ function frame() {
   const dt = Math.min(0.05, clock.getDelta());
   const now = performance.now();
 
-  if (!playing) me.yaw += dt * 0.08;
-  if (playing) {
+  if (!playing) {
+    title.update(dt, camera);
+    updatePreview(dt);
+  } else {
     me.pitch = Math.max(-1.5, Math.min(1.5, me.pitch));
     if (me.alive) {
       physics(dt);
@@ -717,9 +732,11 @@ function frame() {
   me.recoil = Math.max(0, me.recoil - dt * 3);
   const speed = Math.hypot(me.vx, me.vz);
   if (me.onGround && speed > 0.5) bob += dt * speed * 1.6;
-  camera.position.set(me.x, me.y + EYE + (me.alive ? Math.sin(bob * 2) * 0.03 : -1.2), me.z);
-  camera.rotation.set(me.pitch, me.yaw, 0);
-  gun.visible = me.alive;
+  if (playing) {
+    camera.position.set(me.x, me.y + EYE + (me.alive ? Math.sin(bob * 2) * 0.03 : -1.2), me.z);
+    camera.rotation.set(me.pitch, me.yaw, 0);
+  }
+  gun.visible = playing && me.alive;
   gun.position.set(
     GUN_REST.x + Math.sin(bob) * 0.012,
     GUN_REST.y + Math.abs(Math.cos(bob)) * 0.01 - (me.reloadEnd ? 0.12 : 0),
@@ -746,7 +763,8 @@ function frame() {
 
   renderer.render(scene, camera);
 }
-// 選單畫面時，鏡頭放在場地上方慢慢繞
-me.x = 0; me.y = 6; me.z = 18; me.yaw = 0; me.pitch = -0.35;
+const title = createTitleScene(scene);
+setNight(true);
+initMenu({ onPlay: start });
 frame();
 setInterval(checkOrientation, 1000);

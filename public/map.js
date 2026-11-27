@@ -4,6 +4,11 @@
   const WALL = 0x8a8f98;
   const MAP = {
     half: 25, // 場地範圍 -25 ~ 25
+    // 玩家可以選的角色顏色
+    colors: [
+      0xe63946, 0xff2bd6, 0xf15bb5, 0x9b5de5, 0x7b2bff, 0x3a86ff, 0x00bbf9, 0x00e5ff,
+      0x06d6a0, 0x2a9d8f, 0x80b918, 0xffbe0b, 0xf4a261, 0xfb5607, 0xffffff, 0x8a8f98,
+    ],
     spawns: [
       [-22, 0, -11], [22, 0, 11], [11, 0, -22], [-11, 0, 22],
       [0, 0, -22], [0, 0, 22], [-22, 0, 0], [22, 0, 0],

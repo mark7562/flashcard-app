@@ -18,15 +18,13 @@ const MAX_SPEED = 7.5;
 const DMG_BODY = 25;
 const DMG_HEAD = 70;
 const EYE = 1.6;
-const COLORS = [
-  0xe63946, 0x2a9d8f, 0xf4a261, 0x457b9d, 0x9b5de5, 0x00bbf9, 0xf15bb5, 0x80b918,
-  0xffbe0b, 0xfb5607, 0x3a86ff, 0x8338ec, 0x06d6a0, 0xef476f, 0x118ab2, 0xc1121f,
-];
+const COLORS = MAP.colors;
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three/build')));
 app.get('/health', (_req, res) => res.send('ok'));
+app.get('/api/stats', (_req, res) => res.json({ online: players.size }));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 4096 });
@@ -214,7 +212,7 @@ wss.on('connection', (ws) => {
       }
       const id = nextId++;
       const used = new Set([...players.values()].map((o) => o.color));
-      const color = COLORS.find((c) => !used.has(c)) ?? COLORS[id % COLORS.length];
+      const color = COLORS.includes(msg.color) ? msg.color : (COLORS.find((c) => !used.has(c)) ?? COLORS[id % COLORS.length]);
       const name = String(msg.name || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 16) || `玩家${id}`;
       p = {
         id, ws, name, color, kills: 0, deaths: 0, seq: 0, rtt: 100, lastShot: 0,
