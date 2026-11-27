@@ -731,6 +731,7 @@ function startReplay(best, done) {
   for (const r of remotes.values()) { clearCorpse(r); r.group.visible = false; }
   for (const id of ids) if (!remotes.has(id) && roster.has(id)) makeRemote(id); // 自己也要有模型（被擊倒的可能是你）
   replay = { best, done, t: 0, ev: 0, ended: false, adsK: 0, owner: 0 };
+  $('paused').classList.add('hidden');
   document.body.classList.add('replaying');
   const kname = nameOf(best.killer), w = WEAPONS[best.w];
   $('rpName').textContent = kname;
@@ -1095,7 +1096,7 @@ document.addEventListener('pointerlockchange', () => {
   if (IS_TOUCH || !playing) return;
   const locked = document.pointerLockElement === canvas;
   if (locked) { $('paused').classList.add('hidden'); $('settings').classList.add('hidden'); }
-  else if ($('settings').classList.contains('hidden') && $('results').classList.contains('hidden')) {
+  else if ($('settings').classList.contains('hidden') && $('results').classList.contains('hidden') && !replay && room?.state !== 'results') {
     $('pauseHint').textContent = '遊戲仍在進行，其他人還能打你！';
     $('paused').classList.remove('hidden');
   }
