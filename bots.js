@@ -36,9 +36,9 @@ const LEVELS = {
 
 // 每個難度挑主武器的比例（新手比較少拿狙擊槍）；scope：開好鏡之後還要再瞄多久才開槍
 const KIT_WEIGHTS = {
-  easy: { primary: { rifle: 5, smg: 3, shotgun: 2, sniper: 0.5, dmr: 1 }, secondary: { pistol: 3, deagle: 1 }, scope: [700, 1200] },
-  normal: { primary: { rifle: 4, smg: 3, shotgun: 2, sniper: 1.2, dmr: 1.5 }, secondary: { pistol: 2, deagle: 1.5 }, scope: [400, 800] },
-  hard: { primary: { rifle: 4, smg: 3, shotgun: 2, sniper: 2, dmr: 2 }, secondary: { pistol: 1.5, deagle: 2 }, scope: [220, 480] },
+  easy: { primary: { rifle: 5, smg: 3, shotgun: 2, sniper: 0.5, dmr: 1 }, secondary: { pistol: 3, deagle: 1 }, scope: [900, 1500] },
+  normal: { primary: { rifle: 4, smg: 3, shotgun: 2, sniper: 1.2, dmr: 1.5 }, secondary: { pistol: 2, deagle: 1.5 }, scope: [550, 1000] },
+  hard: { primary: { rifle: 4, smg: 3, shotgun: 2, sniper: 2, dmr: 2 }, secondary: { pistol: 1.5, deagle: 2 }, scope: [320, 650] },
 };
 function weighted(table) {
   const entries = Object.entries(table);
@@ -606,7 +606,8 @@ function think(p, r, now, dt, api) {
     else if (longGun && c.pistol && bestD < 7 && p.ammoBy.secondary > 0) want = 'secondary'; // 狙擊手被貼臉就拔手槍
     else if (longGun && p.weapon === 'secondary' && bestD > 10 && p.ammoBy.primary > 0) want = 'primary';
     else if (p.weapon === 'melee') want = p.ammoBy.primary > 0 || !c.pistol ? 'primary' : 'secondary';
-    else if (p.weapon === 'primary' && p.ammoBy.primary <= 0 && c.pistol && p.ammoBy.secondary > 0) want = 'secondary';
+    // 主武器沒子彈：近的話拔手槍比換彈快；遠的話手槍打不到，乖乖換彈
+    else if (p.weapon === 'primary' && p.ammoBy.primary <= 0 && c.pistol && p.ammoBy.secondary > 0 && bestD < (longGun ? 10 : 15)) want = 'secondary';
     else if (p.weapon === 'secondary' && p.ammoBy.secondary <= 0) want = 'primary';
   } else if (b.state !== 'engage') want = 'primary';
   if (b.throwing) want = p.weapon; // 正在準備丟投擲物
@@ -663,7 +664,9 @@ function think(p, r, now, dt, api) {
     } else if (vis && now >= b.reactAt && aligned && now >= b.nextShotAt && ammo > 0 && !p.reloadUntil) {
       // 距離越遠越不準；連射越久越散；在空中更不準（跟玩家一樣）
       let err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray) * (b.ground ? 1 : 2.2);
-      if (scopeGun) err = c.error * (0.5 + dist / (c.rangeFalloff * 2.5)); // 開鏡比較準
+      // 開鏡：子彈幾乎就落在準心上（觀戰看到準心在人身上就會打中）；
+      // 失誤改成「準心還沒對好就開槍」（看得到的偏差），開鏡後也要多瞄一下
+      if (scopeGun) err = c.error * 0.3 * (0.5 + dist / (c.rangeFalloff * 3));
       // 邊走邊開槍比較不準（跟玩家一樣：看這把槍移動時的散布、走得多快）
       err = Math.hypot(err, W.spread[1] * 0.3 * (b.moveK || 0)) * (1 + 0.8 * (b.moveK || 0));
       if ((b.stunUntil || 0) > now) err *= 2.5; // 被震撼彈震到：很難瞄
