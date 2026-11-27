@@ -5,6 +5,8 @@ const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const MAP = require('./public/map.js');
+const { rayBox, raySphere } = require('./geom.js');
+const BOT = require('./bots.js');
 
 const PORT = process.env.PORT || 3000;
 const ROOM_MAX = 10;
@@ -70,6 +72,11 @@ function makeCode() {
   } while (rooms.has(code));
   return code;
 }
+function humanCount(r) {
+  let n = 0;
+  for (const p of r.players.values()) if (!p.bot) n++;
+  return n;
+}
 function teamCount(r, team) {
   let n = 0;
   for (const p of r.players.values()) if (p.team === team) n++;
@@ -93,6 +100,7 @@ function roomState(r) {
     locked: !!r.password, score: r.score, roundWins: r.roundWins, round: r.round, phase: r.phase, timeLeft,
     players: [...r.players.values()].map((p) => ({
       id: p.id, name: p.name, color: p.color, team: p.team, kills: p.kills, deaths: p.deaths, alive: p.alive,
+      bot: p.bot ? p.bot.level : null,
     })),
   };
 }
@@ -162,14 +170,16 @@ function leaveRoom(p) {
   p.room = null;
   p.alive = false;
   send(p.ws, { t: 'room', room: null });
-  if (!r.players.size) {
+  if (!humanCount(r)) {
+    // 只剩機器人就關房
+    r.players.clear();
     rooms.delete(r.code);
     console.log(`[房] 房間 ${r.code} 已關閉`);
     queueLobby();
     return;
   }
   toRoom(r, { t: 'left', id: p.id });
-  if (r.hostId === p.id) r.hostId = r.players.keys().next().value; // 房主交給下一個人
+  if (r.hostId === p.id) r.hostId = [...r.players.values()].find((o) => !o.bot).id; // 房主交給下一個真人
   if (r.state === 'playing') checkTeams(r);
   syncRoom(r);
 }
@@ -178,7 +188,7 @@ function leaveRoom(p) {
 function startMatch(r) {
   if (r.state !== 'lobby') return;
   if (r.mode === 'elim' && (!teamCount(r, 0) || !teamCount(r, 1))) {
-    return send(r.players.get(r.hostId).ws, { t: 'error', msg: '回合殲滅模式需要兩隊都至少有 1 個人' });
+    return send(r.players.get(r.hostId).ws, { t: 'error', msg: '回合殲滅模式需要兩隊都至少有 1 個人，可以用「＋ 機器人」補位' });
   }
   r.state = 'playing';
   r.score = [0, 0];
@@ -227,7 +237,7 @@ function endMatch(r, winner, reason = '') {
   toRoom(r, {
     t: 'matchEnd', winner, mode: r.mode, reason,
     score: r.mode === 'tdm' ? r.score : r.roundWins,
-    players: [...r.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths })),
+    players: [...r.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, bot: !!p.bot })),
   });
   syncRoom(r);
   console.log(`[房] ${r.code} 對戰結束，${winner < 0 ? '平手' : MAP.teams[winner].name + '獲勝'}`);
@@ -278,37 +288,11 @@ function spawnAt(p, s, protect) {
   p.protectUntil = Date.now() + protect;
   p.history = [];
   p.lastStateAt = Date.now();
+  if (p.bot) BOT.resetBrain(p.bot);
   toRoom(p.room, { t: 'respawn', id: p.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, seq: p.seq });
 }
 
 // ---------- 命中判定 ----------
-// 射線 vs 軸對齊方塊，回傳距離或 Infinity
-function rayBox(o, d, min, max) {
-  let tmin = 0;
-  let tmax = Infinity;
-  for (let i = 0; i < 3; i++) {
-    if (Math.abs(d[i]) < 1e-9) {
-      if (o[i] < min[i] || o[i] > max[i]) return Infinity;
-    } else {
-      let t1 = (min[i] - o[i]) / d[i];
-      let t2 = (max[i] - o[i]) / d[i];
-      if (t1 > t2) [t1, t2] = [t2, t1];
-      tmin = Math.max(tmin, t1);
-      tmax = Math.min(tmax, t2);
-      if (tmin > tmax) return Infinity;
-    }
-  }
-  return tmin;
-}
-function raySphere(o, d, c, r) {
-  const ox = o[0] - c[0], oy = o[1] - c[1], oz = o[2] - c[2];
-  const b = ox * d[0] + oy * d[1] + oz * d[2];
-  const cc = ox * ox + oy * oy + oz * oz - r * r;
-  const disc = b * b - cc;
-  if (disc < 0) return Infinity;
-  const t = -b - Math.sqrt(disc);
-  return t >= 0 ? t : Infinity;
-}
 // 延遲補償：回到射手畫面上看到的那個時間點的位置
 function positionAt(p, time) {
   const h = p.history;
@@ -350,7 +334,7 @@ function handleShoot(p, msg) {
   for (const b of MAP.boxes) best = Math.min(best, rayBox(o, d, b.min, b.max));
   if (d[1] < 0) best = Math.min(best, -o[1] / d[1]); // 地面
 
-  const rewind = Math.min(250, p.rtt / 2 + 100);
+  const rewind = p.bot ? 0 : Math.min(250, p.rtt / 2 + 100);
   let target = null;
   let headshot = false;
   for (const q of r.players.values()) {
@@ -364,12 +348,14 @@ function handleShoot(p, msg) {
 
   const end = [o[0] + d[0] * best, o[1] + d[1] * best, o[2] + d[2] * best];
   toRoom(r, { t: 'shot', id: p.id, o, e: end }, p.id);
+  for (const q of r.players.values()) if (q.bot && q.team !== p.team) BOT.hear(q, p, now);
 
   if (!target || now < target.protectUntil) return;
   const dmg = headshot ? DMG_HEAD : DMG_BODY;
   target.hp = Math.max(0, target.hp - dmg);
   send(p.ws, { t: 'hit', id: target.id, head: headshot, kill: target.hp <= 0 });
   send(target.ws, { t: 'damaged', hp: target.hp, from: p.id, fx: p.x, fz: p.z });
+  if (target.bot) BOT.damaged(target, p, now);
 
   if (target.hp <= 0) {
     target.alive = false;
@@ -429,18 +415,60 @@ function kick(p, msg) {
   if (!isHost(p)) return;
   const target = r.players.get(msg.id);
   if (!target || target === p) return;
+  if (target.bot) {
+    if (r.state === 'playing') return; // 對戰中不能移除機器人
+    r.players.delete(target.id);
+    syncRoom(r);
+    return;
+  }
   send(target.ws, { t: 'kicked' });
   leaveRoom(target);
 }
 
 // ---------- 連線 ----------
-wss.on('connection', (ws) => {
-  const p = {
-    id: nextId++, ws, hello: false, name: '', color: COLORS[0], room: null, team: 0,
+function makePlayer(ws) {
+  return {
+    id: nextId++, ws, hello: false, name: '', color: COLORS[0], room: null, team: 0, bot: null,
     kills: 0, deaths: 0, seq: 0, rtt: 100, lastShot: 0,
     x: 0, y: 0, z: 0, yaw: 0, pitch: 0, hp: 100, alive: false, ammo: MAG_SIZE,
     reloadUntil: 0, respawnAt: 0, protectUntil: 0, history: [], lastStateAt: Date.now(),
   };
+}
+
+// ---------- 機器人 ----------
+const NO_WS = { readyState: 3, send() {} }; // 機器人沒有真的連線
+function addBot(r, team, level) {
+  if (!BOT.LEVELS[level] || teamCount(r, team) >= TEAM_MAX || r.players.size >= ROOM_MAX) return false;
+  const used = new Set([...r.players.values()].map((o) => o.name));
+  const free = BOT.NAMES.filter((n) => !used.has(n));
+  const p = makePlayer(NO_WS);
+  p.hello = true;
+  p.name = free.length ? free[Math.floor(Math.random() * free.length)] : `機器人${p.id}`;
+  p.color = COLORS[Math.floor(Math.random() * COLORS.length)];
+  p.bot = BOT.makeBrain(level);
+  p.room = r;
+  p.team = team;
+  r.players.set(p.id, p);
+  return true;
+}
+function handleAddBot(p, msg) {
+  const r = p.room;
+  if (!isHost(p) || r.state !== 'lobby') return;
+  const team = msg.team === 1 ? 1 : 0;
+  if (!addBot(r, team, msg.level)) return send(p.ws, { t: 'error', msg: `${MAP.teams[team].name}已經滿了` });
+  syncRoom(r);
+}
+function handleFillBots(p, msg) {
+  const r = p.room;
+  if (!isHost(p) || r.state !== 'lobby' || !BOT.LEVELS[msg.level]) return;
+  let added = 0;
+  for (const team of [0, 1]) while (addBot(r, team, msg.level)) added++;
+  if (!added) return send(p.ws, { t: 'error', msg: '兩隊都已經滿了' });
+  syncRoom(r);
+}
+
+wss.on('connection', (ws) => {
+  const p = makePlayer(ws);
   clients.set(p.id, p);
 
   ws.on('message', (raw) => {
@@ -478,6 +506,8 @@ wss.on('connection', (ws) => {
       case 'rules': setRules(p, msg); break;
       case 'kick': kick(p, msg); break;
       case 'start': if (isHost(p)) startMatch(p.room); break;
+      case 'addBot': handleAddBot(p, msg); break;
+      case 'fillBots': handleFillBots(p, msg); break;
     }
   });
 
@@ -523,6 +553,13 @@ setInterval(() => {
         startRound(r);
       }
     }
+
+    // 機器人思考
+    const api = { MAG: MAG_SIZE, shoot: handleShoot, reload: (b) => { if (!b.reloadUntil && b.ammo < MAG_SIZE) b.reloadUntil = Date.now() + RELOAD_MS; } };
+    for (const p of r.players.values()) {
+      if (p.bot && r.state === 'playing') BOT.think(p, r, now, TICK_MS / 1000, api);
+    }
+    if (r.state !== 'playing') continue;
 
     const list = [];
     for (const p of r.players.values()) {

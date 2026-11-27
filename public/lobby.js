@@ -1,7 +1,7 @@
 // 大廳、建立房間、輸入密碼、等待室的畫面邏輯
 import { hex } from './figure.js';
 import { go } from './menu.js';
-import { uiClick } from './audio.js';
+import { uiClick, uiBack } from './audio.js';
 import { profile } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
@@ -17,6 +17,8 @@ let myId = () => 0;
 let room = null;
 let pendingCode = '';
 let createMode = 'tdm';
+let pickTeam = 0; // 機器人要加到哪一隊（-1 = 自動補滿兩隊）
+const LEVEL_NAMES = { easy: '新手', normal: '普通', hard: '老手' };
 
 export function modeName(m) { return MODE_NAMES[m] || m; }
 export function rulesText(r) {
@@ -119,8 +121,14 @@ export function renderRoom(r) {
       dot.style.background = hex(p.color);
       const nm = document.createElement('span');
       nm.className = 'nm';
-      nm.textContent = p.name + (p.id === me ? '（你）' : '');
+      nm.textContent = (p.bot ? '🤖 ' : '') + p.name + (p.id === me ? '（你）' : '');
       slot.append(dot, nm);
+      if (p.bot) {
+        const lv = document.createElement('span');
+        lv.className = `lv ${p.bot}`;
+        lv.textContent = LEVEL_NAMES[p.bot];
+        slot.append(lv);
+      }
       if (p.id === r.hostId) {
         const tag = document.createElement('span');
         tag.className = 'tag';
@@ -131,9 +139,9 @@ export function renderRoom(r) {
         const k = document.createElement('button');
         k.className = 'kick';
         k.textContent = '✕';
-        k.title = '踢出房間';
+        k.title = p.bot ? '移除機器人' : '踢出房間';
         k.addEventListener('click', () => {
-          if (confirm(`要把「${p.name}」踢出房間嗎？`)) send({ t: 'kick', id: p.id });
+          if (p.bot || confirm(`要把「${p.name}」踢出房間嗎？`)) { uiClick(); send({ t: 'kick', id: p.id }); }
         });
         slot.append(k);
       }
@@ -142,6 +150,8 @@ export function renderRoom(r) {
     const joinBtn = document.querySelector(`.teamcol.t${team} [data-team]`);
     joinBtn.disabled = !mine || mine.team === team || members.length >= 5 || r.state === 'playing';
     joinBtn.textContent = mine?.team === team ? '你在這隊' : members.length >= 5 ? '已滿' : '加入';
+    const botBtn = document.querySelector(`.teamcol.t${team} [data-bot-team]`);
+    botBtn.classList.toggle('hidden', !isHost || r.state !== 'lobby' || members.length >= 5);
   }
 
   // 房主規則設定
@@ -231,6 +241,25 @@ export function initLobby(opts) {
   rule('ruleScore', 'scoreLimit', Number);
   rule('ruleTime', 'timeLimit', Number);
   rule('ruleRounds', 'rounds', Number);
+
+  // 機器人
+  const openPick = (team) => {
+    pickTeam = team;
+    $('botPickTitle').firstChild.textContent = team < 0 ? '自動補滿兩隊' : `加入${TEAMS[team].name}機器人`;
+    $('botPick').classList.remove('hidden');
+    uiClick();
+  };
+  for (const b of document.querySelectorAll('[data-bot-team]')) b.addEventListener('click', () => openPick(Number(b.dataset.botTeam)));
+  $('fillBots').addEventListener('click', () => openPick(-1));
+  for (const b of document.querySelectorAll('#botPick [data-level]')) {
+    b.addEventListener('click', () => {
+      uiClick();
+      $('botPick').classList.add('hidden');
+      const level = b.dataset.level;
+      send(pickTeam < 0 ? { t: 'fillBots', level } : { t: 'addBot', team: pickTeam, level });
+    });
+  }
+  $('botPickCancel').addEventListener('click', () => { $('botPick').classList.add('hidden'); uiBack(); });
 }
 
 export { TEAMS };

@@ -447,7 +447,7 @@ function onRoom(r) {
   for (const p of r.players) {
     ids.add(p.id);
     const old = roster.get(p.id);
-    roster.set(p.id, { ...p });
+    roster.set(p.id, { ...p, name: p.bot ? `🤖${p.name}` : p.name });
     if (old && old.team !== p.team) removeRemote(p.id);
   }
   for (const id of [...roster.keys()]) if (!ids.has(id)) { roster.delete(id); removeRemote(id); }
@@ -479,6 +479,7 @@ function enterMatch() {
   for (const id of roster.keys()) if (id !== me.id) makeRemote(id);
   $('hud').classList.remove('hidden');
   $('results').classList.add('hidden');
+  $('botPick').classList.add('hidden');
   $('scoreboard').classList.add('hidden');
   if (IS_TOUCH) $('touch').classList.remove('hidden');
   $('killfeed').replaceChildren();
@@ -550,10 +551,14 @@ function showResults(m) {
   const s0 = document.createElement('span'); s0.className = 's0'; s0.textContent = m.score[0];
   const s1 = document.createElement('span'); s1.className = 's1'; s1.textContent = m.score[1];
   sc.append(s0, document.createTextNode(m.mode === 'tdm' ? '  擊殺  ' : '  回合  '), s1);
+  for (const p of m.players) if (p.bot && !p.name.startsWith('🤖')) p.name = `🤖${p.name}`;
   const mvp = [...m.players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths)[0];
   $('resMvp').textContent = m.reason === 'forfeit' ? '對手隊伍的玩家都離開了'
     : mvp && mvp.kills > 0 ? `⭐ MVP：${mvp.name}（${mvp.kills} 殺 / ${mvp.deaths} 死）` : '';
-  for (const p of m.players) { const r = roster.get(p.id); if (r) { r.kills = p.kills; r.deaths = p.deaths; } }
+  for (const p of m.players) {
+    const r = roster.get(p.id);
+    if (r) { r.kills = p.kills; r.deaths = p.deaths; }
+  }
   const all = m.players.map((p) => ({ ...p, color: roster.get(p.id)?.color ?? 0xffffff }));
   $('resTables').replaceChildren(teamTable(0, all.filter((p) => p.team === 0)), teamTable(1, all.filter((p) => p.team === 1)));
   resultsEnd = performance.now() + 12000;

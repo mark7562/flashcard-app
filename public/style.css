@@ -489,3 +489,24 @@ body.touch #hpbar { width: 120px; }
 .res-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; text-align: left; }
 @media (max-width: 560px) { .res-tables, #scores { grid-template-columns: 1fr; } }
 @media (max-height: 520px) { .res-card { padding: 14px; gap: 6px; } .res-score { font-size: 22px; } }
+
+/* ================= 機器人 ================= */
+.npanel.narrow { width: min(380px, 100%); }
+.teamhead .addbot { margin-left: auto; color: #ffbe0b; text-shadow: 0 0 6px rgba(255, 190, 11, 0.6); }
+.teamhead .addbot + .linkbtn { margin-left: 0; }
+.nbtn.fill { width: auto; justify-self: start; padding: 7px 14px; font-size: 14px; letter-spacing: 0.05em; }
+.levels { display: flex; flex-direction: column; gap: 8px; }
+.lvl {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 11px 14px; margin: 0;
+  cursor: pointer; color: var(--text); font: 15px var(--zh); border-radius: 4px; border: 1px solid; background: rgba(0, 0, 0, 0.3);
+}
+.lvl b { font-size: 16px; }
+.lvl span { font-size: 13px; color: var(--muted); }
+.lvl.easy { border-color: rgba(61, 255, 170, 0.5); } .lvl.easy:hover { background: rgba(61, 255, 170, 0.12); }
+.lvl.normal { border-color: rgba(255, 190, 11, 0.5); } .lvl.normal:hover { background: rgba(255, 190, 11, 0.12); }
+.lvl.hard { border-color: rgba(255, 77, 109, 0.6); } .lvl.hard:hover { background: rgba(255, 77, 109, 0.12); }
+.slot .lv { font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+.slot .lv.easy { color: #3dffaa; border-color: rgba(61, 255, 170, 0.5); }
+.slot .lv.normal { color: #ffbe0b; border-color: rgba(255, 190, 11, 0.5); }
+.slot .lv.hard { color: #ff6b8a; border-color: rgba(255, 77, 109, 0.6); }
+@media (max-height: 520px) { .lvl { padding: 7px 12px; } .lvl span { display: none; } }

@@ -162,11 +162,11 @@
         </div>
         <div class="teams">
           <div class="teamcol t0">
-            <div class="teamhead"><span>藍隊</span><span id="team0Count"></span><button class="linkbtn" data-team="0">加入</button></div>
+            <div class="teamhead"><span>藍隊</span><span id="team0Count"></span><button class="linkbtn addbot hidden" data-bot-team="0">＋ 機器人</button><button class="linkbtn" data-team="0">加入</button></div>
             <div id="team0" class="slots"></div>
           </div>
           <div class="teamcol t1">
-            <div class="teamhead"><span>紅隊</span><span id="team1Count"></span><button class="linkbtn" data-team="1">加入</button></div>
+            <div class="teamhead"><span>紅隊</span><span id="team1Count"></span><button class="linkbtn addbot hidden" data-bot-team="1">＋ 機器人</button><button class="linkbtn" data-team="1">加入</button></div>
             <div id="team1" class="slots"></div>
           </div>
         </div>
@@ -187,6 +187,9 @@
               <button data-v="5">5 分</button><button data-v="10">10 分</button><button data-v="15">15 分</button>
             </div>
           </div>
+          <div class="setrow">機器人
+            <button id="fillBots" class="nbtn small fill">🤖 自動補滿兩隊</button>
+          </div>
           <div class="setrow elim-only">勝利回合
             <div id="ruleRounds" class="seg">
               <button data-v="3">3</button><button data-v="5">5</button><button data-v="7">7</button>
@@ -201,7 +204,7 @@
       </div>
     </section>
 
-    <div class="ver">v1.2</div>
+    <div class="ver">v1.3</div>
   </div>
 
   <!-- ===== 設定（標題畫面和遊戲中都能開） ===== -->
@@ -225,6 +228,19 @@
         <button id="resetSettings" class="nbtn small">恢復預設</button>
         <button id="closeSettings" class="nbtn primary small">完成</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== 選擇機器人難度 ===== -->
+  <div id="botPick" class="overlay hidden">
+    <div class="npanel narrow">
+      <h2 class="ntitle" id="botPickTitle">加入機器人<small>BOT</small></h2>
+      <div class="levels">
+        <button class="lvl easy" data-level="easy"><b>🟢 新手</b><span>反應慢、常打歪，適合剛開始玩</span></button>
+        <button class="lvl normal" data-level="normal"><b>🟡 普通</b><span>跟一般玩家差不多，會躲會閃</span></button>
+        <button class="lvl hard" data-level="hard"><b>🔴 老手</b><span>反應快、槍法準、會繞路包抄</span></button>
+      </div>
+      <button id="botPickCancel" class="nbtn small">取消</button>
     </div>
   </div>
 
