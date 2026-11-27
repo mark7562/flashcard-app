@@ -183,14 +183,15 @@ function buildRifle() {
           [1.95, {}], [2.3, {}]],
         sounds: [[0.4, 'magOut'], [1.12, 'magIn'], [1.56, 'bolt']],
       },
+      // 檢視：左手把彈匣拔出一半，把槍側過來看裡面的子彈，再推回去拍一下
       inspect: {
-        keys: [[0, {}], [0.45, { ry: 0.9, rz: 0.5, px: -0.1, py: 0.04, pz: 0.03, lx: 0.02, ly: -0.03 }],
-          [1.1, { ry: 0.95, rz: 0.55, px: -0.1, py: 0.05, pz: 0.03, rx: 0.12, lx: 0.02, ly: -0.03 }],
-          [1.35, { rx: -0.1, ry: -0.3, rz: -0.2, py: 0.02, lx: 0.012, ly: 0.1, lz: 0.41 }],
-          [1.5, { rx: -0.1, ry: -0.3, rz: -0.2, py: 0.02, lx: 0.012, ly: 0.1, lz: 0.45, b: 0.6 }],
-          [1.65, { rx: -0.1, ry: -0.3, rz: -0.2, py: 0.02, lx: 0.012, ly: 0.1, lz: 0.41, b: 0 }],
-          [2.0, {}], [2.4, {}]],
-        sounds: [[1.46, 'check']],
+        keys: [[0, {}], [0.25, { ...T }], [0.4, { ...T, ...H }],
+          [0.6, { ...T, lx: 0.02, ly: -0.21, lz: 0.24, my: -0.12, mz: 0.02 }],
+          [0.8, { ...T, rz: -0.95, rx: 0.35, py: 0.08, lx: 0.02, ly: -0.21, lz: 0.24, my: -0.12, mz: 0.02 }],
+          [1.25, { ...T, rz: -1.0, rx: 0.38, py: 0.09, lx: 0.02, ly: -0.21, lz: 0.24, my: -0.12, mz: 0.02 }],
+          [1.45, { ...T, ...H }], [1.52, { ...T, rx: 0.2, ...H, ly: -0.07 }], [1.62, { ...T, ...H }],
+          [2.0, {}], [2.2, {}]],
+        sounds: [[0.52, 'magOut'], [1.42, 'magIn']],
       },
     },
   };
@@ -250,18 +251,22 @@ function buildPistol() {
     base: { p: V(0.12, -0.15, -0.33), r: [0, 0.02, 0] }, sight: V(0, 0.052, 0), adsZ: -0.2,
     kick: { z: 0.035, rx: 0.2, tau: 70 },
     anims: {
-      draw: { keys: [[0, { py: -0.2, rx: -0.8, rz: -0.6 }], [0.3, {}]], sounds: [[0.12, 'slide']] },
+      // 拿出來：從旁邊快速甩上來、手腕一轉擺正
+      draw: { keys: [[0, { py: -0.14, px: 0.06, rx: -0.3, rz: -1.3 }], [0.13, { py: 0.015, rz: 0.15 }], [0.24, {}]], sounds: [[0.1, 'whoosh'], [0.14, 'slide']] },
       reload: { keys: [...base(0), [1.2, {}], [1.3, {}]], sounds: [[0.2, 'magOut'], [0.86, 'magIn']] },
       reloadEmpty: {
         keys: [...base(1), [1.08, { ...T, b: 1 }], [1.12, { ...T, rx: 0.28, b: 0 }], [1.45, {}], [1.6, {}]],
         sounds: [[0.2, 'magOut'], [0.86, 'magIn'], [1.1, 'slide']],
       },
+      // 檢視：在手上翻過來看左邊、再一甩翻到右邊，最後拉一下套筒
       inspect: {
-        keys: [[0, {}], [0.4, { rz: -1.3, ry: 0.5, px: -0.06, py: 0.03, lx: -0.1, ly: -0.2 }],
-          [1.0, { rz: -1.3, ry: 0.5, px: -0.06, py: 0.03, rx: 0.15, lx: -0.1, ly: -0.2 }],
-          [1.25, { rz: 0.2, ry: -0.3, py: 0.02 }], [1.4, { rz: 0.2, ry: -0.3, py: 0.02, b: 0.55 }],
-          [1.55, { rz: 0.2, ry: -0.3, py: 0.02, b: 0 }], [1.9, {}], [2.2, {}]],
-        sounds: [[1.36, 'check']],
+        keys: [[0, {}], [0.35, { rz: -1.3, ry: 0.5, px: -0.06, py: 0.03, lx: -0.1, ly: -0.2 }],
+          [0.8, { rz: -1.3, ry: 0.5, px: -0.06, py: 0.04, rx: 0.12, lx: -0.1, ly: -0.2 }],
+          [0.98, { rz: 1.15, ry: -0.45, px: -0.05, py: 0.05, lx: -0.1, ly: -0.2 }],
+          [1.4, { rz: 1.2, ry: -0.5, px: -0.05, py: 0.05, rx: 0.1, lx: -0.1, ly: -0.2 }],
+          [1.6, { rz: 0.2, ry: -0.3, py: 0.02 }], [1.72, { rz: 0.2, ry: -0.3, py: 0.02, b: 0.55 }],
+          [1.85, { rz: 0.2, ry: -0.3, py: 0.02, b: 0 }], [2.15, {}], [2.4, {}]],
+        sounds: [[0.88, 'whoosh'], [1.68, 'check']],
       },
     },
   };
@@ -393,7 +398,8 @@ function buildSmg() {
     shell: [0.0045, 0.02], base: { p: V(0.16, -0.18, -0.3), r: [0, 0.03, 0] },
     sight: V(0, 0.088, -0.06), adsZ: -0.14, kick: { z: 0.022, rx: 0.035, tau: 45 },
     anims: {
-      draw: { keys: [[0, { py: -0.2, rx: -0.6, rz: 0.4 }], [0.3, {}]], sounds: [[0.12, 'magIn']] },
+      // 拿出來：左手拉一下拉柄
+      draw: { keys: [[0, { py: -0.2, rx: -0.6, rz: 0.4 }], [0.28, {}], [0.36, { b: 1 }], [0.44, {}]], sounds: [[0.12, 'magIn'], [0.36, 'bolt']] },
       reload: { keys: [...base, [1.45, {}], [1.6, {}]], sounds: [[0.4, 'magOut'], [1.12, 'magIn']] },
       reloadEmpty: {
         keys: [...base,
@@ -403,12 +409,14 @@ function buildSmg() {
           [1.85, {}], [2.0, {}]],
         sounds: [[0.4, 'magOut'], [1.12, 'magIn'], [1.52, 'bolt']],
       },
-      // 檢視：往左翻看側面，再拍一下彈匣
+      // 檢視：左手放開，單手靠手腕把槍翻到左邊看，再「啪」一下甩到右邊
       inspect: {
-        keys: [[0, {}], [0.4, { rz: 0.8, ry: -0.5, px: -0.08, py: 0.05 }], [1.0, { rz: 0.85, ry: -0.55, px: -0.08, py: 0.06, rx: 0.1 }],
-          [1.3, { rz: -0.3, ry: 0.2, py: 0.03 }], [1.45, { rz: -0.3, ry: 0.2, py: 0.03, lx: 0.0, ly: -0.04, lz: 0.16 }],
-          [1.55, { rz: -0.3, ry: 0.2, py: 0.03, lx: 0.0, ly: 0.0, lz: 0.16, my: 0.01 }], [1.9, {}], [2.2, {}]],
-        sounds: [[1.53, 'magIn']],
+        keys: [[0, {}], [0.3, { rz: -1.3, ry: 0.4, px: -0.06, py: 0.05, lx: -0.15, ly: -0.3, lo: 1 }],
+          [0.9, { rz: -1.35, ry: 0.45, px: -0.06, py: 0.06, rx: 0.1, lx: -0.15, ly: -0.3, lo: 1 }],
+          [1.05, { rz: 1.1, ry: -0.4, px: -0.04, py: 0.06, lx: -0.15, ly: -0.3, lo: 1 }],
+          [1.6, { rz: 1.15, ry: -0.45, px: -0.04, py: 0.07, rx: 0.08, lx: -0.15, ly: -0.3, lo: 1 }],
+          [1.9, {}], [2.1, {}]],
+        sounds: [[0.95, 'whoosh'], [1.1, 'check']],
       },
     },
   };
@@ -446,6 +454,12 @@ function buildShotgun() {
   const lhandRest = V(-0.01, -0.045, -0.3);
   const lhand = arm(root, lhandRest, V(-0.4, -0.22, 0.48), [0.058, 0.06, 0.1]);
   // 左手拿著的彈殼（裝彈時才看得到）
+  // 彈膛裡的霰彈：護木拉開時從拋殼口看得到
+  const chamberShell = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.045, 8), shellRed);
+  chamberShell.rotation.x = Math.PI / 2;
+  chamberShell.position.set(0.022, 0.025, -0.06);
+  chamberShell.visible = false;
+  gun.add(chamberShell);
   const handShell = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.05, 8), shellRed);
   handShell.rotation.x = Math.PI / 2;
   handShell.position.set(0.01, 0.035, -0.01);
@@ -486,17 +500,21 @@ function buildShotgun() {
     return { keys, sounds };
   }
   return {
-    id: 'shotgun', root, gun, lhand, lhandRest, pump, pumpRest: pump.position.z, handShell, shellReload,
+    id: 'shotgun', root, gun, lhand, lhandRest, pump, chamberShell, pumpRest: pump.position.z, handShell, shellReload,
     flash, muzzle: V(0, 0.032, -0.68), port: V(0.03, 0.025, -0.06), shell: [0.009, 0.045], shellMat: shellRed, noShellOnFire: true,
     base: { p: V(0.16, -0.19, -0.3), r: [0, 0.03, 0] }, sight: V(0, 0.067, -0.1), adsZ: -0.27,
     kick: { z: 0.06, rx: 0.12, tau: 90 }, after: { anim: 'pump', delay: 260 },
     anims: {
       draw: { keys: [[0, { py: -0.22, rx: -0.7, rz: 0.3 }], [0.3, {}], [0.42, { pm: 1 }], [0.55, {}]], sounds: [[0.32, 'pump']] },
       pump: { keys: [[0, {}], ...pumpKeys(0.02).slice(1), [0.5, {}]], sounds: [[0.02, 'pump'], [0.13, '!shell']] },
+      // 檢視：槍側過來，護木拉開一半，看一下彈膛裡紅色的霰彈，再推回去
       inspect: {
-        keys: [[0, {}], [0.4, { ry: 0.8, rz: 0.4, px: -0.1, py: 0.04 }], [1.0, { ry: 0.85, rz: 0.45, px: -0.1, py: 0.05, rx: 0.1 }],
-          [1.3, { rz: -0.2, py: 0.02 }], [1.45, { rz: -0.2, py: 0.02, pm: 0.45 }], [1.6, { rz: -0.2, py: 0.02, pm: 0 }], [2.0, {}], [2.3, {}]],
-        sounds: [[1.4, 'check']],
+        keys: [[0, {}], [0.35, { rz: 0.35, ry: -0.6, rx: 0.1, px: -0.06, py: 0.05 }],
+          [0.55, { rz: 0.35, ry: -0.6, rx: 0.1, px: -0.06, py: 0.05, pm: 0.5 }],
+          [1.3, { rz: 0.4, ry: -0.65, rx: 0.14, px: -0.06, py: 0.06, pm: 0.5 }],
+          [1.45, { rz: 0.35, ry: -0.6, rx: 0.1, px: -0.06, py: 0.05, pm: 0 }], [1.55, { rz: 0.35, ry: -0.6, rx: 0.16, px: -0.06, py: 0.05 }],
+          [2.0, {}], [2.2, {}]],
+        sounds: [[0.5, 'check'], [1.42, 'pump']],
       },
     },
   };
@@ -565,18 +583,24 @@ function buildSniper() {
     base: { p: V(0.15, -0.19, -0.3), r: [0, 0.03, 0] }, sight: V(0, scopeY, 0), adsZ: -0.1, scope: true,
     kick: { z: 0.07, rx: 0.14, tau: 110 }, after: { anim: 'cycle', delay: 200 },
     anims: {
-      draw: { keys: [[0, { py: -0.22, rx: -0.7, rz: 0.25 }], [0.4, {}]], sounds: [[0.2, 'magIn']] },
+      // 拿出來：順手拉一下槍栓確認上膛
+      draw: { keys: [[0, { py: -0.22, rx: -0.7, rz: 0.25 }], [0.3, {}], ...cycle(0.2), [0.9, {}]], sounds: [[0.12, 'magIn'], [0.4, 'boltUp'], [0.5, 'boltBack'], [0.66, 'boltFwd']] },
       cycle: { keys: [[0, {}], ...cycle(0), [0.85, {}]], sounds: [[0.17, 'boltUp'], [0.26, 'boltBack'], [0.33, '!shell'], [0.42, 'boltFwd']] },
       reload: { keys: [...base.map(([t, k]) => [t * 1.6, k]), [2.5, {}], [2.8, {}]], sounds: [[0.64, 'magOut'], [1.8, 'magIn']] },
       reloadEmpty: {
         keys: [...base.map(([t, k]) => [t * 1.6, k]), [2.25, { ...T }], ...cycle(2.2, T).map(([t, k]) => [t + 0.1, k]), [3.1, {}], [3.3, {}]],
         sounds: [[0.64, 'magOut'], [1.8, 'magIn'], [2.47, 'boltUp'], [2.56, 'boltBack'], [2.72, 'boltFwd']],
       },
-      // 檢視：舉起來沿著狙擊鏡看，再半拉槍栓看一下彈膛
+      // 檢視：把槍側過來，左手在狙擊鏡上來回擦兩下，再舉起來對著前面看一眼
       inspect: {
-        keys: [[0, {}], [0.45, { ry: -0.6, rz: 0.25, px: -0.06, py: 0.06, pz: 0.05 }], [1.1, { ry: -0.65, rz: 0.3, px: -0.06, py: 0.07, pz: 0.05, rx: 0.08 }],
-          [1.35, { ...C }], [1.45, { ...C, bu: 1 }], [1.6, { ...C, bu: 1, b: 0.4 }], [1.8, { ...C, bu: 1, b: 0 }], [1.9, { ...C }], [2.3, {}]],
-        sounds: [[1.43, 'boltUp'], [1.75, 'boltFwd']],
+        keys: [[0, {}], [0.35, { ry: 0.6, rz: 0.3, px: -0.1, py: 0.06, lx: 0.012, ly: 0.17, lz: 0.0 }],
+          [0.55, { ry: 0.6, rz: 0.3, px: -0.1, py: 0.06, lx: 0.012, ly: 0.17, lz: 0.14 }],
+          [0.75, { ry: 0.6, rz: 0.3, px: -0.1, py: 0.06, lx: 0.012, ly: 0.17, lz: 0.0 }],
+          [0.95, { ry: 0.6, rz: 0.3, px: -0.1, py: 0.06, lx: 0.012, ly: 0.17, lz: 0.14 }],
+          [1.15, { ry: 0.6, rz: 0.3, px: -0.1, py: 0.06, lx: 0.012, ly: 0.17, lz: 0.02 }],
+          [1.45, { ry: -0.15, px: -0.1, py: 0.08, pz: 0.03, rx: 0.06 }], [1.9, { ry: -0.15, px: -0.1, py: 0.08, pz: 0.03, rx: 0.06 }],
+          [2.3, {}], [2.5, {}]],
+        sounds: [[0.45, 'swish2'], [0.85, 'swish2'], [1.5, 'check']],
       },
     },
   };
@@ -790,9 +814,29 @@ function buildNade() {
       ready: { keys: [[0, {}], [0.12, { ...PIN }], [0.22, { ...PIN, ly: 0.1, lx: 0.02 }], [0.38, { ...HOLD }]], hold: true, sounds: [[0.14, 'pin']] },
       throw: { keys: [[0, { ...HOLD }], [0.1, { py: 0.02, pz: -0.25, rx: -0.9, px: -0.02 }], [0.3, { py: -0.25, pz: -0.1, rx: -1.2 }], [0.5, { py: -0.3, rx: -1.2 }]], sounds: [[0.04, 'toss']] },
       toss: { keys: [[0, { ...HOLD }], [0.1, { py: -0.12, pz: -0.05, rx: 0.4 }], [0.22, { py: -0.02, pz: -0.25, rx: -0.6 }], [0.45, { py: -0.3, rx: -0.8 }]], sounds: [[0.06, 'toss']] },
-      inspect: { keys: [[0, {}], [0.4, { ry: 0.8, rz: 0.4, px: -0.06, py: 0.05 }], [1.1, { ry: 0.85, rz: 0.45, px: -0.06, py: 0.06 }], [1.5, {}]] },
+      inspect: null,
     },
   };
+  // 每種投擲物自己的檢視動作（換手上那顆的時候一起換）
+  const UP = { py: 0.06, px: -0.05, ry: 0.4, rz: 0.15 };
+  const tug = { ...PIN, ly: PIN.ly + 0.015, lz: PIN.lz + 0.02 };
+  const inspects = {
+    // 手榴彈：左手手指勾一下拉環，扯兩下又放回去（嚇自己一下）
+    frag: { keys: [[0, {}], [0.35, { ...UP, ...PIN }], [0.5, { ...UP, ...tug }], [0.62, { ...UP, ...PIN }], [0.76, { ...UP, ...tug }], [0.9, { ...UP, ...PIN }], [1.35, {}]], sounds: [[0.5, 'click'], [0.76, 'click']] },
+    // 閃光彈：往上拋、翻一圈接住
+    flash: { keys: [[0, {}], [0.22, { py: -0.03 }], [0.5, { py: 0.18, gx: Math.PI * 2 }], [0.78, { py: 0.0, gx: Math.PI * 2 }], [0.85, { py: -0.015, gx: Math.PI * 2 }], [1.2, { gx: Math.PI * 2 }]], sounds: [[0.22, 'toss'], [0.8, 'click']] },
+    // 煙霧彈：拿到面前上下搖三下
+    smoke: { keys: [[0, {}], [0.3, { ...UP }], [0.4, { ...UP, py: 0.11 }], [0.5, { ...UP, py: 0.03 }], [0.6, { ...UP, py: 0.11 }], [0.7, { ...UP, py: 0.03 }], [0.8, { ...UP, py: 0.11 }], [0.9, { ...UP }], [1.3, {}]], sounds: [[0.4, 'click'], [0.6, 'click'], [0.8, 'click']] },
+    // 燃燒瓶：舉到面前，布條上的火變大、一閃一閃
+    molotov: { keys: [[0, {}], [0.4, { py: 0.08, px: -0.06, pz: 0.06, ry: 0.3, fl: 1 }], [1.4, { py: 0.09, px: -0.06, pz: 0.06, ry: 0.35, rx: 0.08, fl: 1 }], [1.8, {}]], sounds: [[0.3, 'whoosh']] },
+    // 震撼彈：拿起來慢慢轉一圈看
+    stun: { keys: [[0, {}], [0.35, { ...UP, rx: 0.3 }], [1.15, { ...UP, rx: 0.3, gy: Math.PI * 2 }], [1.55, { gy: Math.PI * 2 }]], sounds: [[0.6, 'click'], [0.95, 'click']] },
+    // 誘餌彈：舉起來，左手按兩下上面的按鈕
+    decoy: { keys: [[0, {}], [0.35, { ...UP, rx: 0.45, ...PIN }], [0.48, { ...UP, rx: 0.45, ...PIN, ly: PIN.ly - 0.025 }], [0.6, { ...UP, rx: 0.45, ...PIN }], [0.72, { ...UP, rx: 0.45, ...PIN, ly: PIN.ly - 0.025 }], [0.85, { ...UP, rx: 0.45, ...PIN }], [1.3, {}]], sounds: [[0.48, 'click'], [0.72, 'click']] },
+  };
+  obj.flame = flame;
+  const setKind0 = obj.setKind;
+  obj.setKind = (id) => { setKind0(id); obj.anims.inspect = inspects[id] || inspects.frag; };
   return obj;
 }
 
@@ -1262,6 +1306,17 @@ function heavySwings(k, R) {
     strike: { keys: lerpKeys([[0, R], [0.14, { px: -0.12, py: -0.2, pz: -0.14, rx: -1.0, rz: 0.4 }], [0.3, { px: -0.12, py: -0.22, pz: -0.12, rx: -1.05, rz: 0.4 }], [0.75, {}]], k), sounds: [[0, 'heavy']] },
   };
 }
+// 重型近戰的揮法：每把自己一套（時間直接用秒）
+//   swings = [[揮之前的姿勢, 揮到底的姿勢, 揮出去的時間, 整個結束的時間], ...三種]
+function heavyKit(swings, R, strikeKeys, strikeSounds, windT) {
+  const o = {};
+  swings.forEach(([a, b, t1, t2], i) => {
+    o['swing' + i] = { keys: [[0, {}], [t1 * 0.45, a], [t1, b], [t2, {}]], sounds: [[t1 * 0.4, 'whoosh']] };
+  });
+  o.windup = { keys: [[0, {}], [windT, R]], hold: true, sounds: [[0, 'windup']] };
+  o.strike = { keys: [[0, R], ...strikeKeys], sounds: strikeSounds };
+  return o;
+}
 // 輕的刀（蝴蝶刀、飛刀）：跟戰術刀一樣的三種揮法，k 倍速
 function lightSwings(k) {
   const R = { px: 0.07, py: 0.1, pz: -0.03, rx: 0.9, rz: -0.45 };
@@ -1350,7 +1405,17 @@ function buildBat() {
   shaft(0.03, 0.02, -0.6, woodD);
   cyl(k, 0.024, 0.016, woodD, 0, 0, 0.12, 12); // 握把尾端
   box(k, 0.066, 0.012, 0.03, redM, 0, 0.026, -0.46); // 紅色貼紙
-  Object.assign(o, { anims: { draw: { keys: [[0, { py: -0.25, rx: -0.8, rz: 0.4 }], [0.4, {}]], sounds: [[0.15, 'whoosh']] }, ...heavySwings(1.2, { px: 0.04, py: 0.1, pz: 0.04, rx: 0.5, rz: -0.5 }),
+  Object.assign(o, { anims: { draw: { keys: [[0, { py: -0.25, rx: -0.8, rz: 0.4 }], [0.4, {}]], sounds: [[0.15, 'whoosh']] }, ...heavyKit([
+      // 正手橫掃（右 → 左）、反手橫掃（左 → 右）、往前戳
+      [{ px: 0.08, py: 0.04, pz: 0.04, kr: -0.6, ky: -1.1 }, { px: -0.18, py: 0.0, pz: -0.04, kr: -0.75, ky: 1.2 }, 0.3, 0.62],
+      [{ px: -0.14, py: 0.04, kr: -0.6, ky: 1.2 }, { px: 0.0, py: 0.02, pz: -0.04, kr: -0.7, ky: -0.6 }, 0.3, 0.62],
+      [{ pz: 0.08, kr: -0.85 }, { pz: -0.22, kr: -0.9 }, 0.2, 0.5],
+    ],
+    // 蓄力：像打擊手一樣把球棒往右後方架起來；放開＝全力橫掃到左邊
+    { px: 0.02, py: 0.06, pz: 0.02, kr: 0.25, ky: -0.5, rz: -0.15 },
+    [[0.07, { px: 0.02, py: 0.04, kr: -0.5, ky: -0.4 }], [0.16, { px: -0.24, py: 0.0, pz: -0.05, kr: -0.8, ky: 1.4 }],
+      [0.34, { px: -0.26, kr: -0.75, ky: 1.55 }], [0.8, {}]],
+    [[0, 'heavy']], 0.32),
     // 檢視：球棒在手上甩一圈，再扛到肩膀上拍兩下
     inspect: {
       keys: [[0, {}], [0.3, { px: -0.05, py: 0.05, lx: -0.15, ly: -0.25 }], [0.9, { px: -0.05, py: 0.07, kr: Math.PI * 2, lx: -0.15, ly: -0.25 }],
@@ -1374,7 +1439,16 @@ function buildAxe() {
   box(k, 0.006, 0.12, 0.012, M.steel, 0, 0.075, -0.49); // 亮亮的刃口
   box(k, 0.03, 0.03, 0.03, M.metal, 0, -0.04, -0.44); // 後面的錘頭
   box(k, 0.034, 0.012, 0.04, redM, 0, 0.0, -0.37);
-  Object.assign(o, { anims: { draw: { keys: [[0, { py: -0.25, rx: -0.8, rz: 0.4 }], [0.42, {}]], sounds: [[0.15, 'whoosh']] }, ...heavySwings(1.35, { px: 0.04, py: 0.12, pz: 0.04, rx: 0.55, rz: -0.45 }),
+  Object.assign(o, { anims: { draw: { keys: [[0, { py: -0.25, rx: -0.8, rz: 0.4 }], [0.42, {}]], sounds: [[0.15, 'whoosh']] }, ...heavyKit([
+      // 右上往左下斜劈、左上往右下斜劈、從頭上直直劈下
+      [{ px: 0.06, py: 0.1, pz: 0.06, kr: 0.4, ky: -0.5 }, { px: -0.14, py: -0.08, pz: -0.06, kr: -1.4, ky: 0.6 }, 0.32, 0.7],
+      [{ px: -0.1, py: 0.1, pz: 0.06, kr: 0.4, ky: 0.6 }, { px: 0.08, py: -0.08, pz: -0.06, kr: -1.4, ky: -0.5 }, 0.32, 0.7],
+      [{ py: 0.12, pz: 0.08, kr: 0.6 }, { py: -0.1, pz: -0.08, kr: -1.5 }, 0.34, 0.72],
+    ],
+    // 蓄力：把斧頭舉過頭；放開＝用力往下劈，卡住一下再拔出來
+    { px: -0.06, py: 0.16, pz: 0.1, kr: 0.7, rx: 0.15 },
+    [[0.12, { px: -0.06, py: -0.12, pz: -0.1, kr: -1.6 }], [0.32, { px: -0.06, py: -0.13, pz: -0.1, kr: -1.62 }], [0.42, { py: -0.08, pz: -0.06, kr: -1.2 }], [0.85, {}]],
+    [[0, 'heavy'], [0.12, 'thud'], [0.38, 'shing']], 0.4),
     // 檢視：把斧頭往上拋、翻一圈接住，再轉過來看刀口
     inspect: {
       keys: [[0, {}], [0.25, { py: -0.04, lx: -0.15, ly: -0.25 }], [0.5, { py: 0.22, kr: -Math.PI, lx: -0.15, ly: -0.25 }],
@@ -1395,7 +1469,16 @@ function buildHammer() {
   box(k, 0.09, 0.09, 0.2, M.metal, 0, 0, -0.52, 0, 0, 0).rotation.x = Math.PI / 2; // 錘頭（橫的）
   for (const y of [-0.1, 0.1]) box(k, 0.095, 0.02, 0.095, M.dark, 0, y, -0.52);
   box(k, 0.03, 0.03, 0.03, M.accent, 0.047, 0, -0.52);
-  Object.assign(o, { anims: { draw: { keys: [[0, { py: -0.3, rx: -0.9, rz: 0.4 }], [0.55, {}]], sounds: [[0.2, 'whoosh']] }, ...heavySwings(1.7, { px: 0.03, py: 0.14, pz: 0.05, rx: 0.6, rz: -0.35 }),
+  Object.assign(o, { anims: { draw: { keys: [[0, { py: -0.3, rx: -0.9, rz: 0.4 }], [0.55, {}]], sounds: [[0.2, 'whoosh']] }, ...heavyKit([
+      // 雙手往左邊撞、往右邊撞、用錘頭往前頂
+      [{ px: 0.08, py: 0.04, kr: -0.5, ky: -0.8 }, { px: -0.16, pz: -0.05, kr: -0.7, ky: 0.9 }, 0.4, 0.92],
+      [{ px: -0.12, py: 0.04, kr: -0.5, ky: 0.8 }, { px: 0.06, pz: -0.05, kr: -0.7, ky: -0.9 }, 0.4, 0.92],
+      [{ pz: 0.1, kr: -0.6 }, { pz: -0.2, kr: -0.9 }, 0.32, 0.8],
+    ],
+    // 蓄力：大錘高高舉過頭；放開＝砸向地面，畫面大晃一下
+    { px: 0.0, py: 0.08, pz: 0.0, kr: 0.3, ky: 0.35, rz: 0.25 },
+    [[0.16, { px: -0.08, py: -0.1, pz: -0.1, kr: -1.45 }], [0.45, { px: -0.08, py: -0.11, pz: -0.1, kr: -1.47 }], [1.0, {}]],
+    [[0, 'heavy'], [0.15, 'thud']], 0.55),
     // 檢視：扛起大錘放到肩上，往下砸一下地板（畫面晃）再扛回來
     inspect: {
       keys: [[0, {}], [0.5, { px: -0.02, py: 0.1, pz: 0.04, rx: 0.85, rz: -0.6 }], [0.9, { px: -0.02, py: 0.09, pz: 0.04, rx: 0.8, rz: -0.6 }],
@@ -1827,6 +1910,8 @@ export function createViewModels(camera, playSound) {
       if (cur.lhand) cur.lhand.position.set(cur.lhandRest.x + p('lx'), cur.lhandRest.y + p('ly'), cur.lhandRest.z + p('lz') + (cur.pump ? p('pm') * 0.07 : 0));
       if (cur.pump) cur.pump.position.z = cur.pumpRest + p('pm') * 0.07;
       if (cur.handShell) cur.handShell.visible = p('sh') > 0.5;
+      if (cur.flame && cur.flame.parent.visible) cur.flame.scale.setScalar((1 + p('fl') * 0.6) * (0.85 + Math.random() * 0.3)); // 燃燒瓶的火（檢視時變大）
+      if (cur.chamberShell) cur.chamberShell.visible = p('pm') > 0.3;
       if (cur.handle) { cur.handle.rotation.z = p('bu') * 1.3; } // 栓動：握柄往上轉
       if (cur.mag) cur.mag.position.set(cur.magRest.x + p('mx'), cur.magRest.y + p('my'), cur.magRest.z + p('mz'));
       // 槍機／套筒：開槍時往後跳一下
@@ -1840,7 +1925,7 @@ export function createViewModels(camera, playSound) {
         const travel = inReload || action?.name === 'inspect' ? p('b') : Math.max(pulse, slideLocked ? 1 : 0);
         cur.slide.position.z = cur.slideRest.z + travel * (cur.slideTravel || 0.04);
       }
-      if (cur.knife) cur.knife.rotation.x = p('kr');
+      if (cur.knife) cur.knife.rotation.set(p('kr'), p('ky'), p('kz')); // 武器在手中轉：kr 往前後倒、ky 往左右擺
       // 只有槍轉（手不動）：gx 往前翻、gy 水平轉、gz 側轉
       if (cur.gun) { const g0 = cur.gunRot0 || (cur.gunRot0 = cur.gun.rotation.toArray()); cur.gun.rotation.set(g0[0] + p('gx'), g0[1] + p('gy'), g0[2] + p('gz')); }
       // 繞著槍身中間某一點轉（左輪像轉筆那樣轉）：sp = 轉了幾弧度，軸和支點在 cur.spin

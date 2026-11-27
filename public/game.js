@@ -450,6 +450,7 @@ function releaseHeavy() {
   const wait = me.heavyAt + w.heavy.windMs - performance.now();
   if (wait > 0) setTimeout(strikeHeavy, wait); else strikeHeavy();
 }
+const HIT_STOP = { katana: 90, bat: 90, axe: 100, hammer: 130 }; // 重擊打中時動作停多久（毫秒）
 function strikeHeavy() {
   const w = curW();
   if (!me.heavyAt || !me.alive || !w.heavy) { me.heavyAt = 0; return; }
@@ -470,6 +471,7 @@ function strikeHeavy() {
     return;
   }
   views.strike(now);
+  if (w.id === 'hammer') setTimeout(() => { shake = Math.max(shake, 0.55); }, 150); // 大錘砸到地上：畫面大晃
   meleeSound(w.heavy.range, 0.1);
 }
 // 刀砍到牆會有金屬聲（砍到人的聲音等伺服器回報命中再播）
@@ -640,7 +642,7 @@ function updateAmmo() {
   if (w.nade) {
     $('ammonow').textContent = `×${me.nadesLeft[me.weapon] ?? 0}`;
     $('ammomax').textContent = '';
-    $('reloadtext').textContent = IS_TOUCH ? (me.nadeNear ? '◎ 丟近' : '◎ 丟遠') : '左鍵丟遠 · 右鍵丟近';
+    $('reloadtext').textContent = IS_TOUCH ? (me.nadeNear ? '⇄ 丟近（點這裡切換）' : '⇄ 丟遠（點這裡切換）') : '左鍵丟遠 · 右鍵丟近';
   } else if (w.melee) {
     $('ammonow').textContent = '';
     $('ammomax').textContent = '';
@@ -1299,7 +1301,8 @@ function handle(m) {
         me.meleeHitAt = performance.now();
         const mw = curW().id;
         sfx(mw === 'bat' ? 'bonk' : mw === 'hammer' ? 'thud' : mw === 'baton' ? 'zap' : 'stab', 0.5);
-        if (mw === 'katana' && me.lastHeavy) { views.hitStop(performance.now(), 90); shake = Math.max(shake, 0.35); } // 居合斬砍中：畫面頓一下
+        // 重擊砍中／打中：畫面頓一下（越重的武器頓越久）
+        if (me.lastHeavy && HIT_STOP[mw]) { views.hitStop(performance.now(), HIT_STOP[mw]); shake = Math.max(shake, HIT_STOP[mw] / 250); }
       }
       beep(m.head ? 1400 : 900, 0.05, 0.1);
       if (m.kill) beep(1600, 0.12, 0.12, 'triangle', 0.06);
@@ -1529,6 +1532,8 @@ function onTouchStart(e) {
     if (t.target.closest?.('.overlay')) continue;
     if (t.target.closest?.('#scoreboard')) { e.preventDefault(); setScoreboard(false); continue; }
     if (t.target.closest?.('#kitChip, #kitPick, #results, #replay')) continue; // 讓按鈕正常點
+    // 拿投擲物時點「◎ 丟遠／丟近」那行字＝切換丟法（跟按瞄準鈕一樣）
+    if (t.target.closest?.('#reloadtext') && curW().nade) { e.preventDefault(); me.nadeNear = !me.nadeNear; if (me.nadeHold) me.nadeHold.far = !me.nadeNear; updateAmmo(); continue; }
     if (t.target.closest?.('#ammo')) { e.preventDefault(); doInspect(); continue; } // 點武器資訊＝檢視武器
     const btn = t.target.closest?.('.tbtn');
     if (btn) {
