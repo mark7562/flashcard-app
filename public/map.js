@@ -220,7 +220,9 @@
 
   const docks = {
     id: 'docks', name: '霓虹碼頭', desc: '三條路線的戰術地圖：倉庫近戰、廣場搶中、碼頭高台遠距離',
-    half: 40, theme: 'dusk', boxes: docksBoxes, deco: docksDeco, floor: docksFloor, spots: docksSpots,
+    half: 40, theme: 'dusk', boxes: docksBoxes,
+    // 重生區（出生區圍牆裡面）：離開之後就不能換套裝
+    spawnZones: [{ x1: -40, z1: -40, x2: -30.5, z2: 40 }, { x1: 30.5, z1: -40, x2: 40, z2: 40 }], deco: docksDeco, floor: docksFloor, spots: docksSpots,
     teamSpawns: [
       [[-36, 0, -12], [-36, 0, -6], [-36, 0, 0], [-36, 0, 6], [-36, 0, 12], [-35, 0, -20], [-35, 0, 20], [-38, 0, -3]],
       [[36, 0, 12], [36, 0, 6], [36, 0, 0], [36, 0, -6], [36, 0, -12], [35, 0, 20], [35, 0, -20], [38, 0, 3]],
@@ -311,6 +313,13 @@
     return h;
   }
   MAP.surfaceAt = surfaceAt;
+
+  // 在不在自己隊伍的重生區裡（沒有圍牆的地圖：離出生點 6 公尺以內）
+  MAP.inSpawn = (map, team, x, z) => {
+    const zone = map.spawnZones && map.spawnZones[team];
+    if (zone) return x >= zone.x1 && x <= zone.x2 && z >= zone.z1 && z <= zone.z2;
+    return map.teamSpawns[team].some((s) => Math.hypot(s[0] - x, s[2] - z) < 6);
+  };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = MAP;
   else root.GAME_MAP = MAP;

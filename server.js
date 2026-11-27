@@ -308,6 +308,7 @@ function spawnAt(p, s, protect) {
   p.seq += 1;
   p.kitUntil = Date.now() + KIT_MS;
   p.firedSince = false;
+  p.leftSpawn = false;
   p.protectUntil = Date.now() + protect;
   p.history = [];
   p.lastStateAt = Date.now();
@@ -360,7 +361,7 @@ function canChangeKit(p) {
   const r = p.room;
   if (!r || r.state !== 'playing' || !p.alive) return true;
   if (r.phase !== 'live') return true;
-  return Date.now() < p.kitUntil && !p.firedSince;
+  return Date.now() < p.kitUntil && !p.firedSince && !p.leftSpawn;
 }
 function handleLoadout(p, msg) {
   p.loadout = WPN.clean(msg.l);
@@ -508,6 +509,8 @@ function handleState(p, msg) {
     return;
   }
   p.x = x; p.y = y; p.z = z;
+  // 走出重生區就不能再換套裝（走回來也一樣）
+  if (!p.leftSpawn && r.phase === 'live' && !MAP.inSpawn(mapOf(r), p.team, x, z)) p.leftSpawn = true;
   p.yaw = num(msg.yaw, p.yaw);
   p.pitch = Math.max(-1.6, Math.min(1.6, num(msg.pitch, p.pitch)));
   p.lastStateAt = now;

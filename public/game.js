@@ -190,8 +190,16 @@ function applyKit(kit) {
   me.reloadEnd = 0;
   me.drawEnd = performance.now() + DRAW_MS;
   me.heavyAt = 0;
-  views.setWeapon(me.kit[me.weapon], performance.now());
+  showWeapon(me.id, me.kit[me.weapon]);
   updateAmmo();
+}
+// 第一人稱手上顯示誰的什麼武器（觀戰時顯示被觀戰的人的）
+let viewOwner = 0, viewWeapon = '';
+function showWeapon(owner, id) {
+  viewOwner = owner;
+  viewWeapon = id;
+  views.setWeapon(id, performance.now());
+  views.setEmpty(false);
 }
 function switchWeapon(slot) {
   if (!me.alive || !WPN.HAND_SLOTS.includes(slot) || slot === me.weapon) return;
@@ -200,7 +208,7 @@ function switchWeapon(slot) {
   me.drawEnd = performance.now() + DRAW_MS;
   me.heavyAt = 0;
   send({ t: 'weapon', s: slot });
-  views.setWeapon(me.kit[me.weapon], performance.now());
+  showWeapon(me.id, me.kit[me.weapon]);
   updateAmmo();
 }
 function cycleWeapon(dir) {
@@ -422,7 +430,7 @@ function setScoreboard(show) { $('scoreboard').classList.toggle('hidden', !show)
 // ---------- 網路 ----------
 let room = null; // 目前所在房間（伺服器傳來的狀態）
 let helloed = false, kicked = false;
-let roomDeadline = 0, freezeEnd = 0, resultsEnd = 0, spectateId = 0;
+let roomDeadline = 0, freezeEnd = 0, resultsEnd = 0, spectateId = 0, specActive = 0;
 function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
 // 不能動、不能開火：等待載入、開場倒數、回合準備
 function frozen(now = performance.now()) {
@@ -656,6 +664,7 @@ function handle(m) {
         Object.assign(me, { x: m.x, y: m.y, z: m.z, yaw: m.yaw, pitch: 0, vx: 0, vy: 0, vz: 0, seq: m.seq, hp: 100, alive: true, reloadEnd: 0 });
         me.kitUntil = performance.now() + KIT_MS;
         me.firedSince = false;
+        me.leftSpawn = false;
         kitOpen = false;
         applyKit(m.kit || activeKit());
         $('death').classList.add('hidden');
@@ -681,7 +690,7 @@ function handle(m) {
         if (!r) continue;
         if (alive && r.corpse) clearCorpse(r);
         r.alive = !!alive;
-        if (wi >= 0) r.fig.setWeapon(WPN.LIST[wi]);
+        if (wi >= 0) { r.wid = WPN.LIST[wi]; r.fig.setWeapon(r.wid); }
         r.buf.push({ t: now, x, y, z, yaw, pitch });
         if (r.buf.length > 20) r.buf.shift();
       }
@@ -693,6 +702,7 @@ function handle(m) {
       const e = new THREE.Vector3().fromArray(m.e);
       const r = remotes.get(m.id);
       if (r) r.arm.getWorldPosition(o);
+      if (m.id === specActive) { views.fire(performance.now()); views.muzzleWorld(o); } // 觀戰：跟著開槍
       addTracer(o, e);
       addSpark(e);
       const dist = Math.hypot(o.x - me.x, o.z - me.z);
@@ -705,6 +715,7 @@ function handle(m) {
       if (!r) break;
       r.reloadStart = performance.now();
       r.reloadMs = m.ms;
+      if (m.id === specActive) { const w = WEAPONS[r.wid || 'rifle']; views.reload(r.reloadStart, m.ms, !!w.reloadEmptyMs && m.ms >= w.reloadEmptyMs); }
       const p = r.group.position, d = Math.hypot(p.x - me.x, p.z - me.z);
       if (d < 30) {
         const v = 0.35 / (1 + d * 0.15);
@@ -719,6 +730,7 @@ function handle(m) {
       if (r) {
         r.swingAt = performance.now();
         r.swingV = m.v ?? 0;
+        if (m.id === specActive) { const v = r.swingV; if (v === 4) views.windup(r.swingAt); else if (v === 3) views.strike(r.swingAt); else views.swing(r.swingAt, v); }
         const p = r.group.position, d = Math.hypot(p.x - me.x, p.z - me.z);
         if (d < 25) sfx(m.v === 3 ? 'heavy' : m.v === 4 ? 'windup' : 'swish' + (m.v ?? 0), 0.4 / (1 + d * 0.25));
       }
@@ -1164,7 +1176,7 @@ let kitOpen = false, lastCount = 0, kitShownSec = -1;
 function canKit(now = performance.now()) {
   if (!playing || !room || room.state !== 'playing') return false;
   if (!me.alive || room.phase !== 'live') return true;
-  return now < me.kitUntil && !me.firedSince;
+  return now < me.kitUntil && !me.firedSince && !me.leftSpawn;
 }
 function kitPickVisible() { return !$('kitPick').classList.contains('hidden'); }
 function toggleKitPick() {
@@ -1400,7 +1412,24 @@ function frame() {
     camera.position.set(me.x, me.y + EYE + (me.alive ? Math.sin(bob * 2) * 0.03 : -1.2), me.z);
     camera.rotation.set(me.pitch, me.yaw, 0);
   }
-  views.update(now, dt, { visible: playing && me.alive, bob, vy: me.onGround ? 0 : me.vy, recoil: me.recoil });
+  // 觀戰：手上顯示被觀戰的人拿的武器
+  specActive = spec ? spec[0] : 0;
+  document.body.classList.toggle('spectating', !!spec);
+  if (spec) {
+    const wid = spec[1].wid || 'rifle';
+    if (viewOwner !== spec[0] || viewWeapon !== wid) {
+      showWeapon(spec[0], wid);
+      $('wname').textContent = `${WEAPONS[wid].icon} ${WEAPONS[wid].name}`;
+    }
+  } else if (viewOwner !== me.id && playing) {
+    showWeapon(me.id, me.kit[me.weapon]);
+    updateAmmo();
+  }
+  // 走出重生區：這條命就不能再換套裝
+  if (me.alive && room?.phase === 'live' && !me.leftSpawn && !MAP.inSpawn(curMap, me.team, me.x, me.z)) me.leftSpawn = true;
+  views.update(now, dt, spec
+    ? { visible: true, bob: 0, vy: 0, recoil: 0 }
+    : { visible: playing && me.alive, bob, vy: me.onGround ? 0 : me.vy, recoil: me.recoil });
   updateRemotePoses(now);
 
   for (let i = tracers.length - 1; i >= 0; i--) {

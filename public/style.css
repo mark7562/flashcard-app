@@ -650,3 +650,12 @@ body.touch #wslots { display: none; }
 #killfeed .kfw.head { background: rgba(255, 77, 109, 0.25); color: #fff; }
 #resLeave { align-self: center; width: auto; padding: 8px 22px; margin-top: 2px; }
 @media (max-height: 520px) { #resLeave { padding: 5px 16px; font-size: 14px; } }
+
+/* 觀戰時只顯示對方拿的武器名稱（看不到對方的子彈數） */
+body.spectating #ammonow, body.spectating #ammomax, body.spectating #reloadtext, body.spectating #wslots { display: none; }
+/* 換套裝提示放左上角（不要擋到中間的倒數和回合訊息） */
+#kitChip { left: max(14px, env(safe-area-inset-left)); top: max(64px, calc(env(safe-area-inset-top) + 54px)); transform: none; }
+body.touch #kitChip { top: max(104px, calc(env(safe-area-inset-top) + 96px)); }
+/* 手機：擊殺訊息最多 3 行、字小一點，不要碰到右邊的按鈕 */
+body.touch #killfeed { font-size: 12px; }
+body.touch #killfeed div:nth-child(n+4) { display: none; }
