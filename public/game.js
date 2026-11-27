@@ -749,8 +749,9 @@ document.addEventListener('pointerlockchange', () => {
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
   const k = 0.0022 * settings.mouse * aaSlow;
-  me.yaw -= e.movementX * k;
-  me.pitch -= e.movementY * k * settings.vert * (settings.invertY ? -1 : 1);
+  const dy = -e.movementX * k, dp = -e.movementY * k * settings.vert * (settings.invertY ? -1 : 1);
+  me.yaw += dy; me.pitch += dp;
+  userYaw += dy; userPitch += dp;
   lastLookAt = performance.now();
 });
 canvas.addEventListener('mousedown', (e) => {
@@ -858,8 +859,9 @@ function onTouchMove(e) {
       $('knob').style.transform = `translate(${dx}px, ${dy}px)`;
     } else if (s.role === 'look' || s.role === 'fire') {
       const k = LOOK_SENS * settings.touch * aaSlow;
-      me.yaw -= (t.clientX - s.x) * k;
-      me.pitch -= (t.clientY - s.y) * k * settings.vert * (settings.invertY ? -1 : 1);
+      const dy = -(t.clientX - s.x) * k, dp = -(t.clientY - s.y) * k * settings.vert * (settings.invertY ? -1 : 1);
+      me.yaw += dy; me.pitch += dp;
+      userYaw += dy; userPitch += dp;
       lastLookAt = performance.now();
       s.x = t.clientX; s.y = t.clientY;
     }
@@ -911,13 +913,18 @@ addEventListener('resize', () => {
 });
 
 // ---------- 瞄準輔助 ----------
-// slow：準心在敵人身上時轉動變慢多少  pull：吸附速度（弧度/秒）  cone：多近才算「靠近敵人」
+// 參考一般手機射擊遊戲的做法：
+// 1. 減速（slow）：準心「真的在敵人身上」時，轉動稍微變慢，比較容易停住
+// 2. 吸附（pull）：只有「開槍中」才會很輕地把準心往敵人身體中心帶（弧度/秒）
+// 3. 玩家往反方向轉的那個軸，完全不吸附，不會跟玩家搶方向
+// size：觸發範圍是敵人身體大小的幾倍
 const AIM_ASSIST = {
-  low: { slow: 0.75, pull: 0.5, cone: 0.07 },
-  high: { slow: 0.5, pull: 1.1, cone: 0.1 },
+  low: { slow: 0.85, pull: 0.12, size: 1.2 },
+  high: { slow: 0.7, pull: 0.25, size: 1.5 },
 };
 let aaSlow = 1, lastLookAt = 0;
-const aaEye = new THREE.Vector3(), aaDir = new THREE.Vector3();
+let userYaw = 0, userPitch = 0; // 這一格玩家自己轉了多少（用來判斷方向）
+const aaEye = new THREE.Vector3(), aaDir = new THREE.Vector3(), aaTarget = new THREE.Vector3();
 function lineClear(from, to) {
   aaDir.subVectors(to, from);
   const len = aaDir.length();
@@ -931,33 +938,36 @@ function lineClear(from, to) {
 }
 function updateAimAssist(dt, now) {
   aaSlow = 1;
+  const uy = userYaw, up = userPitch;
+  userYaw = 0; userPitch = 0;
   const cfg = AIM_ASSIST[settings.aimAssist];
   if (!cfg || !playing || !me.alive || frozen(now)) return;
   aaEye.set(me.x, me.y + EYE, me.z);
   let best = null;
-  const target = new THREE.Vector3();
   for (const r of remotes.values()) {
     if (!r.alive || r.team === me.team) continue;
     const p = r.group.position;
     const dx = p.x - me.x, dz = p.z - me.z, horiz = Math.hypot(dx, dz);
-    if (horiz > 45 || horiz < 0.5) continue;
-    const dyaw = Math.atan2(Math.sin(Math.atan2(-dx, -dz) - me.yaw), Math.cos(Math.atan2(-dx, -dz) - me.yaw));
-    const dp = Math.atan2(p.y + 1.15 - aaEye.y, horiz) - me.pitch;
-    const ang = Math.hypot(dyaw, dp);
-    const cone = cfg.cone + 0.5 / Math.max(horiz, 2); // 越近範圍越大
-    if (ang > cone || (best && ang >= best.ang)) continue;
-    if (!lineClear(aaEye, target.set(p.x, p.y + 1.15, p.z))) continue;
-    best = { dyaw, dp, ang, cone };
+    if (horiz > 40 || horiz < 0.8) continue;
+    const ty = Math.atan2(-dx, -dz);
+    const dyaw = Math.atan2(Math.sin(ty - me.yaw), Math.cos(ty - me.yaw));
+    const dp = Math.atan2(p.y + 1.0 - aaEye.y, horiz) - me.pitch;
+    // 敵人身體的角度大小：寬約 0.45 公尺、高約 0.95 公尺（從身體中心算）
+    const halfW = Math.atan2(0.45, horiz) * cfg.size;
+    const halfH = Math.atan2(0.95, horiz) * cfg.size;
+    if (Math.abs(dyaw) > halfW || Math.abs(dp) > halfH) continue; // 準心不在敵人身上
+    const score = Math.abs(dyaw) / halfW + Math.abs(dp) / halfH;
+    if (best && score >= best.score) continue;
+    if (!lineClear(aaEye, aaTarget.set(p.x, p.y + 1.0, p.z))) continue;
+    best = { dyaw, dp, score };
   }
   if (!best) return;
   aaSlow = cfg.slow;
-  // 只有在玩家有動作時才吸附（開槍、移動、轉視角），站著不動不會自己瞄
-  const moving = Math.hypot(moveVec.x, moveVec.y) > 0.1 || pressed('forward') || pressed('back') || pressed('left') || pressed('right');
-  if (firing || moving || now - lastLookAt < 250) {
-    const k = cfg.pull * dt;
-    me.yaw += Math.max(-k, Math.min(k, best.dyaw));
-    me.pitch += Math.max(-k, Math.min(k, best.dp));
-  }
+  if (!firing) return;
+  const k = cfg.pull * dt;
+  // 玩家正往反方向轉，就不要拉回去
+  if (!(uy !== 0 && Math.sign(uy) !== Math.sign(best.dyaw))) me.yaw += Math.max(-k, Math.min(k, best.dyaw));
+  if (!(up !== 0 && Math.sign(up) !== Math.sign(best.dp))) me.pitch += Math.max(-k, Math.min(k, best.dp));
 }
 
 // ---------- 手機按鈕位置 / 大小 ----------

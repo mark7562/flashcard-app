@@ -11,7 +11,7 @@ const DEFAULTS = {
   touch: 1, // 觸控靈敏度倍率
   vert: 1, // 垂直靈敏度（相對於水平）
   invertY: false, // 反轉上下
-  aimAssist: IS_TOUCH ? 'high' : 'off', // 瞄準輔助：off / low / high
+  aimAssist: IS_TOUCH ? 'low' : 'off', // 瞄準輔助：off / low / high
   keys: { ...DEFAULT_KEYS }, // 電腦按鍵
   btnScale: 1, // 手機按鈕大小
   layout: {}, // 手機按鈕位置 { 按鈕 id: [x%, y%] }
