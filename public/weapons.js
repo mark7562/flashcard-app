@@ -151,7 +151,7 @@
       id: 'katana', slot: 'melee', name: '武士刀', short: '武士刀', icon: '⚔', melee: true,
       fireMs: 520, range: 3.2, body: 45, back: 70, speed: 1.0,
       heavy: { body: 75, back: 90, range: 3.4, windMs: 350, fireMs: 1050 },
-      desc: '攻擊距離最長，可以連揮',
+      desc: '攻擊距離最長；重擊是居合斬（蓄力後拔刀橫斬）',
     },
     tknife: {
       id: 'tknife', slot: 'melee', name: '飛刀', short: '飛刀', icon: '🗡', melee: true,

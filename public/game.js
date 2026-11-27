@@ -1299,6 +1299,7 @@ function handle(m) {
         me.meleeHitAt = performance.now();
         const mw = curW().id;
         sfx(mw === 'bat' ? 'bonk' : mw === 'hammer' ? 'thud' : mw === 'baton' ? 'zap' : 'stab', 0.5);
+        if (mw === 'katana' && me.lastHeavy) { views.hitStop(performance.now(), 90); shake = Math.max(shake, 0.35); } // 居合斬砍中：畫面頓一下
       }
       beep(m.head ? 1400 : 900, 0.05, 0.1);
       if (m.kill) beep(1600, 0.12, 0.12, 'triangle', 0.06);

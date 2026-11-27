@@ -1280,9 +1280,10 @@ function meleeBase(id, hold, base, twoHand, lTo = V(-0.35, -0.25, 0.5)) {
   root.add(h);
   const knife = new THREE.Group();
   h.add(knife);
-  const rhand = arm(root, V(0, -0.005, 0.06), V(0.02, -0.18, 0.55), [0.05, 0.06, 0.08]);
+  const rhandRest = V(0, -0.005, 0.06);
+  const rhand = arm(root, rhandRest, V(0.02, -0.18, 0.55), [0.05, 0.06, 0.08]);
   rhand.rotation.x = 0.2;
-  const o = { id, root, knife, base: { p: base, r: [0, 0, 0] } };
+  const o = { id, root, knife, rhand, rhandRest, base: { p: base, r: [0, 0, 0] } };
   if (twoHand) {
     o.lhandRest = twoHand;
     o.lhand = arm(root, twoHand, lTo, [0.05, 0.06, 0.08]);
@@ -1437,12 +1438,17 @@ function buildBaton() {
 }
 
 function buildKatana() {
-  // 平常收在刀鞘裡：左手握刀鞘、右手握刀柄（居合的姿勢）；揮刀時左手把刀鞘往後下方抽開＝拔刀，揮完收回去
-  const HOLD = [0.12, 0.38, 0];
-  const holdE = new THREE.Euler(...HOLD);
-  const along = (d) => V(0, 0, -d).applyEuler(holdE); // 沿著刀身方向（往刀尖）d 公尺
-  const lhandRest = along(0.1).add(V(0, -0.006, 0));
-  const o = meleeBase('katana', HOLD, V(0.14, -0.2, -0.3), lhandRest, V(-0.3, -0.6, 0.12));
+  // 居合腰間式：刀收在鞘裡，刀鞘橫在畫面左下（腰間），刀柄朝右前方，左手握鞘口、右手輕放在刀柄上
+  //   輕砍：單手快砍（三個方向輪流），砍完收回鞘裡
+  //   重砍＝居合斬：蓄力時拇指「喀」一聲推開鞘口、身體壓低；放開瞬間拔刀橫斬，留下一道白色刀光
+  const holdQ = new THREE.Quaternion().setFromUnitVectors(V(0, 0, -1), V(-0.93, -0.1, -0.36).normalize());
+  const holdE = new THREE.Euler().setFromQuaternion(holdQ);
+  const along = (d) => V(0, 0, -d).applyQuaternion(holdQ); // 沿著刀身方向（往刀尖）d 公尺
+  const lhandRest = along(0.13).add(V(0, -0.012, 0));
+  const o = meleeBase('katana', [holdE.x, holdE.y, holdE.z], V(0.13, -0.3, -0.3), lhandRest, V(-0.25, -0.6, 0.2));
+  o.base.p.set(0.12, -0.19, -0.4);
+  o.rhandRest.copy(along(-0.1)).add(V(0, -0.012, 0)); // 右手握在刀柄中間
+  o.rhand.position.copy(o.rhandRest);
   const k = o.knife;
   // 刀身（三段稍微往上彎）
   for (let i = 0; i < 3; i++) box(k, 0.005, 0.03 - i * 0.003, 0.24, M.steel, 0, 0.004 + i * 0.008, -0.12 - i * 0.235, -0.03 * i);
@@ -1458,25 +1464,44 @@ function buildKatana() {
   // 刀鞘（黑漆＋金色鞘口），跟著左手
   const sc = new THREE.Group();
   sc.position.copy(lhandRest).multiplyScalar(-1);
-  sc.rotation.copy(holdE);
+  sc.quaternion.copy(holdQ);
   o.lhand.add(sc);
   const lacquer = new THREE.MeshStandardMaterial({ color: 0x15121a, roughness: 0.35, metalness: 0.2 });
   for (let i = 0; i < 3; i++) box(sc, 0.016, 0.044, 0.245, lacquer, 0, 0.008 + i * 0.008, -0.125 - i * 0.235, -0.03 * i);
   box(sc, 0.018, 0.046, 0.016, goldM, 0, 0.008, -0.012); // 鞘口
   box(sc, 0.018, 0.04, 0.02, goldM, 0, 0.026, -0.75, -0.06, 0, 0); // 鞘尾
   box(sc, 0.019, 0.008, 0.05, redM, 0, 0.018, -0.2); // 下緒（綁繩）
+  // 居合斬的刀光：固定在畫面前方的一道橫向弧線（不跟著刀動，才像留下來的殘影）
+  const trail = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.58, 40, 1, Math.PI * 0.12, Math.PI * 0.76),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
+  trail.rotation.set(-Math.PI / 2, 0, 0);
+  const trailG = new THREE.Group();
+  trailG.add(trail);
+  trailG.position.set(0.02, -0.12, -0.05);
+  trailG.rotation.z = -0.12; // 稍微斜：左低右高
+  trailG.visible = false;
+  trailG.renderOrder = 20;
   const D = (d) => { const v = along(d); return { lx: v.x, ly: v.y, lz: v.z }; };
-  const L = { lx: -0.3, ly: -0.55, lz: 0.25, lo: 1 }; // 刀鞘抽到左下方（畫面外）＝刀拔出來了
-  const k1 = 1.05, sw = (keys) => ({ keys: lerpKeys(keys, k1), sounds: [[0.06 * k1, 'whoosh']] });
-  const R = { px: 0.04, py: -0.04, pz: 0.04, ry: 0.2, rz: 0.15, ...D(0.04) }; // 蓄力：拇指把刀鐔推出鞘口一點
-  const S = { px: 0.0, py: 0.13, pz: -0.03, ry: 0.85, rz: -0.05, rx: -0.05 }; // 檢視：舉到面前、刀身側面朝鏡頭
-  Object.assign(o, { glint, glintZ: [-0.02, -0.19], anims: {
-    draw: { keys: [[0, { py: -0.25, rx: -0.5, rz: 0.2 }], [0.4, {}]], sounds: [[0.3, 'click']] },
-    swing0: sw([[0, {}], [0.07, { ...L, px: 0.1, py: 0.04, ry: -1.1, rz: -0.3, rx: 0.25 }], [0.24, { ...L, px: -0.22, py: -0.04, pz: -0.06, ry: 0.9, rz: 0.3, rx: 0.1 }], [0.42, { ...L, px: -0.1, ry: 0.5 }], [0.62, {}]]),
-    swing1: sw([[0, {}], [0.07, { ...L, px: 0.1, py: 0.12, rx: 1.2, ry: -0.6, rz: -0.5 }], [0.24, { ...L, px: -0.18, py: -0.12, pz: -0.06, rx: -0.4, ry: 0.6, rz: 0.5 }], [0.42, { ...L, px: -0.1, py: -0.08, rx: -0.2, ry: 0.4 }], [0.62, {}]]),
-    swing2: sw([[0, {}], [0.07, { ...L, px: -0.12, py: -0.12, rx: -0.4, ry: 0.5, rz: 0.4 }], [0.24, { ...L, px: 0.12, py: 0.12, pz: -0.06, rx: 1.1, ry: -0.5, rz: -0.4 }], [0.42, { ...L, px: 0.08, py: 0.06, rx: 0.6, ry: -0.3 }], [0.62, {}]]),
-    windup: { keys: [[0, {}], [0.3 * k1, R]], hold: true, sounds: [[0, 'windup']] },
-    strike: { keys: lerpKeys([[0, R], [0.1, { ...L, px: 0.12, py: 0.02, ry: -1.2, rx: 0.2 }], [0.24, { ...L, px: -0.25, pz: -0.1, ry: 1.1, rx: 0.05, rz: 0.35 }], [0.45, { ...L, px: -0.2, ry: 0.9, rz: 0.3 }], [0.8, {}]], k1), sounds: [[0, 'heavy'], [0.02, 'shing']] },
+  const L = { lx: -0.3, ly: -0.5, lz: 0.25, lo: 1 }; // 刀鞘往左下抽開（畫面外）＝刀拔出來了
+  // 輕砍：拔刀、單手快砍、收回鞘裡（ry 約 -1.2 刀尖朝正前方）
+  const kl = 0.85;
+  const up = (q) => ({ ...q, py: (q.py || 0) + 0.04, pz: (q.pz || 0) + 0.1 }); // 揮刀時手往上、往鏡頭靠近一點，看得到刀
+  const light = (a, b, snd) => ({ keys: lerpKeys([[0, {}], [0.06, { ...L, ...up(a) }], [0.17, { ...L, ...up(b) }], [0.3, { ...L, ...up(b), px: (b.px || 0) * 0.6 }], [0.5, {}]], kl), sounds: [[0.05 * kl, snd]] });
+  const R = { px: 0.02, py: -0.06, pz: 0.03, ry: 0.12, rx: -0.05, ...D(0.035) }; // 蓄力：身體壓低，拇指把鞘口推開一點
+  const S = { px: -0.04, py: 0.1, pz: -0.03, ry: -0.3 }; // 檢視：舉到面前、刀身橫著
+  Object.assign(o, { glint, glintZ: [-0.02, -0.19], trail: trailG, anims: {
+    draw: { keys: [[0, { py: -0.2, rx: -0.3 }], [0.4, {}]], sounds: [[0.3, 'click']] },
+    swing0: light({ ry: -1.75, rx: 0.9, px: 0.06, py: 0.1 }, { ry: -0.7, rx: -0.5, px: -0.12, py: -0.08 }, 'swish0'), // 右上 → 左下
+    swing1: light({ ry: -2.0, rx: 0.15, px: 0.08 }, { ry: -0.4, rx: 0.1, px: -0.14, pz: -0.04 }, 'swish1'), // 右 → 左
+    swing2: light({ ry: -1.8, rx: -0.4, px: 0.06, py: -0.08 }, { ry: -0.7, rx: 0.8, px: -0.1, py: 0.08 }, 'swish0'), // 右下 → 左上
+    windup: { keys: [[0, {}], [0.3, R]], hold: true, sounds: [[0.05, 'click']] },
+    // 居合斬：一瞬間從左腰拔出、橫掃到右邊，停住一下，再慢慢收刀
+    strike: {
+      keys: [[0, R], [0.04, { ...L, ry: -0.3, rx: 0.05, px: -0.06, py: -0.04, tr: 0 }], [0.11, { ...L, ry: -1.85, rx: 0.12, px: 0.2, py: 0.04, pz: -0.1, tr: 1 }],
+        [0.2, { ...L, ry: -1.9, rx: 0.12, px: 0.21, py: 0.04, pz: -0.1, tr: 0.7 }], [0.42, { ...L, ry: -1.9, rx: 0.1, px: 0.2, pz: -0.06, tr: 0 }],
+        [0.65, { ...L, ry: -1.4, px: 0.06 }], [0.9, {}]],
+      sounds: [[0, 'shing'], [0.03, 'heavy'], [0.85, 'click']],
+    },
     // 檢視：舉到面前，左手把刀鞘往前推開一點（刀拔出一截），刀刃閃一下光，再「喀」一聲收回去
     inspect: {
       keys: [[0, {}], [0.35, { ...S }], [0.6, { ...S, ...D(0.2) }], [0.75, { ...S, ...D(0.2), gl: 0 }], [1.25, { ...S, ...D(0.2), gl: 1 }],
@@ -1634,6 +1659,7 @@ export function createViewModels(camera, playSound) {
   const nadeVm = buildNade();
   for (const k of ['frag', 'flash', 'smoke', 'molotov', 'stun', 'decoy']) W[k] = nadeVm;
   for (const w of Object.values(W)) { w.root.visible = false; vm.add(w.root); }
+  for (const w of Object.values(W)) if (w.trail) vm.add(w.trail);
   const light = new THREE.PointLight(0xffc860, 0, 6);
   vm.add(light);
 
@@ -1683,6 +1709,7 @@ export function createViewModels(camera, playSound) {
     setWeapon(id, now) {
       cur = W[id] || null;
       for (const w of Object.values(W)) w.root.visible = w === cur;
+      for (const w of Object.values(W)) if (w.trail) w.trail.visible = false;
       if (cur?.setKind) cur.setKind(id);
       action = null;
       pending = null;
@@ -1727,6 +1754,7 @@ export function createViewModels(camera, playSound) {
     swing(now, v) { play('swing' + v, now); },
     windup(now) { play('windup', now); },
     strike(now) { play('strike', now); },
+    hitStop(now, ms) { if (action && !action.freezeAt) { action.freezeAt = now; action.freezeMs = ms; } },
     inspect(now) {
       if (!cur || (action && action.name !== 'inspect')) return false;
       play('inspect', now);
@@ -1754,7 +1782,9 @@ export function createViewModels(camera, playSound) {
       // 目前的動作
       for (const k in pose) pose[k] = 0;
       if (action) {
-        let t = (now - action.t0) / 1000 * action.speed;
+        // 打中東西的頓一下：這段時間動作停住，之後整段往後延
+        if (action.freezeAt && now >= action.freezeAt + action.freezeMs) { action.t0 += action.freezeMs; action.freezeAt = 0; }
+        let t = ((action.freezeAt ? action.freezeAt : now) - action.t0) / 1000 * action.speed;
         const end = lastKeyTime(action.a.keys);
         if (action.a.hold) t = Math.min(t, end);
         for (const [st2, snd] of action.a.sounds || []) {
@@ -1823,6 +1853,7 @@ export function createViewModels(camera, playSound) {
       }
       if (cur.rhand) cur.rhand.position.set(cur.rhandRest.x + p('hx'), cur.rhandRest.y + p('hy'), cur.rhandRest.z + p('hz'));
       if (cur.chambers) { const empty = p('ce') > 0.5; if (cur.chambersEmpty !== empty) { cur.chambersEmpty = empty; for (const c of cur.chambers) c.material = empty ? holeM : brassTip; } }
+      if (cur.trail) { const tr = p('tr'); cur.trail.visible = tr > 0.01; cur.trail.children[0].material.opacity = tr * 0.85; }
       if (cur.glint) { const g = p('gl'); cur.glint.visible = g > 0.02 && g < 0.98; cur.glint.position.z = cur.glintZ[0] + (cur.glintZ[1] - cur.glintZ[0]) * g; }
       if (cur.cover) cur.cover.rotation.x = -p('cv') * 1.3; // 輕機槍上蓋
       if (cur.crane) cur.crane.rotation.z = p('co') * 1.25; // 左輪彈巢甩出來
