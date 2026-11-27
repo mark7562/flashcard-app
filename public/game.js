@@ -1307,6 +1307,9 @@ function handle(m) {
       updateHp(); updateAmmo(); updateZbar();
       break;
     }
+    case 'zknife':
+      toast('🔪 用刀砍倒殭屍！經驗加倍，牠要等 10 秒才能復活');
+      break;
     case 'zlvl':
       sfx('levelUp', 0.5);
       toast(zombieRole(me.role) ? `🧟 升級 Lv${m.lvl}！血量上限提高` : `⬆ 升級 Lv${m.lvl}！傷害提高`);
@@ -1547,8 +1550,9 @@ function handle(m) {
         const elim = isRounds() && !zRespawn;
         $('death').classList.toggle('spec', elim);
         if (zRespawn) {
-          $('respawn').textContent = '5 秒後復活…';
-          respawnAt = performance.now() + 5000;
+          const rs = m.rs || 5000; // 被人類用刀砍死：要等比較久
+          $('respawn').textContent = `${rs / 1000} 秒後復活…`;
+          respawnAt = performance.now() + rs;
         } else if (elim) {
           if (isZ()) $('respawn').textContent = zombieRole(me.role) ? '被英雄砍倒了，這回合出局' : '這回合陣亡，等下一回合…';
           else

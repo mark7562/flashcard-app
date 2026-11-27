@@ -50,7 +50,8 @@ const ZM = {
   max: 12, roundMs: 180000, infectMs: 20000, respawnMs: 5000,
   zHp: [1000, 1300, 1650, 2050, 2500, 3000], zXp: [0, 60, 140, 240, 360, 500], // 殭屍等級：血量上限、累積經驗
   hMult: [1, 1.15, 1.3, 1.5, 1.75], hXp: [0, 50, 120, 220, 350], // 人類等級：傷害倍率、累積經驗
-  xp: { bio: 40, infect: 60, kill: 50, ammo: 15, dmg: 10, dmgPer: 500 },
+  xp: { bio: 40, infect: 60, kill: 50, knifeKill: 100, ammo: 15, dmg: 10, dmgPer: 500 },
+  knifeRespawnMs: 10000, // 被人類用刀砍死的殭屍：復活要等比較久
   heroHp: 600, reserveMags: 4, levelHeal: 0.3,
   pick: { every: 15000, max: 4, r: 1.6, heal: 0.3 },
   pts: { kill: 3, infect: 3, survive: 5 },
@@ -666,12 +667,16 @@ function zKilled(r, p, target, now) {
   return true;
 }
 // 真的死掉：殭屍 5 秒後復活（被英雄砍死就出局）；英雄死了就死了
-function zDied(r, p, target, now) {
+function zDied(r, p, target, now, weapon) {
   p.pts += ZM.pts.kill;
   if (target.team === 1) {
+    // 人類用刀（近戰）砍死殭屍：殭屍要等比較久才能復活，經驗也給比較多
+    const knife = p.zrole === 'human' && !!WEAPONS[weapon]?.melee;
     if (r.mode === 'hero' && p.zrole === 'hero') { target.out = true; target.respawnAt = 0; }
-    else target.respawnAt = now + ZM.respawnMs;
-    if (p.zrole === 'human') addXp(p, ZM.xp.kill);
+    else target.respawnAt = now + (knife ? ZM.knifeRespawnMs : ZM.respawnMs);
+    target.respawnMs = knife ? ZM.knifeRespawnMs : ZM.respawnMs;
+    if (p.zrole === 'human') addXp(p, knife ? ZM.xp.knifeKill : ZM.xp.kill);
+    if (knife) send(p.ws, { t: 'zknife' });
     syncRoom(r);
   }
 }
@@ -1040,8 +1045,8 @@ function applyDamage(p, target, dmg, headshot, weapon, now) {
     target.respawnAt = now + RESPAWN_MS;
     r.score[p.team] += 1;
   }
-  if (isZ(r)) zDied(r, p, target, now);
-  toRoom(r, { t: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z, khp: p.hp });
+  if (isZ(r)) zDied(r, p, target, now, weapon);
+  toRoom(r, { t: 'kill', killer: p.id, rs: isZ(r) && target.team === 1 && !target.out ? target.respawnMs : undefined, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z, khp: p.hp });
   recEvent(r, { k: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kx: p.x, kz: p.z });
   // 精彩程度比目前最佳的高：過一下（記到倒地）再存起來
   const rate = rateKill(p, target, headshot, weapon, now);
