@@ -97,7 +97,111 @@
       </div>
     </section>
 
-    <div class="ver">v1.1</div>
+    <!-- 大廳 -->
+    <section id="scrLobby" class="scr hidden">
+      <div class="npanel wide">
+        <h2 class="ntitle">大廳<small>LOBBY</small></h2>
+        <div class="coderow">
+          <input id="joinCode" class="ninput code" maxlength="4" placeholder="輸入房號" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+          <button id="joinCodeBtn" class="nbtn small">用房號加入</button>
+        </div>
+        <div class="listhead"><span>房間列表</span><button id="refreshRooms" class="linkbtn">↻ 重新整理</button></div>
+        <div id="roomList" class="roomlist"></div>
+        <p id="lobbyStatus" class="status"></p>
+        <div class="btnrow">
+          <button class="nbtn small" data-go="scrMain" data-back>返回</button>
+          <button class="nbtn primary small" data-go="scrCreate">＋ 建立房間</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 建立房間 -->
+    <section id="scrCreate" class="scr hidden">
+      <div class="npanel">
+        <h2 class="ntitle">建立房間<small>CREATE</small></h2>
+        <label class="lbl" for="roomName">房間名稱</label>
+        <input id="roomName" class="ninput" maxlength="20" placeholder="例如：週末大亂鬥" autocomplete="off" />
+        <div class="lbl">對戰模式</div>
+        <div id="createMode" class="seg">
+          <button data-mode="tdm" class="on">團隊死鬥</button>
+          <button data-mode="elim">回合殲滅</button>
+        </div>
+        <p id="createModeDesc" class="hint"></p>
+        <label class="lbl" for="roomPass">密碼（選填，不填就是公開房間）</label>
+        <input id="roomPass" class="ninput" maxlength="12" placeholder="不設密碼" autocomplete="off" />
+        <div class="btnrow">
+          <button class="nbtn small" data-go="scrLobby" data-back>取消</button>
+          <button id="createBtn" class="nbtn primary small">建立</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 輸入密碼 -->
+    <section id="scrPass" class="scr hidden">
+      <div class="npanel">
+        <h2 class="ntitle">🔒 需要密碼<small>PASSWORD</small></h2>
+        <p id="passInfo" class="hint"></p>
+        <input id="joinPass" class="ninput" maxlength="12" placeholder="輸入房間密碼" autocomplete="off" />
+        <p id="passStatus" class="status"></p>
+        <div class="btnrow">
+          <button class="nbtn small" data-go="scrLobby" data-back>取消</button>
+          <button id="passBtn" class="nbtn primary small">加入</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 等待室 -->
+    <section id="scrRoom" class="scr hidden">
+      <div class="npanel wide room">
+        <div class="roomhead">
+          <div>
+            <h2 class="ntitle" id="roomTitle"></h2>
+            <div id="roomRules" class="hint"></div>
+          </div>
+          <button id="copyCode" class="codebox" title="點一下複製房號"><small>房號</small><b id="roomCode"></b></button>
+        </div>
+        <div class="teams">
+          <div class="teamcol t0">
+            <div class="teamhead"><span>藍隊</span><span id="team0Count"></span><button class="linkbtn" data-team="0">加入</button></div>
+            <div id="team0" class="slots"></div>
+          </div>
+          <div class="teamcol t1">
+            <div class="teamhead"><span>紅隊</span><span id="team1Count"></span><button class="linkbtn" data-team="1">加入</button></div>
+            <div id="team1" class="slots"></div>
+          </div>
+        </div>
+        <div id="hostRules" class="hostrules hidden">
+          <div class="setrow">模式
+            <div id="ruleMode" class="seg">
+              <button data-v="tdm">團隊死鬥</button>
+              <button data-v="elim">回合殲滅</button>
+            </div>
+          </div>
+          <div class="setrow tdm-only">目標擊殺
+            <div id="ruleScore" class="seg">
+              <button data-v="25">25</button><button data-v="50">50</button><button data-v="75">75</button><button data-v="100">100</button>
+            </div>
+          </div>
+          <div class="setrow tdm-only">時間限制
+            <div id="ruleTime" class="seg">
+              <button data-v="5">5 分</button><button data-v="10">10 分</button><button data-v="15">15 分</button>
+            </div>
+          </div>
+          <div class="setrow elim-only">勝利回合
+            <div id="ruleRounds" class="seg">
+              <button data-v="3">3</button><button data-v="5">5</button><button data-v="7">7</button>
+            </div>
+          </div>
+        </div>
+        <p id="roomStatus" class="status"></p>
+        <div class="btnrow">
+          <button id="leaveRoom" class="nbtn small danger">離開房間</button>
+          <button id="startMatch" class="nbtn primary small">▶ 開始對戰</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="ver">v1.2</div>
   </div>
 
   <!-- ===== 設定（標題畫面和遊戲中都能開） ===== -->
@@ -128,11 +232,11 @@
   <div id="paused" class="overlay hidden">
     <div class="npanel">
       <h2 class="ntitle">暫停中<small>PAUSED</small></h2>
-      <p class="hint">遊戲仍在進行，其他人還能打你！</p>
+      <p id="pauseHint" class="hint">遊戲仍在進行，其他人還能打你！</p>
       <div class="menu">
         <button id="resume" class="nbtn primary"><span class="ic">▶</span>繼續</button>
         <button id="pauseSettings" class="nbtn"><span class="ic">⚙</span>設定</button>
-        <button id="leave" class="nbtn danger"><span class="ic">✕</span>離開戰場</button>
+        <button id="leave" class="nbtn danger"><span class="ic">✕</span>離開房間</button>
       </div>
     </div>
   </div>
@@ -144,6 +248,13 @@
     <div id="damage"></div>
     <div id="killfeed"></div>
     <div id="toast"></div>
+    <div id="matchbar">
+      <div class="mb-team t0"><b id="mbScore0">0</b></div>
+      <div class="mb-mid"><div id="mbTime">--:--</div><div id="mbSub"></div></div>
+      <div class="mb-team t1"><b id="mbScore1">0</b></div>
+    </div>
+    <div id="banner"><div id="bannerBig"></div><div id="bannerSmall"></div></div>
+    <div id="spectate" class="hidden"></div>
     <div id="topinfo"><span id="count"></span> · <span id="ping"></span></div>
     <div id="hpbox">
       <div id="hpbar"><div id="hpfill"></div></div>
@@ -157,7 +268,16 @@
     </div>
     <div id="scoreboard" class="hidden">
       <h3>計分板</h3>
-      <table><thead><tr><th>玩家</th><th>擊殺</th><th>死亡</th></tr></thead><tbody id="scores"></tbody></table>
+      <div id="scores"></div>
+    </div>
+    <div id="results" class="hidden">
+      <div class="res-card">
+        <div id="resWinner" class="res-winner"></div>
+        <div id="resScore" class="res-score"></div>
+        <div id="resMvp" class="res-mvp"></div>
+        <div id="resTables" class="res-tables"></div>
+        <div id="resBack" class="hint"></div>
+      </div>
     </div>
   </div>
 

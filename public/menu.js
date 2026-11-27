@@ -10,15 +10,16 @@ let onPlay = () => {};
 let current = 'scrMain';
 
 // ---------- 頁面切換 ----------
-function go(id, back = false) {
+export function go(id, back = false, silent = false) {
   if (id === current) return;
-  back ? uiBack() : uiClick();
+  if (!silent) back ? uiBack() : uiClick();
   $(current).classList.add('hidden');
   $(id).classList.remove('hidden');
   $(id).classList.remove('enter');
   void $(id).offsetWidth; // 重新觸發進場動畫
   $(id).classList.add('enter');
   current = id;
+  $('title').classList.toggle('sub', id !== 'scrMain');
   preview.active = id === 'scrCustom';
   if (id === 'scrCustom') { $('name').value = profile.name; renderSwatches(); refreshPreview(); }
   if (id === 'scrMain') updateWelcome();
@@ -155,11 +156,11 @@ async function pollStats() {
 }
 
 // ---------- 對外 ----------
-export function showTitle(status = '') {
+export function showTitle(status = '', screen = 'scrMain') {
   $('title').classList.remove('hidden');
   $('status').textContent = status;
   $('play').disabled = false;
-  if (current !== 'scrMain') go('scrMain', true);
+  if (current !== screen) go(screen, true, true);
   updateWelcome();
   pollStats();
   clearInterval(statsTimer);
@@ -172,6 +173,7 @@ export function hideTitle() {
   stopMusic();
 }
 export function setStatus(text) { $('status').textContent = text; }
+export function currentScreen() { return current; }
 
 export function initMenu(handlers) {
   onPlay = handlers.onPlay;
@@ -202,7 +204,6 @@ export function initMenu(handlers) {
       $('name').focus();
       return;
     }
-    $('play').disabled = true;
     onPlay(profile);
   });
   $('openSettings').addEventListener('click', () => openSettings());

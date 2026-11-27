@@ -5,7 +5,7 @@ export function hex(color) {
   return '#' + color.toString(16).padStart(6, '0');
 }
 
-export function nameSprite(text, color) {
+export function nameSprite(text, color, xray = true) {
   const c = document.createElement('canvas');
   c.width = 256; c.height = 64;
   const g = c.getContext('2d');
@@ -17,20 +17,23 @@ export function nameSprite(text, color) {
   g.fillText(text, 128, 32);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: !xray, transparent: true }));
   s.scale.set(1.8, 0.45, 1);
   s.renderOrder = 10;
   return s;
 }
 
-export function makeFigure(color, name = null) {
+// color：頭的顏色（玩家自選）；opts.body：身體顏色（隊伍色，沒給就跟頭一樣）
+// opts.xray：名字能不能隔著牆看到（隊友可以，敵人不行）
+export function makeFigure(color, name = null, opts = {}) {
   const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
+  const mat = new THREE.MeshStandardMaterial({ color: opts.body ?? color, roughness: 0.6 });
+  const headMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x22262d, roughness: 0.5 });
   const glow = new THREE.MeshBasicMaterial({ color: 0x9ff8ff });
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 0.7, 4, 12), mat);
   body.position.y = 0.7;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 16, 12), mat);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 16, 12), headMat);
   head.position.y = 1.6;
   const visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.12), glow);
   visor.position.set(0, 1.63, -0.2);
@@ -44,7 +47,7 @@ export function makeFigure(color, name = null) {
 
   const fig = {
     group, arm, label: null,
-    setColor(c) { mat.color.setHex(c); },
+    setColor(c) { mat.color.setHex(c); headMat.color.setHex(c); },
     setName(text, c = mat.color.getHex()) {
       if (fig.label) {
         group.remove(fig.label);
@@ -53,7 +56,7 @@ export function makeFigure(color, name = null) {
         fig.label = null;
       }
       if (!text) return;
-      fig.label = nameSprite(text, c);
+      fig.label = nameSprite(text, c, opts.xray ?? true);
       fig.label.position.y = 2.25;
       group.add(fig.label);
     },
@@ -61,6 +64,6 @@ export function makeFigure(color, name = null) {
       group.traverse((o) => { o.geometry?.dispose(); o.material?.map?.dispose(); o.material?.dispose(); });
     },
   };
-  if (name) fig.setName(name, color);
+  if (name) fig.setName(name, opts.labelColor ?? color);
   return fig;
 }
