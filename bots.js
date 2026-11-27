@@ -121,13 +121,17 @@ const BODY_R = 0.32; // 身體半徑
 const GRAVITY = 22, JUMP_V = 8; // 跟玩家一樣的重力和跳躍力
 
 const navCache = new Map();
-function navFor(map) {
-  let nav = navCache.get(map.id);
-  if (!nav) { nav = buildNav(map); navCache.set(map.id, nav); }
+// zombie = true：殭屍用的網格（跳得比較高、可以爬到高處，人類跳得上去的地方殭屍也要追得上去）
+function navFor(map, zombie = false) {
+  const key = map.id + (zombie ? ':z' : '');
+  let nav = navCache.get(key);
+  if (!nav) { nav = buildNav(map, zombie ? { jumpUp: 1.75, top: 9 } : {}); navCache.set(key, nav); }
   return nav;
 }
+const Z_JUMP_V = JUMP_V * 1.15; // 殭屍跳得比較高（跟玩家當殭屍一樣）
 
-function buildNav(map) {
+function buildNav(map, opt = {}) {
+  const jumpUp = opt.jumpUp ?? JUMP_UP, top = opt.top ?? 3.0;
   const t0 = Date.now();
   const half = map.half, N = Math.round(half * 2 / RES);
   // 方塊分桶（每 2 公尺一桶），查附近的方塊比較快
@@ -143,7 +147,7 @@ function buildNav(map) {
     return buckets[j * BN + i];
   };
   // 有貨艙的地圖（甲板底下是空的）：格子的高度用「腳下最高、3 公尺以內」的地板，機器人只走甲板那一層
-  const surf = map.layered ? (x, z) => MAP.floorAt(near(x, z), x, z, 2.5) : (x, z) => MAP.surfaceAt(near(x, z), x, z);
+  const surf = map.layered ? (x, z) => Math.max(MAP.floorAt(near(x, z), x, z, 2.5), top > 3 ? MAP.surfaceAt(near(x, z), x, z) : 0) : (x, z) => MAP.surfaceAt(near(x, z), x, z);
   const floorY = map.layered ? (x, z, y) => MAP.floorAt(near(x, z), x, z, y) : (x, z) => MAP.surfaceAt(near(x, z), x, z);
   // 身體（以 y 為腳底）會不會卡進方塊
   const bodyFree = (x, y, z, r = BODY_R) => {
@@ -171,7 +175,7 @@ function buildNav(map) {
       const hc = surf(cx, cz);
       raw[k] = hc;
       h[k] = hc;
-      if (Math.abs(cx) > half - 0.8 || Math.abs(cz) > half - 0.8 || hc > 3.0) continue;
+      if (Math.abs(cx) > half - 0.8 || Math.abs(cz) > half - 0.8 || hc > top) continue;
       if (map.hatches && map.hatches.some((hh) => inHatch(hh, cx, cz, 0.4))) continue;
       if (!bodyFree(cx, hc, cz, BODY_R + 0.06)) continue;
       let low = hc;
@@ -192,7 +196,7 @@ function buildNav(map) {
   const cellOf = (x, z) => Math.max(0, Math.min(N - 1, Math.floor((z + half) / RES))) * N + Math.max(0, Math.min(N - 1, Math.floor((x + half) / RES)));
   const queue = [];
   for (const team of map.teamSpawns) for (const s of team) { const k = cellOf(s[0], s[2]); if (ok[k] && !reach[k]) { reach[k] = 1; queue.push(k); } }
-  const nav = { map, half, N, h, raw, ok, edge, cells, reach, surf, bodyFree, footFloor, cellOf };
+  const nav = { map, half, N, h, raw, ok, edge, cells, reach, surf, bodyFree, footFloor, cellOf, jumpUp };
   while (queue.length) {
     const k = queue.pop();
     forNeighbors(nav, k, (n) => { if (!reach[n]) { reach[n] = 1; queue.push(n); } });
@@ -201,7 +205,7 @@ function buildNav(map) {
   for (let k = 0; k < N * N; k++) if (!reach[k]) ok[k] = 0;
   // 戰術位置：對到最近的可站格子
   nav.spots = (map.spots || []).map(([x, z]) => nearestCell(nav, x, z)).filter((k) => k >= 0).map((k) => centerOf(nav, k));
-  console.log(`[機器人] ${map.name} 尋路網格完成：${nav.cells.length} 格，${Date.now() - t0}ms`);
+  console.log(`[機器人] ${map.name}${top > 3 ? '（殭屍）' : ''} 尋路網格完成：${nav.cells.length} 格，${Date.now() - t0}ms`);
   return nav;
 }
 
@@ -222,7 +226,7 @@ function forNeighbors(nav, k, fn) {
         if (!ok[a] || !ok[b] || Math.abs(h[a] - hc) > STEP || Math.abs(h[b] - hc) > STEP || Math.abs(dh) > STEP) continue;
       }
       if (Math.abs(dh) <= STEP) fn(n, base * (edge[n] ? 3 : 1), 0);
-      else if (dh > 0 && dh <= JUMP_UP) fn(n, base + 2, 1);
+      else if (dh > 0 && dh <= nav.jumpUp) fn(n, base + 2, 1);
       else if (dh < 0 && dh >= -MAX_DROP) fn(n, base + 1, -1);
       continue;
     }
@@ -234,7 +238,7 @@ function forNeighbors(nav, k, fn) {
     if (!ok[f]) continue;
     const dh = h[f] - hc;
     if (raw[n] > Math.max(hc, h[f]) + 0.05) continue; // 中間是牆，不是台階
-    if (dh > STEP && dh <= JUMP_UP) fn(f, 4, 1);
+    if (dh > STEP && dh <= nav.jumpUp) fn(f, 4, 1);
     else if (dh < -STEP && dh >= -MAX_DROP) fn(f, 3, -1);
     else if (Math.abs(dh) <= STEP && raw[n] < hc - 0.3) fn(f, 4, 1); // 跳過小縫
   }
@@ -610,9 +614,9 @@ function move(p, b, nav, mx, mz, speed, dt) {
   }
   return blocked;
 }
-function jump(b, now) {
+function jump(b, now, zombie = false) {
   if (!b.ground || now < b.jumpCd) return;
-  b.vy = JUMP_V;
+  b.vy = zombie ? Z_JUMP_V : JUMP_V;
   b.ground = false;
   b.jumpCd = now + 450;
 }
@@ -933,7 +937,7 @@ function think(p, r, now, dt, api) {
       if (b.guard && Math.hypot(b.guard[0] - p.x, b.guard[1] - p.z) < 1.5) {
         b.state = 'guard';
         b.looksKey = null;
-        b.guardUntil = now + rand(c.guardMs[0], c.guardMs[1]) * (r.z ? 4 : 1);
+        b.guardUntil = now + rand(c.guardMs[0], c.guardMs[1]) * (r.z ? 4 : 1); // 生化模式：在集合點守久一點
         b.lookSweep = Math.random() * 6;
       } else {
         if (b.state !== 'patrol') b.state = 'patrol';
@@ -1251,6 +1255,7 @@ function bombAlert(r, p, q, now) {
 // ---------- 生化模式：殭屍（爪子）和英雄（長刀）——追最近的敵人、靠近就揮 ----------
 function chaseThink(p, r, now, dt, api, map, nav) {
   const b = p.bot, c = b.cfg;
+  if (p.team === 1) nav = navFor(map, true); // 殭屍：跳得高、可以爬上高處
   const W = WEAPONS[p.team === 1 ? 'claw' : 'herosword'];
   if (b.state !== 'chase') { b.state = 'chase'; b.path = null; b.ctarget = 0; b.repathAt = 0; }
   // 目標：最近的敵人（看得到的優先）；換目標要有一點理由，不要一直換來換去
@@ -1297,7 +1302,7 @@ function chaseThink(p, r, now, dt, api, map, nav) {
   p.yaw = humanTurn(p.yaw, lookYaw, c.turn * 1.2 * stunK, dt);
   p.yaw = Math.atan2(Math.sin(p.yaw), Math.cos(p.yaw));
   p.pitch += Math.max(-c.turn * dt, Math.min(c.turn * dt, lookPitch - p.pitch));
-  if (wantJump) jump(b, now);
+  if (wantJump) jump(b, now, p.team === 1);
   // 殭屍：新手慢一點，老手全速
   const speed = Math.min(6.3, c.speed + 0.4) * (W.speed || 1) * stunK;
   const ox = p.x, oz = p.z;
@@ -1307,7 +1312,7 @@ function chaseThink(p, r, now, dt, api, map, nav) {
     move(p, b, nav, b.knock.vx / kv, b.knock.vz / kv, kv, dt);
   } else b.knock = null;
   b.moveK = Math.min(1, Math.hypot(p.x - ox, p.z - oz) / (6.5 * dt));
-  if (blocked && b.ground && now >= b.jumpCd) { jump(b, now); b.repathAt = 0; }
+  if (blocked && b.ground && now >= b.jumpCd) { jump(b, now, p.team === 1); b.repathAt = 0; }
   if (now >= b.stuckCheckAt) {
     if (Math.hypot(p.x - b.stuckPos[0], p.z - b.stuckPos[1]) < 0.3 && dist > 1.5) { b.path = null; b.repathAt = 0; const g = randomPoint(nav); setGoal(p, b, nav, g[0], g[1]); b.repathAt = now + 1500; }
     b.stuckPos = [p.x, p.z, p.y];
@@ -1321,6 +1326,6 @@ function record(p, now) {
 }
 
 // 伺服器啟動時先把每張地圖的尋路網格算好
-function prepare() { for (const id of MAP.order) navFor(MAP.get(id)); }
+function prepare() { for (const id of MAP.order) { navFor(MAP.get(id)); navFor(MAP.get(id), true); } }
 
 module.exports = { move, followPath, jump, LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };

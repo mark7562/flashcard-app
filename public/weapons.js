@@ -164,15 +164,15 @@
     // 殭屍爪：打人類 50，兩下感染；每 0.8 秒一下；跑比較快
     claw: {
       id: 'claw', slot: 'melee', name: '殭屍爪', short: '爪子', icon: '🧟', melee: true, zombie: true,
-      fireMs: 1000, range: 2.1, body: 50, back: 50, speed: 1.1,
-      desc: '殭屍只能用爪子：每秒一下，打人類兩下就會感染',
+      fireMs: 1500, range: 2.1, body: 50, back: 50, speed: 1.1,
+      desc: '殭屍只能用爪子：1.5 秒抓一下，打人類兩下就會感染',
     },
     // 英雄長刀：扇形範圍，一刀可以砍到好幾隻殭屍並擊退（傷害再乘上人類最高等級加成）
     herosword: {
       id: 'herosword', slot: 'melee', name: '英雄長刀', short: '英雄刀', icon: '⚔', melee: true, hero: true,
-      fireMs: 750, range: 3.0, body: 220, back: 220, speed: 1.1, cleave: 0.5, knock: 1.5,
-      heavy: { body: 700, back: 700, range: 3.2, windMs: 450, fireMs: 1200, knock: 5 },
-      desc: '生化英雄限定：發光長刀，扇形範圍砍到好幾隻殭屍並擊退；重擊蓄力後一刀 700（都再乘上最高等級加成）',
+      fireMs: 750, range: 3.0, body: 160, back: 160, speed: 1.1, cleave: 0.5, knock: 1.5,
+      heavy: { body: 520, back: 520, range: 3.2, windMs: 450, fireMs: 1200, knock: 5 },
+      desc: '生化英雄限定：發光長刀，扇形範圍砍到好幾隻殭屍並擊退；重擊蓄力後一刀 520（都再乘上最高等級加成）',
     },
     // 投擲物（爆破模式限定）：每回合各一顆；數值在 nades.js
     frag: { id: 'frag', slot: 'throw', name: '手榴彈', short: '手榴彈', icon: '💣', nade: true, speed: 1.05, desc: '1.6 秒後爆炸，範圍 6.5 公尺、最多 100 傷害；會炸到自己，不會炸到隊友；可以暫時炸開煙霧' },

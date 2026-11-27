@@ -176,6 +176,7 @@ export function renderRoom(r) {
   $('fillBots').textContent = zm ? '🤖 自動補滿 12 人' : '🤖 自動補滿兩隊';
   const mark = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === String(v)); };
   mark('ruleMap', r.rules.map);
+  document.querySelector('#ruleMap [data-v="ship"]').classList.toggle('hidden', zm); // 生化模式不開放貨輪
   mark('ruleMode', r.mode);
   mark('ruleScore', r.rules.scoreLimit);
   mark('ruleTime', r.rules.timeLimit);

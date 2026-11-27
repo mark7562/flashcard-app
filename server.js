@@ -220,7 +220,7 @@ function createRoom(p, msg) {
     rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null, nades: [], smokes: [], fires: [],
   };
   if (r.mode === 'bomb') { r.rules.map = BOMB.map; r.rules.rounds = 7; }
-  if (isZ(r)) { r.rules.map = MAP.order.includes(msg.map) ? msg.map : 'hospital'; r.rules.rounds = 7; }
+  if (isZ(r)) { r.rules.map = MAP.order.includes(msg.map) && msg.map !== 'ship' ? msg.map : 'hospital'; r.rules.rounds = 7; }
   rooms.set(r.code, r);
   console.log(`[房] ${p.name} 建立房間 ${r.code}「${r.name}」`);
   addToRoom(p, r);
@@ -1336,6 +1336,8 @@ function setRules(p, msg) {
     if (![5, 7, 9].includes(r.rules.rounds)) r.rules.rounds = 7;
   } else if (r.mode === 'elim' && r.rules.rounds === 9) r.rules.rounds = 7;
   if (was === 'bomb' && r.mode !== 'bomb' && r.rules.map === BOMB.map) r.rules.map = MAP.defaultMap;
+  // 夕陽貨輪的甲板下貨艙機器人進不去（殭屍追不到），生化模式不開放
+  if (isZ(r) && r.rules.map === 'ship') r.rules.map = 'hospital';
   syncRoom(r);
 }
 function switchTeam(p, msg) {
