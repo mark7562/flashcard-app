@@ -644,3 +644,9 @@ body.touch #wslots { display: none; }
 #kitPick .kp-x { font-size: 13px; color: var(--muted); margin-left: 6px; }
 
 #ammo { pointer-events: auto; cursor: pointer; } /* 手機點這裡檢視武器 */
+
+/* 擊殺訊息中間的武器（爆頭加骷髏頭） */
+#killfeed .kfw { margin: 0 6px; padding: 0 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); color: #dfe7f7; font-size: 0.9em; }
+#killfeed .kfw.head { background: rgba(255, 77, 109, 0.25); color: #fff; }
+#resLeave { align-self: center; width: auto; padding: 8px 22px; margin-top: 2px; }
+@media (max-height: 520px) { #resLeave { padding: 5px 16px; font-size: 14px; } }

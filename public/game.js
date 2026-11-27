@@ -377,8 +377,12 @@ function feed(killer, victim, head, weapon) {
   if (killer === me.id || victim === me.id) div.className = 'me';
   const a = document.createElement('span'); a.textContent = nameOf(killer); a.style.color = teamCss(killer);
   const b = document.createElement('span'); b.textContent = nameOf(victim); b.style.color = teamCss(victim);
+  // 中間：武器圖示＋名稱，爆頭再加一個骷髏頭
   const w = WEAPONS[weapon];
-  div.append(a, document.createTextNode(head ? ' 🎯爆頭 ' : w?.melee ? ' 🔪 ' : ' 🔫 '), b);
+  const mid = document.createElement('span');
+  mid.className = 'kfw' + (head ? ' head' : '');
+  mid.textContent = `${w ? w.icon + w.short : '🔫'}${head ? ' 💀' : ''}`;
+  div.append(a, mid, b);
   $('killfeed').prepend(div);
   while ($('killfeed').children.length > 5) $('killfeed').lastChild.remove();
   setTimeout(() => div.remove(), 6000);
@@ -914,7 +918,7 @@ function onTouchStart(e) {
     // 暫停選單或設定開著的時候，讓按鈕和滑桿正常運作
     if (t.target.closest?.('.overlay')) continue;
     if (t.target.closest?.('#scoreboard')) { e.preventDefault(); setScoreboard(false); continue; }
-    if (t.target.closest?.('#kitChip, #kitPick')) continue; // 讓按鈕正常點
+    if (t.target.closest?.('#kitChip, #kitPick, #results')) continue; // 讓按鈕正常點
     if (t.target.closest?.('#ammo')) { e.preventDefault(); doInspect(); continue; } // 點武器資訊＝檢視武器
     const btn = t.target.closest?.('.tbtn');
     if (btn) {
@@ -1237,9 +1241,19 @@ function openSwapPop() {
 
 // ---------- 倒地的屍體 ----------
 // 往被打的方向倒下；死鬥模式躺一下就沉進地面，殲滅模式留到這回合結束
+$('resLeave').addEventListener('click', () => {
+  // 不用等結算倒數：先回房間（所有人都回來了，房間就會立刻回到等待狀態）
+  uiClick();
+  send({ t: 'resultsDone' });
+  exitMatch();
+});
 function startCorpse(r, kx, kz, head) {
   const p = r.group.position;
-  r.corpse = { t0: performance.now(), y0: p.y, yaw: Math.atan2(-(kx - p.x), -(kz - p.z)), head, stay: room?.mode !== 'tdm' };
+  // 地面高度：在空中被打死會先掉到地上（看腳下最高的地方，避免卡進箱子邊緣）
+  let ground = 0;
+  for (const [ox, oz] of [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]) ground = Math.max(ground, MAP.surfaceAt(curMap.boxes, p.x + ox, p.z + oz));
+  if (ground > p.y + 0.3) ground = p.y; // 算出來比人還高（貼牆）就用原本的高度
+  r.corpse = { t0: performance.now(), y0: p.y, ground, yaw: Math.atan2(-(kx - p.x), -(kz - p.z)), head, stay: room?.mode !== 'tdm' };
   r.group.rotation.y = r.corpse.yaw; // 面向攻擊者，往後倒
   if (r.fig.label) r.fig.label.visible = false;
 }
@@ -1260,7 +1274,9 @@ function updateCorpses(now) {
     const bounce = k >= 1 ? Math.sin(Math.min(1, (t - 420) / 250) * Math.PI) * 0.06 : 0;
     r.group.rotation.x = ease * Math.PI / 2 - bounce;
     r.group.rotation.z = ease * 0.15;
-    let y = c.y0 + ease * 0.1;
+    // 從死掉的高度往下掉（跟玩家一樣的重力），落地後才躺平
+    const ts = t / 1000;
+    let y = Math.max(c.ground, c.y0 - 11 * ts * ts) + ease * 0.1;
     if (!c.stay && t > 2500) y -= (t - 2500) / 1000 * 0.9; // 慢慢沉下去
     r.group.position.y = y;
     if (!c.stay && t > 3600) { clearCorpse(r); r.group.visible = false; }
@@ -1347,7 +1363,7 @@ function frame() {
     updateCorpses(now);
     updateMatchbar(now);
     if (!$('results').classList.contains('hidden')) {
-      $('resBack').textContent = `${Math.max(0, Math.ceil((resultsEnd - now) / 1000))} 秒後回到房間`;
+      $('resLeave').textContent = `返回房間（${Math.max(0, Math.ceil((resultsEnd - now) / 1000))}）`;
     }
     if (now - lastSend >= SEND_MS && me.alive) {
       lastSend = now;

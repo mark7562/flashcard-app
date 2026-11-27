@@ -171,7 +171,7 @@ export function renderRoom(r) {
   start.classList.toggle('hidden', false);
   if (r.state === 'results') {
     start.disabled = true;
-    start.textContent = '結算中，請稍候…';
+    start.textContent = '等其他人看完結算…';
   } else if (isHost) {
     start.disabled = false;
     start.textContent = '▶ 開始對戰';

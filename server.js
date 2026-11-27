@@ -255,7 +255,7 @@ function endMatch(r, winner, reason = '') {
   r.state = 'results';
   r.phase = null;
   r.resultsUntil = Date.now() + RESULTS_MS;
-  for (const p of r.players.values()) p.alive = false;
+  for (const p of r.players.values()) { p.alive = false; p.resultsDone = false; }
   toRoom(r, {
     t: 'matchEnd', winner, mode: r.mode, reason,
     score: r.mode === 'tdm' ? r.score : r.roundWins,
@@ -624,6 +624,14 @@ wss.on('connection', (ws) => {
       case 'reload': finishReload(p, Date.now()); startReload(p); break;
       case 'weapon': if (p.alive) switchWeapon(p, msg.s); break;
       case 'loadout': handleLoadout(p, msg); break;
+      case 'resultsDone': {
+        // 玩家按「返回房間」：所有真人都回來了就不用等結算倒數
+        const r = p.room;
+        if (!r || r.state !== 'results') break;
+        p.resultsDone = true;
+        if ([...r.players.values()].every((o) => o.bot || o.resultsDone)) { r.state = 'lobby'; syncRoom(r); }
+        break;
+      }
       case 'ready':
         if (!p.ready) { p.ready = true; if (p.room?.phase === 'loading') syncRoom(p.room); }
         break;
