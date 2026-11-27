@@ -1878,7 +1878,8 @@ function updateKitUI(now) {
     if (showPick) renderKitCards($('kitCards'), pickKit);
   }
   if (showPick) {
-    $('kitHint').textContent = (me.alive ? '' : '下次重生使用 · ') + (IS_TOUCH ? '點一下選擇' : '按 1 / 2 / 3 選擇，B 關閉');
+    $('kitHint').textContent = IS_TOUCH ? (me.alive ? '' : '下次重生使用') : (me.alive ? '' : '下次重生使用 · ') + '按 1 / 2 / 3 選擇，B 關閉';
+    $('kitHint').classList.toggle('hidden', !$('kitHint').textContent);
   }
   const showChip = can && !kitOpen;
   $('kitChip').classList.toggle('hidden', !showChip);

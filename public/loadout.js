@@ -1,5 +1,5 @@
 // 裝備畫面：三個套裝欄位，每一欄自己挑主武器、副武器、刀、兩個投擲物
-import { loadouts, saveLoadouts } from './settings.js';
+import { loadouts, saveLoadouts, IS_TOUCH } from './settings.js';
 import { uiClick } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -75,11 +75,13 @@ export function renderKitCards(box, onPick) {
   loadouts.sets.forEach((set, i) => {
     const b = document.createElement('button');
     b.className = 'kitcard' + (loadouts.active === i ? ' on' : '');
+    // 標題直接寫主武器（不用「1. 套裝 1」這種一堆數字）；下面一行是副武器和近戰
     const h = document.createElement('b');
-    h.textContent = `${i + 1}. 套裝 ${i + 1}`;
+    h.textContent = WEAPONS[set.primary].short;
     const d = document.createElement('span');
-    d.textContent = ['primary', 'secondary', 'melee'].map((k) => WEAPONS[set[k]].short).join(' · ');
+    d.textContent = WEAPONS[set.secondary].short + ' · ' + WEAPONS[set.melee].short;
     b.append(h, d);
+    if (!IS_TOUCH) { const k = document.createElement('i'); k.className = 'kitkey'; k.textContent = i + 1; b.append(k); } // 電腦：角落小小標快捷鍵
     b.addEventListener('click', (e) => { e.stopPropagation(); onPick(i); });
     box.append(b);
   });

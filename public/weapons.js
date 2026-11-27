@@ -76,10 +76,10 @@
     // ---------- 第二批：新槍 ----------
     lmg: {
       id: 'lmg', slot: 'primary', name: '輕機槍', short: '機槍', icon: '🔫',
-      mag: 75, fireMs: 82, reloadMs: 4300, reloadEmptyMs: 4900, body: 19, head: 50, speed: 0.82,
+      mag: 50, fireMs: 82, reloadMs: 4300, reloadEmptyMs: 4900, body: 19, head: 50, speed: 0.82,
       spread: [0.014, 0.075, 0.13], recoil: 0.12, kick: 0.0055, falloff: [20, 50, 0.75], settle: { per: 0.05, min: 0.5 },
       ads: { zoom: 1.35, ms: 330, spread: 0.5, speed: 0.6 },
-      desc: '75 發彈匣；單發傷害低但能一直壓制；站著連射會稍微變準，邊走邊打很散；換彈超久、走路很慢',
+      desc: '50 發彈匣；單發傷害低但能一直壓制；站著連射會稍微變準，邊走邊打很散；換彈超久、走路很慢',
     },
     burst: {
       id: 'burst', slot: 'primary', name: '三連發步槍', short: '三連發', icon: '🔫',

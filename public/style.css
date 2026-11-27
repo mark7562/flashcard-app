@@ -624,7 +624,9 @@ body.touch #wslots { display: none; }
   display: flex; flex-direction: column; gap: 2px; min-width: 120px; padding: 8px 10px; margin: 0; cursor: pointer;
   border-radius: 4px; border: 1px solid rgba(0, 229, 255, 0.35); background: rgba(0, 0, 0, 0.35); color: var(--text); font: 13px var(--zh);
 }
-.kitcard b { font-size: 14px; }
+.kitcard { position: relative; }
+.kitcard b { font-size: 15px; }
+.kitcard .kitkey { position: absolute; top: 3px; left: 5px; font-style: normal; font-size: 10px; color: var(--muted); opacity: 0.8; }
 .kitcard span { color: var(--muted); }
 .kitcard.on { border-color: #ffbe0b; box-shadow: 0 0 10px rgba(255, 190, 11, 0.45); }
 .kitcard.on b::after { content: ' ★'; color: #ffbe0b; }
