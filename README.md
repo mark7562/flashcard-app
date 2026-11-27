@@ -1,0 +1,34 @@
+# 方塊戰場 Block Arena
+
+多人連線 3D 第一人稱槍戰遊戲，瀏覽器直接玩，電腦和手機都支援。
+
+## 玩法
+- 一進場就是大亂鬥（每個人互打），最多 16 人
+- 身體一槍 25 傷害、爆頭 70 傷害，血量 100
+- 被擊倒 3 秒後重生，重生後 1.5 秒內有保護（開槍就會取消）
+- 彈匣 30 發，換彈 1.8 秒
+
+**電腦**：WASD 移動、空白鍵跳、滑鼠瞄準、左鍵開槍、R 換彈、按住 Tab 看計分板、Esc 暫停
+**手機**（橫放）：左半邊拖曳移動、右半邊拖曳瞄準、按住 🔫 開槍（按住時也能拖曳瞄準）
+
+## 本機執行
+```bash
+npm install
+npm start
+```
+打開 http://localhost:3000 。同一個 Wi-Fi 的朋友可以用 `http://你的電腦IP:3000` 加入。
+
+## 部署上網（Render 免費方案）
+1. 到 https://render.com 用 GitHub 帳號登入
+2. New → Blueprint，選這個 repo（會讀取 `render.yaml` 自動設定）
+3. 等它建置完成，會拿到一個 `https://xxxx.onrender.com` 網址，傳給朋友就能一起玩
+
+> 免費方案閒置 15 分鐘會休眠，第一個人打開時要等約 30 秒～1 分鐘喚醒。
+
+也可以部署到任何支援 Node.js 18+ 和 WebSocket 的平台（Railway、Fly.io 等），啟動指令是 `npm start`，伺服器會讀取 `PORT` 環境變數。
+
+## 檔案結構
+- `server.js`：伺服器（連線、位置同步、命中判定含延遲補償、血量、擊殺、重生）
+- `public/map.js`：地圖資料（伺服器和瀏覽器共用）
+- `public/game.js`：遊戲畫面、操作、物理、音效（Three.js）
+- `public/index.html`、`public/style.css`：介面

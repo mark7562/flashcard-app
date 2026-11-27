@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1420" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>方塊戰場 Block Arena</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="game"></div>
+
+  <!-- 開始畫面 -->
+  <div id="menu" class="overlay">
+    <div class="panel">
+      <h1>方塊戰場</h1>
+      <p class="sub">多人連線 3D 槍戰</p>
+      <input id="name" maxlength="16" placeholder="輸入你的名字" autocomplete="off" />
+      <button id="play">開始遊戲</button>
+      <p id="status" class="status"></p>
+      <div class="help desktop-only">
+        <b>電腦操作</b>
+        <span>WASD 移動 · 空白鍵 跳 · 滑鼠 瞄準 · 左鍵 開槍</span>
+        <span>R 換彈 · 按住 Tab 看計分板 · Esc 暫停</span>
+      </div>
+      <div class="help touch-only">
+        <b>手機操作（建議橫放）</b>
+        <span>左半邊拖曳 移動 · 右半邊拖曳 瞄準</span>
+        <span>按住 🔫 開槍（按住時也能拖曳瞄準）</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 暫停畫面（電腦） -->
+  <div id="paused" class="overlay hidden">
+    <div class="panel">
+      <h2>暫停中</h2>
+      <p class="sub">遊戲仍在進行，其他人還能打你！</p>
+      <button id="resume">點擊繼續</button>
+    </div>
+  </div>
+
+  <!-- 遊戲中 HUD -->
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="hitmarker"></div>
+    <div id="damage"></div>
+    <div id="killfeed"></div>
+    <div id="toast"></div>
+    <div id="topinfo"><span id="count"></span> · <span id="ping"></span></div>
+    <div id="hpbox">
+      <div id="hpbar"><div id="hpfill"></div></div>
+      <span id="hptext">100</span>
+    </div>
+    <div id="ammo"><span id="ammonow">30</span><small> / 30</small><div id="reloadtext"></div></div>
+    <div id="death" class="hidden">
+      <div class="big">你被擊倒了</div>
+      <div id="deathby"></div>
+      <div id="respawn"></div>
+    </div>
+    <div id="scoreboard" class="hidden">
+      <h3>計分板</h3>
+      <table><thead><tr><th>玩家</th><th>擊殺</th><th>死亡</th></tr></thead><tbody id="scores"></tbody></table>
+    </div>
+  </div>
+
+  <!-- 手機觸控按鈕 -->
+  <div id="touch" class="hidden">
+    <div id="stick"><div id="knob"></div></div>
+    <button class="tbtn" id="btnScore">📋</button>
+    <button class="tbtn" id="btnReload">R</button>
+    <button class="tbtn" id="btnJump">⤒</button>
+    <button class="tbtn" id="btnFire">🔫</button>
+  </div>
+  <div id="rotate" class="hidden">請把手機橫放來玩 ↻</div>
+
+  <script src="map.js"></script>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
