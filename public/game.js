@@ -757,11 +757,14 @@ const KILL_TIERS = [
   ['擊殺', '#ffffff'], ['雙殺', '#00e5ff'], ['三殺', '#b06bff'], ['四殺', '#ff9a3c'], ['ACE 團滅', '#ffd34d'],
 ];
 let killFxTimer = 0;
-// 自己擊殺：殲滅、爆破顯示大的骷髏徽章（連殺會升級）；其他模式只顯示一行小字
-function showKillFx(m) {
+// 擊殺特效：殲滅、爆破顯示大的骷髏徽章（連殺會升級）；其他模式只顯示一行小字
+// own = 自己擊殺（才算進自己的回合統計）；觀戰、回放時顯示被看的那個人的擊殺
+function showKillFx(m, own = true) {
   const w = WEAPONS[m.w];
-  me.rk = (me.rk || 0) + 1;
-  if (m.head) me.rh = (me.rh || 0) + 1;
+  if (own) {
+    me.rk = (me.rk || 0) + 1;
+    if (m.head) me.rh = (me.rh || 0) + 1;
+  }
   if (!(isRounds() && !isZ())) {
     const el = $('killsmall');
     el.textContent = `${m.head ? '💀 爆頭擊殺' : '擊殺'} ${nameOf(m.victim)}`;
@@ -770,8 +773,9 @@ function showKillFx(m) {
     killFxTimer = setTimeout(() => el.classList.remove('show'), 1500);
     return;
   }
-  const enemies = [...roster.values()].filter((p) => p.team !== me.team).length;
-  const rk = m.rk || me.rk;
+  const kTeam = own ? me.team : roster.get(m.killer)?.team ?? me.team;
+  const enemies = [...roster.values()].filter((p) => p.team !== kTeam).length;
+  const rk = m.rk || (own ? me.rk : 1);
   const ace = enemies >= 3 && rk >= enemies;
   const [title, color] = ace ? KILL_TIERS[4] : KILL_TIERS[Math.min(rk, 4) - 1];
   const el = $('killbadge');
@@ -1243,8 +1247,8 @@ function updateReplay(dt, now) {
     } else if (e.k === 'kill') {
       const v = remotes.get(e.victim);
       if (v && !v.corpse) { v.alive = false; v.group.visible = true; startCorpse(v, e.kx, e.kz, e.head); }
-      if (e.killer === B.killer) { showHit(e.head, true); beep(1600, 0.12, 0.12, 'triangle', 0.06); }
-      feed(e.killer, e.victim, e.head, e.w);
+      if (e.killer === B.killer) { showHit(e.head, true); showKillFx(e, false); } // 回放：擊殺者的擊殺特效
+      feed(e.killer, e.victim, e.head, e.w, e);
     }
   }
   // 鏡頭：擊殺者的眼睛（貼在鏡頭旁邊的人先藏起來，免得擋住畫面）
@@ -1583,6 +1587,7 @@ function handle(m) {
       if (room && m.score) room.score = m.score;
       feed(m.killer, m.victim, m.head, m.w, m);
       if (m.killer === me.id && m.victim !== me.id) showKillFx(m);
+      else if (specActive && m.killer === specActive && m.victim !== specActive) showKillFx(m, false); // 觀戰：看得到被觀戰的人的擊殺特效
       if (m.victim === me.id) {
         me.alive = false;
         me.hp = 0;

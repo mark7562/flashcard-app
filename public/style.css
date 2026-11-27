@@ -494,9 +494,10 @@ body.touch #hpbar { width: 120px; }
 #banner.blue #bannerBig { color: #cfe6ff; text-shadow: 0 0 18px var(--blue), 0 2px 8px #000; }
 #banner.red #bannerBig { color: #ffd6de; text-shadow: 0 0 18px var(--red), 0 2px 8px #000; }
 #spectate {
-  position: absolute; bottom: max(90px, calc(env(safe-area-inset-bottom) + 80px)); left: 50%; transform: translateX(-50%);
-  padding: 6px 16px; border-radius: 999px; background: rgba(7, 4, 24, 0.7); border: 1px solid rgba(0, 229, 255, 0.4);
-  font-size: 15px; white-space: nowrap;
+  /* 放在最下面中間（血量和子彈之間），不會跟擊殺徽章、爆破的任務提示疊在一起 */
+  position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+  padding: 5px 14px; border-radius: 999px; background: rgba(7, 4, 24, 0.7); border: 1px solid rgba(0, 229, 255, 0.4);
+  font-size: 14px; white-space: nowrap;
 }
 #death.spec { background: none; justify-content: flex-start; padding-top: 18vh; }
 #death.spec .big { font-size: 26px; }
@@ -725,6 +726,14 @@ body.touch #wslots { display: none; }
 #killsmall { position: absolute; left: 50%; top: calc(50% + 40px); transform: translateX(-50%); font-size: 14px; font-weight: 800; color: #fff;
   text-shadow: 0 1px 3px #000; opacity: 0; transition: opacity 0.4s; pointer-events: none; white-space: nowrap; }
 #killsmall.show { opacity: 1; transition: none; }
+@media (max-height: 520px) {
+  #killbadge { top: calc(50% + 30px); }
+  #killbadge .kb-skull { width: 36px; height: 36px; border-width: 2px; }
+  #killbadge .kb-skull svg { width: 24px; height: 24px; }
+  #killbadge .kb-title { font-size: 18px; margin-top: 2px; }
+  #killbadge .kb-name { font-size: 12px; }
+  #killbadge .kb-tags span { font-size: 11px; }
+}
 #bannerStat { margin-top: 6px; font-size: 15px; font-weight: 800; color: #ffe8a0; text-shadow: 0 1px 4px #000; }
 #resLeave { align-self: center; width: auto; padding: 8px 22px; margin-top: 2px; }
 @media (max-height: 520px) { #resLeave { padding: 5px 16px; font-size: 14px; } }
@@ -774,7 +783,7 @@ body.noxhair #crosshair { visibility: hidden; }
 }
 
 /* ===== 最佳擊殺回放 ===== */
-body.replaying #hud > :not(#replay):not(#killfeed):not(#hitmarker):not(#scope) { display: none !important; }
+body.replaying #hud > :not(#replay):not(#killfeed):not(#hitmarker):not(#scope):not(#killbadge):not(#killsmall) { display: none !important; }
 #replay { position: absolute; inset: 0; pointer-events: none; }
 #replay.hidden { display: none; }
 #replay .rp-bar { position: absolute; left: 0; right: 0; height: 9vh; background: #000; }

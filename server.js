@@ -1070,7 +1070,7 @@ function applyDamage(p, target, dmg, headshot, weapon, now, extra = {}) {
   const ns = !!(WEAPONS[weapon]?.hipCone && p.lastHip);
   toRoom(r, { t: 'kill', killer: p.id, rs: isZ(r) && target.team === 1 && !target.out ? target.respawnMs : undefined, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z, khp: p.hp,
     rk: p.roundKills, first: first || undefined, clutch: clutch || undefined, smoke: extra.smoke || undefined, ns: ns || undefined });
-  recEvent(r, { k: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kx: p.x, kz: p.z });
+  recEvent(r, { k: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kx: p.x, kz: p.z, rk: p.roundKills, first: first || undefined, clutch: clutch || undefined, smoke: extra.smoke || undefined, ns: ns || undefined });
   // 精彩程度比目前最佳的高：過一下（記到倒地）再存起來
   const rate = rateKill(p, target, headshot, weapon, now);
   if (rate.score > r.bestScore && rate.score >= (r.pendingBest?.score ?? 0)) {
