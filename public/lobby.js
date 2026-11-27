@@ -6,11 +6,14 @@ import { profile } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
 const TEAMS = window.GAME_MAP.teams;
-const MODE_NAMES = { tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式' };
+const MODE_NAMES = { tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式', zombie: '生化模式', hero: '生化英雄' };
+const isZMode = (m) => m === 'zombie' || m === 'hero';
 const MODE_DESC = {
   tdm: '死了 3 秒後重生，先達到目標擊殺數，或時間到時擊殺比較多的隊伍獲勝。',
   elim: '死了要等下一回合才能復活，把對面全部擊倒就贏一回合，先贏到指定回合數的隊伍獲勝。',
   bomb: '一隊進攻、一隊防守，半場交換。進攻方把炸彈埋在 A 或 B 包點並讓它爆炸；防守方阻止或拆彈。死了等下一回合，可以用投擲物。地圖：霓虹地鐵站。',
+  zombie: '最多 12 人，開局大家都是人類。20 秒後隨機一人變成母體殭屍，被殭屍抓兩下就會被感染。人類撐過 3 分鐘就贏；子彈有限，撿彈藥箱補充。殭屍撿生化箱回血升級。',
+  hero: '跟生化模式一樣，但人類剩下最後 1～2 個時會變成英雄：拿發光長刀、600 血、最高傷害加成，被英雄砍死的殭屍不能復活。',
 };
 
 let send = () => {};
@@ -26,6 +29,7 @@ export function mapName(id) { return window.GAME_MAP.get(id).name; }
 export function rulesText(r) {
   return `${mapName(r.rules.map)} · ` + (r.mode === 'tdm'
     ? `${MODE_NAMES.tdm} · 目標 ${r.rules.scoreLimit} 殺 · ${r.rules.timeLimit} 分鐘`
+    : isZMode(r.mode) ? `${MODE_NAMES[r.mode]} · 共 ${r.rules.rounds} 回合`
     : `${MODE_NAMES[r.mode]} · 先贏 ${r.rules.rounds} 回合`);
 }
 
@@ -103,12 +107,17 @@ export function renderRoom(r) {
   $('roomCode').textContent = r.code;
   $('roomRules').textContent = (r.locked ? '🔒 ' : '') + rulesText(r);
 
+  // 生化模式：不分隊，12 個位置分成左右兩欄
+  const zm = isZMode(r.mode);
+  document.querySelector('#scrRoom .teams').classList.toggle('zmode', zm);
   for (const team of [0, 1]) {
-    const members = r.players.filter((p) => p.team === team);
-    $(`team${team}Count`).textContent = `${members.length}/5`;
+    const members = zm ? r.players.slice(team * 6, team * 6 + 6) : r.players.filter((p) => p.team === team);
+    const per = zm ? 6 : 5;
+    document.querySelector(`.teamcol.t${team} .teamhead span`).textContent = zm ? (team ? '　' : '玩家') : TEAMS[team].name;
+    $(`team${team}Count`).textContent = zm ? (team ? '' : `${r.players.length}/12`) : `${members.length}/5`;
     const box = $(`team${team}`);
     box.replaceChildren();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < per; i++) {
       const p = members[i];
       const slot = document.createElement('div');
       if (!p) {
@@ -150,10 +159,11 @@ export function renderRoom(r) {
       box.append(slot);
     }
     const joinBtn = document.querySelector(`.teamcol.t${team} [data-team]`);
+    joinBtn.classList.toggle('hidden', zm);
     joinBtn.disabled = !mine || mine.team === team || members.length >= 5 || r.state === 'playing';
     joinBtn.textContent = mine?.team === team ? '你在這隊' : members.length >= 5 ? '已滿' : '加入';
     const botBtn = document.querySelector(`.teamcol.t${team} [data-bot-team]`);
-    botBtn.classList.toggle('hidden', !isHost || r.state !== 'lobby' || members.length >= 5);
+    botBtn.classList.toggle('hidden', !isHost || r.state !== 'lobby' || (zm ? team === 1 || r.players.length >= 12 : members.length >= 5));
   }
 
   // 房主規則設定
@@ -162,6 +172,8 @@ export function renderRoom(r) {
   hr.classList.toggle('tdm', r.mode === 'tdm');
   hr.classList.toggle('elim', r.mode !== 'tdm');
   hr.classList.toggle('bomb', r.mode === 'bomb');
+  $('roundsLabel').textContent = zm ? '回合數' : '勝利回合';
+  $('fillBots').textContent = zm ? '🤖 自動補滿 12 人' : '🤖 自動補滿兩隊';
   const mark = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === String(v)); };
   mark('ruleMap', r.rules.map);
   mark('ruleMode', r.mode);
@@ -250,7 +262,7 @@ export function initLobby(opts) {
   // 機器人
   const openPick = (team) => {
     pickTeam = team;
-    $('botPickTitle').firstChild.textContent = team < 0 ? '自動補滿兩隊' : `加入${TEAMS[team].name}機器人`;
+    $('botPickTitle').firstChild.textContent = team < 0 ? (isZMode(room?.mode) ? '自動補滿 12 人' : '自動補滿兩隊') : isZMode(room?.mode) ? '加入機器人' : `加入${TEAMS[team].name}機器人`;
     $('botPick').classList.remove('hidden');
     uiClick();
   };
@@ -267,4 +279,4 @@ export function initLobby(opts) {
   $('botPickCancel').addEventListener('click', () => { $('botPick').classList.add('hidden'); uiBack(); });
 }
 
-export { TEAMS };
+export { TEAMS, isZMode };

@@ -513,6 +513,21 @@ function damaged(p, attacker, now) {
 // 選下一個巡邏目標：有機率去搶戰術位置（高台、掩體），到了會守一陣子
 function nextPatrol(p, b, nav, r, now) {
   const c = b.cfg;
+  // 生化模式：人類機器人集合到同一個地方一起守（火力集中才擋得住殭屍）
+  if (r.z && p.zrole === 'human' && r.z.hold && !(p.reserve && (p.reserve.primary || 0) < (WEAPONS[p.loadout.primary].mag || 0) && r.z.pickups?.some((k) => k.kind === 'ammo'))) {
+    const [hx, hz] = r.z.hold;
+    const pt = nearPt(nav, hx, hz, 3.5);
+    if (Math.hypot(pt[0] - p.x, pt[1] - p.z) > 1.5) { b.guard = pt; setGoal(p, b, nav, pt[0], pt[1]); return; }
+  }
+  // 生化模式：備用子彈不多了，去撿最近的彈藥箱
+  if (r.z && p.zrole === 'human' && p.reserve && r.z.pickups?.length) {
+    const W = WEAPONS[p.loadout.primary];
+    if ((p.reserve.primary || 0) < (W.mag || 0)) {
+      let best = null, bd = 40;
+      for (const k of r.z.pickups) { if (k.kind !== 'ammo') continue; const d = Math.hypot(k.x - p.x, k.z - p.z); if (d < bd) { bd = d; best = k; } }
+      if (best) { b.guard = null; setGoal(p, b, nav, best.x, best.z); return; }
+    }
+  }
   // 有分路線的地圖：每次重生挑一條路走（不然大家都擠在中間）
   const lanes = nav.map.laneSpots;
   if (lanes && Math.random() < 0.7) {
@@ -607,6 +622,8 @@ function think(p, r, now, dt, api) {
   if (!p.alive) { if (b.state !== 'patrol' || b.path) resetBrain(b); return; }
   if (r.phase !== 'live') { record(p, now); return; }
   const map = MAP.get(r.rules.map), nav = navFor(map);
+  // 生化模式：殭屍、英雄都是近戰追人，用另一套比較簡單的腦
+  if (r.z && (p.team === 1 || p.zrole === 'hero')) return chaseThink(p, r, now, dt, api, map, nav);
 
   // 換彈完成
   api.finishReload(p, now);
@@ -652,7 +669,7 @@ function think(p, r, now, dt, api) {
       const preAim = Math.abs(angleDiff(yawTo(seen.x - p.x, seen.z - p.z), p.yaw)) < 0.35 && (b.moveK || 0) < 0.2 ? 0.5 : 1;
       // 敵人在越後面（要轉越多），反應越慢；背後的人不會被瞬間轉身秒掉
       const turnNeed = Math.abs(angleDiff(yawTo(seen.x - p.x, seen.z - p.z), p.yaw));
-      b.reactAt = now + (again ? rand(c.react[0], c.react[1]) * 0.25 : (rand(c.react[0], c.react[1]) + bestD * c.reactPerM) * preAim + turnNeed * (c.reactPerRad || 0));
+      b.reactAt = now + (again ? rand(c.react[0], c.react[1]) * 0.25 : (rand(c.react[0], c.react[1]) + bestD * c.reactPerM) * preAim + turnNeed * (c.reactPerRad || 0)) * (r.z ? 0.7 : 1);
       if (!again) {
         // 轉身甩過去會稍微甩過頭（往轉的方向偏一點），再慢慢修回來
         const dir = Math.sign(angleDiff(yawTo(seen.x - p.x, seen.z - p.z), p.yaw));
@@ -708,6 +725,11 @@ function think(p, r, now, dt, api) {
     else if (p.weapon === 'secondary' && p.ammoBy.secondary <= 0) want = 'primary';
   } else if (b.state !== 'engage') want = 'primary';
   if (b.throwing) want = p.weapon; // 正在準備丟投擲物
+  // 生化模式：子彈有限，這把沒子彈也沒備用彈就換另一把，都沒有就拿刀
+  if (r.z && p.reserve) {
+    const has = (sl) => (p.ammoBy[sl] || 0) > 0 || (p.reserve[sl] || 0) > 0;
+    if (want !== 'melee' && !has(want)) want = has('primary') ? 'primary' : has('secondary') ? 'secondary' : 'melee';
+  }
   if (want !== p.weapon) api.switchTo(p, want);
   const W = WEAPONS[p.loadout[p.weapon]];
   const ammo = W.mag ? p.ammoBy[p.weapon] : 0;
@@ -796,8 +818,9 @@ function think(p, r, now, dt, api) {
         b.nextShotAt = now + W.fireMs * 1.05 + rand(c.pause[0] * 0.4, c.pause[1] * 0.6);
       } else if (b.burstLeft <= 0) {
         b.sprayN = 0;
-        b.nextShotAt = now + rand(c.pause[0], c.pause[1]);
-        b.burstLeft = randInt(c.burst[0], c.burst[1]);
+        // 生化模式：殭屍衝過來就一直掃（連射長、停頓短）
+        b.nextShotAt = now + rand(c.pause[0], c.pause[1]) * (r.z ? 0.35 : 1);
+        b.burstLeft = randInt(c.burst[0], c.burst[1]) * (r.z ? 3 : 1);
       } else {
         b.nextShotAt = now + Math.max(W.fireMs, 60) * (p.weapon === "secondary" ? 1.4 : 1);
       }
@@ -824,7 +847,9 @@ function think(p, r, now, dt, api) {
       const k = nav.cellOf(p.x + sx * 0.9, p.z + sz * 0.9);
       if (nav.ok[k] && Math.abs(nav.h[k] - p.y) <= STEP) { mx += sx; mz += sz; } else b.strafeDir = 0; // 到邊緣就停，等下次再換方向（不會原地來回抖）
     }
-    if (c.flank && dist > 22 && !scopeGun && !b.pushing) { mx += dx / dist * 0.7; mz += dz / dist * 0.7; } // 老手太遠會往前壓
+    if (c.flank && dist > 22 && !scopeGun && !b.pushing && !r.z) { mx += dx / dist * 0.7; mz += dz / dist * 0.7; } // 老手太遠會往前壓
+    // 生化模式：殭屍靠太近就邊打邊退（不會衝上去）
+    if (r.z && !W.melee && dist < 7) { mx -= dx / dist * 1.2; mz -= dz / dist * 1.2; b.strafeDir = 0; b.pushing = false; }
     if (!b.pushing) b.path = null;
   } else {
     // ---- 移動：巡邏 / 查看 / 搜尋 / 撤退 / 守點 ----
@@ -892,7 +917,13 @@ function think(p, r, now, dt, api) {
     } else if (b.state === 'guard') {
       // 守在戰術位置：朝敵方那邊左右掃視
       const enemyDir = p.team === 0 ? 1 : -1;
-      if (!b.looks || b.looksKey !== 'guard') { b.looksKey = 'guard'; b.looks = pickLooks(p, map.boxes, yawTo(enemyDir, 0), 1.3); b.glanceAt = 0; }
+      if (!b.looks || b.looksKey !== 'guard') {
+        b.looksKey = 'guard';
+        // 生化模式：守點時面向外面（背對集合點中心），四面八方都看
+        const zh = r.z?.hold;
+        const base = zh && Math.hypot(p.x - zh[0], p.z - zh[1]) > 0.5 ? yawTo(p.x - zh[0], p.z - zh[1]) : yawTo(enemyDir, 0);
+        b.looks = pickLooks(p, map.boxes, base, r.z ? 2.2 : 1.3); b.glanceAt = 0;
+      }
       lookYaw = glance(b, now, b.looks);
       if (b.alert && now - b.heardAt < 4000) lookYaw = yawTo(b.alert[0] - p.x, b.alert[1] - p.z);
       if (now >= b.guardUntil) { b.state = 'patrol'; b.guard = null; nextPatrol(p, b, nav, r, now); }
@@ -902,7 +933,7 @@ function think(p, r, now, dt, api) {
       if (b.guard && Math.hypot(b.guard[0] - p.x, b.guard[1] - p.z) < 1.5) {
         b.state = 'guard';
         b.looksKey = null;
-        b.guardUntil = now + rand(c.guardMs[0], c.guardMs[1]);
+        b.guardUntil = now + rand(c.guardMs[0], c.guardMs[1]) * (r.z ? 4 : 1);
         b.lookSweep = Math.random() * 6;
       } else {
         if (b.state !== 'patrol') b.state = 'patrol';
@@ -1217,6 +1248,73 @@ function bombAlert(r, p, q, now) {
 }
 
 // 記錄位置歷史（延遲補償用）
+// ---------- 生化模式：殭屍（爪子）和英雄（長刀）——追最近的敵人、靠近就揮 ----------
+function chaseThink(p, r, now, dt, api, map, nav) {
+  const b = p.bot, c = b.cfg;
+  const W = WEAPONS[p.team === 1 ? 'claw' : 'herosword'];
+  if (b.state !== 'chase') { b.state = 'chase'; b.path = null; b.ctarget = 0; b.repathAt = 0; }
+  // 目標：最近的敵人（看得到的優先）；換目標要有一點理由，不要一直換來換去
+  let best = null, bd = Infinity;
+  for (const q of r.players.values()) {
+    if (!q.alive || q.team === p.team) continue;
+    let d = Math.hypot(q.x - p.x, q.z - p.z) + Math.abs(q.y - p.y) * 2;
+    if (q.id === b.ctarget) d -= 4;
+    if (d < bd) { bd = d; best = q; }
+  }
+  if (best && best.id !== b.ctarget) { b.ctarget = best.id; b.reactAt = now + rand(c.react[0], c.react[1]) * 0.5; b.repathAt = 0; }
+  let gx = best ? best.x : p.x, gz = best ? best.z : p.z;
+  // 殭屍血少、附近沒人類：先去吃生化箱
+  if (p.team === 1 && p.hp < p.maxHp * 0.45 && r.z.pickups?.length) {
+    let bio = null, bb = 18;
+    for (const k of r.z.pickups) { if (k.kind !== 'bio') continue; const d = Math.hypot(k.x - p.x, k.z - p.z); if (d < bb) { bb = d; bio = k; } }
+    if (bio && (!best || Math.hypot(best.x - p.x, best.z - p.z) > 6)) { gx = bio.x; gz = bio.z; }
+  }
+  let mx = 0, mz = 0, wantJump = false;
+  let lookYaw = p.yaw, lookPitch = 0;
+  const dist = best ? Math.hypot(best.x - p.x, best.z - p.z) : Infinity;
+  const see = best && dist < 30 && canSee(p, best, map.boxes, null, now);
+  const direct = see && dist < 5 && Math.abs(best.y - p.y) < 1 && gx === best.x;
+  if (direct) {
+    mx = (gx - p.x) / (dist || 1); mz = (gz - p.z) / (dist || 1);
+    b.path = null;
+  } else if (best || gx !== p.x) {
+    if (!b.path || now >= b.repathAt || b.pathIdx >= b.path.length) { setGoal(p, b, nav, gx, gz); b.repathAt = now + 650; }
+    const f = followPath(p, b);
+    if (f) { mx = f.mx; mz = f.mz; if (f.jump) wantJump = true; }
+    else if (best) { const d = Math.hypot(gx - p.x, gz - p.z) || 1; mx = (gx - p.x) / d; mz = (gz - p.z) / d; }
+  }
+  if (see && dist < 12) {
+    lookYaw = yawTo(best.x - p.x, best.z - p.z);
+    lookPitch = Math.atan2(best.y + 1.1 - (p.y + 1.6), Math.max(0.3, dist));
+  } else if (mx || mz) lookYaw = yawTo(mx, mz);
+  // 揮爪／揮刀
+  if (see && dist < W.range - 0.15 && now >= b.reactAt && now >= (b.nextShotAt || 0) && Math.abs(angleDiff(lookYaw, p.yaw)) < 0.45) {
+    const cp = Math.cos(p.pitch);
+    api.melee(p, { d: [-Math.sin(p.yaw) * cp, Math.sin(p.pitch), -Math.cos(p.yaw) * cp], o: [p.x, p.y + 1.6, p.z], v: (b.swingN = ((b.swingN || 0) + 1) % 3) });
+    b.nextShotAt = now + W.fireMs + rand(40, 260);
+  }
+  const stunK = (b.stunUntil || 0) > now ? 0.4 : 1;
+  p.yaw = humanTurn(p.yaw, lookYaw, c.turn * 1.2 * stunK, dt);
+  p.yaw = Math.atan2(Math.sin(p.yaw), Math.cos(p.yaw));
+  p.pitch += Math.max(-c.turn * dt, Math.min(c.turn * dt, lookPitch - p.pitch));
+  if (wantJump) jump(b, now);
+  // 殭屍：新手慢一點，老手全速
+  const speed = Math.min(6.3, c.speed + 0.4) * (W.speed || 1) * stunK;
+  const ox = p.x, oz = p.z;
+  const blocked = move(p, b, nav, mx, mz, dist < 0.9 ? 0 : speed, dt);
+  if (b.knock && now < b.knock.until) {
+    const kv = Math.hypot(b.knock.vx, b.knock.vz);
+    move(p, b, nav, b.knock.vx / kv, b.knock.vz / kv, kv, dt);
+  } else b.knock = null;
+  b.moveK = Math.min(1, Math.hypot(p.x - ox, p.z - oz) / (6.5 * dt));
+  if (blocked && b.ground && now >= b.jumpCd) { jump(b, now); b.repathAt = 0; }
+  if (now >= b.stuckCheckAt) {
+    if (Math.hypot(p.x - b.stuckPos[0], p.z - b.stuckPos[1]) < 0.3 && dist > 1.5) { b.path = null; b.repathAt = 0; const g = randomPoint(nav); setGoal(p, b, nav, g[0], g[1]); b.repathAt = now + 1500; }
+    b.stuckPos = [p.x, p.z, p.y];
+    b.stuckCheckAt = now + 2000;
+  }
+  record(p, now);
+}
 function record(p, now) {
   p.history.push({ t: now, x: p.x, y: p.y, z: p.z });
   while (p.history.length && p.history[0].t < now - 1000) p.history.shift();

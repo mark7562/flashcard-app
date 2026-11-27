@@ -317,6 +317,19 @@ input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border: 0; bo
 #hpbar { width: 180px; height: 14px; background: rgba(0, 0, 0, 0.5); border-radius: 7px; overflow: hidden; border: 1px solid rgba(255,255,255,.25); }
 #hpfill { height: 100%; width: 100%; background: linear-gradient(90deg, #3ddc84, #8ef0b5); transition: width 0.15s; }
 #hpfill.low { background: linear-gradient(90deg, #ff4d4d, #ff9a7a); }
+#hpfill.zombie { background: linear-gradient(90deg, #3a8a2a, #8ee05a); }
+#hpfill.hero { background: linear-gradient(90deg, #e0a010, #ffe680); }
+/* 生化模式：身分、等級、經驗條 */
+#zbar { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+#zbar .zrole { padding: 2px 8px; border-radius: 10px; background: rgba(0, 0, 0, 0.5); }
+#zbar .zrole.zombie, #zbar .zrole.mother { color: #8ee05a; border: 1px solid #5aa03a; }
+#zbar .zrole.hero { color: #ffd34d; border: 1px solid #c9a020; }
+#zbar .zrole.human { color: #cfe4ff; border: 1px solid #5a7aa0; }
+#zlvl { color: #ffe680; }
+#zxp { width: 70px; height: 6px; background: rgba(0, 0, 0, 0.5); border-radius: 3px; overflow: hidden; }
+#zxpfill { height: 100%; width: 0; background: #ffd34d; transition: width 0.2s; }
+#damage.infect { box-shadow: inset 0 0 160px 60px rgba(120, 255, 60, 0.6) !important; }
+#banner.gold #bannerBig { color: #ffd34d; text-shadow: 0 0 18px rgba(255, 200, 40, 0.8); }
 #ammo {
   position: absolute; right: max(20px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
   font-size: 34px; font-weight: 800; text-shadow: 0 1px 4px #000; text-align: right;
@@ -412,6 +425,7 @@ body.touch #hpbar { width: 120px; }
 .teamcol { border: 1px solid; border-radius: 4px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 .teamcol.t0 { border-color: rgba(61, 155, 255, 0.5); background: rgba(61, 155, 255, 0.07); }
 .teamcol.t1 { border-color: rgba(255, 77, 109, 0.5); background: rgba(255, 77, 109, 0.07); }
+.teams.zmode .teamcol { border-color: rgba(120, 220, 120, 0.45); background: rgba(80, 200, 100, 0.06); }
 .teamhead { display: flex; align-items: center; gap: 8px; font-weight: 800; letter-spacing: 0.1em; }
 .teamhead span:nth-child(2) { font: 700 13px var(--num); color: var(--muted); }
 .teamhead .linkbtn { margin-left: auto; }

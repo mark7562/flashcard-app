@@ -193,6 +193,12 @@ const SFX = {
   stab(t, v) { noise(t, 0.08, v * 0.6, 'lowpass', 700, 200); tone(t, 0.1, v * 0.5, 'sine', 110, 60); },
   clang(t, v) { tone(t, 0.18, v * 0.25, 'triangle', 2450, 2300); tone(t, 0.14, v * 0.18, 'triangle', 3170, 3000); noise(t, 0.04, v * 0.3, 'highpass', 3000, 3000); },
   flip(t, v) { noise(t, 0.06, v * 0.2, 'bandpass', 2500, 3500, 3); },
+  // 生化模式
+  growl(t, v) { tone(t, 0.7, v * 0.35, 'sawtooth', 95, 70); tone(t, 0.6, v * 0.2, 'sawtooth', 142, 100); noise(t, 0.7, v * 0.35, 'bandpass', 400, 250, 2); },
+  infect(t, v) { tone(t, 0.9, v * 0.5, 'sawtooth', 220, 55); noise(t, 0.8, v * 0.5, 'lowpass', 1200, 150); tone(t + 0.1, 0.6, v * 0.3, 'square', 110, 60); },
+  levelUp(t, v) { tone(t, 0.12, v * 0.35, 'triangle', 660, 660); tone(t + 0.1, 0.12, v * 0.35, 'triangle', 880, 880); tone(t + 0.2, 0.25, v * 0.35, 'triangle', 1320, 1320); },
+  pickup(t, v) { tone(t, 0.08, v * 0.4, 'triangle', 900, 1400); tone(t + 0.08, 0.12, v * 0.3, 'triangle', 1400, 1800); },
+  hero(t, v) { tone(t, 0.3, v * 0.4, 'triangle', 523, 523); tone(t + 0.2, 0.3, v * 0.4, 'triangle', 659, 659); tone(t + 0.4, 0.6, v * 0.45, 'triangle', 784, 784); noise(t, 0.6, v * 0.2, 'highpass', 4000, 6000); },
   // ---------- 第二批武器 ----------
   // 輕機槍：比步槍粗、低
   lmg(t, v, m) {

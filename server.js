@@ -35,14 +35,29 @@ const RESULTS_MS = 12000; // 結算畫面顯示多久
 const REC_MS = 7000; // 最佳擊殺回放：伺服器記住最近幾秒的位置和事件
 const CLIP_BEFORE = 2600, CLIP_AFTER = 800, CLIP_MAX = 6000; // 回放從擊殺前多久播到擊殺後多久（連殺最長 6 秒）
 const COLORS = MAP.colors;
-const MODES = ['tdm', 'elim', 'bomb'];
+const MODES = ['tdm', 'elim', 'bomb', 'zombie', 'hero'];
 const RULE_OPTIONS = { scoreLimit: [25, 50, 75, 100], timeLimit: [5, 10, 15], rounds: [3, 5, 7, 9], map: MAP.order };
 // 爆破模式
 const BOMB = {
   map: 'metro', freezeMs: 10000, roundMs: 105000, fuseMs: 40000, plantMs: 3000, defuseMs: 6000,
   pickR: 1.6, defuseR: 1.8, blastR: 18, blastDmg: 260, postMs: 5000,
 };
-const isRounds = (r) => r.mode !== 'tdm'; // 回合制（殲滅、爆破）
+const isRounds = (r) => r.mode !== 'tdm'; // 回合制（殲滅、爆破、生化）
+// 生化模式（zombie）／生化英雄（hero）：隊伍 0 = 人類、1 = 殭屍；每回合開始所有人都是人類
+const Z_MODES = ['zombie', 'hero'];
+const isZ = (r) => Z_MODES.includes(r.mode);
+const ZM = {
+  max: 12, roundMs: 180000, infectMs: 20000, respawnMs: 5000,
+  zHp: [1000, 1300, 1650, 2050, 2500, 3000], zXp: [0, 60, 140, 240, 360, 500], // 殭屍等級：血量上限、累積經驗
+  hMult: [1, 1.15, 1.3, 1.5, 1.75], hXp: [0, 50, 120, 220, 350], // 人類等級：傷害倍率、累積經驗
+  xp: { bio: 40, infect: 60, kill: 50, ammo: 15, dmg: 10, dmgPer: 500 },
+  heroHp: 600, reserveMags: 4, levelHeal: 0.3,
+  pick: { every: 15000, max: 4, r: 1.6, heal: 0.3 },
+  pts: { kill: 3, infect: 3, survive: 5 },
+};
+function roomMax(r) { return isZ(r) ? ZM.max : ROOM_MAX; }
+function heroCount(r) { return r.players.size >= 9 ? 2 : 1; }
+function levelOf(table, xp) { let l = 1; while (l < table.length && xp >= table[l]) l++; return l; }
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 // 目前的版本號（從 index.html 右下角的版本文字讀出來）：瀏覽器拿到的網頁比較舊就會自動重新載入
@@ -148,7 +163,7 @@ function teamCount(r, team) {
 // ---------- 房間資訊 ----------
 function roomSummary(r) {
   return {
-    code: r.code, name: r.name, count: r.players.size, max: ROOM_MAX, state: r.state,
+    code: r.code, name: r.name, count: r.players.size, max: roomMax(r), state: r.state,
     mode: r.mode, map: mapOf(r).name, locked: !!r.password, host: r.players.get(r.hostId)?.name ?? '',
   };
 }
@@ -168,9 +183,10 @@ function roomState(r) {
     code: r.code, name: r.name, hostId: r.hostId, mode: r.mode, rules: r.rules, state: r.state,
     locked: !!r.password, score: r.score, roundWins: r.roundWins, round: r.round, phase: r.phase, timeLeft, ready,
     attackTeam: r.attackTeam, bomb: r.mode === 'bomb' ? bombSummary(r) : null,
+    z: isZ(r) && r.z ? { infectIn: r.z.started ? 0 : Math.max(0, r.z.infectAt - now), started: r.z.started, heroOn: r.z.heroOn } : null,
     players: [...r.players.values()].map((p) => ({
       id: p.id, name: p.name, color: p.color, team: p.team, kills: p.kills, deaths: p.deaths, alive: p.alive,
-      bot: p.bot ? p.bot.level : null,
+      bot: p.bot ? p.bot.level : null, role: isZ(r) ? p.zrole || 'human' : null, out: !!p.out, pts: p.pts || 0, zi: p.zi || 0,
     })),
   };
 }
@@ -204,6 +220,7 @@ function createRoom(p, msg) {
     rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null, nades: [], smokes: [], fires: [],
   };
   if (r.mode === 'bomb') { r.rules.map = BOMB.map; r.rules.rounds = 7; }
+  if (isZ(r)) { r.rules.map = MAP.order.includes(msg.map) ? msg.map : 'hospital'; r.rules.rounds = 7; }
   rooms.set(r.code, r);
   console.log(`[房] ${p.name} 建立房間 ${r.code}「${r.name}」`);
   addToRoom(p, r);
@@ -214,7 +231,7 @@ function joinRoom(p, msg) {
   const r = rooms.get(code);
   if (!r) return send(p.ws, { t: 'error', code: 'notfound', msg: `找不到房號 ${code || '（空白）'} 的房間` });
   if (p.room === r) return;
-  if (r.players.size >= ROOM_MAX) return send(p.ws, { t: 'error', code: 'full', msg: '這個房間已經滿了' });
+  if (r.players.size >= roomMax(r)) return send(p.ws, { t: 'error', code: 'full', msg: '這個房間已經滿了' });
   if (r.password && cleanText(msg.password, 12) !== r.password) {
     return send(p.ws, { t: 'error', code: msg.password ? 'badpassword' : 'password', room: code, msg: msg.password ? '密碼錯誤' : '這個房間需要密碼' });
   }
@@ -224,8 +241,8 @@ function joinRoom(p, msg) {
 
 function addToRoom(p, r) {
   p.room = r;
-  p.team = teamCount(r, 0) <= teamCount(r, 1) ? 0 : 1; // 自動補進人少的那一隊
-  p.kills = 0; p.deaths = 0;
+  p.team = isZ(r) ? 0 : teamCount(r, 0) <= teamCount(r, 1) ? 0 : 1; // 自動補進人少的那一隊（生化模式大家都是人類）
+  p.kills = 0; p.deaths = 0; p.pts = 0; p.zi = 0; p.zrole = null; p.out = false;
   p.alive = false; p.respawnAt = 0;
   r.players.set(p.id, p);
   if (r.state === 'playing') {
@@ -260,7 +277,8 @@ function leaveRoom(p) {
 // ---------- 對戰流程 ----------
 function startMatch(r) {
   if (r.state !== 'lobby') return;
-  if (isRounds(r) && (!teamCount(r, 0) || !teamCount(r, 1))) {
+  if (isZ(r) && r.players.size < 2) return send(r.players.get(r.hostId).ws, { t: 'error', msg: '生化模式至少要 2 個人，可以用「＋ 機器人」補位' });
+  if (isRounds(r) && !isZ(r) && (!teamCount(r, 0) || !teamCount(r, 1))) {
     return send(r.players.get(r.hostId).ws, { t: 'error', msg: `${r.mode === 'bomb' ? '爆破' : '回合殲滅'}模式需要兩隊都至少有 1 個人，可以用「＋ 機器人」補位` });
   }
   r.state = 'playing';
@@ -270,8 +288,8 @@ function startMatch(r) {
   r.pendingEnd = null;
   r.attackTeam = 1; r.bomb = null; r.roundLog = []; r.nades = []; r.smokes = []; r.fires = []; r.knives = []; r.decoys = [];
   r.rec = []; r.recEv = []; r.best = null; r.bestScore = 0; r.pendingBest = null;
-  for (const p of r.players.values()) { p.kills = 0; p.deaths = 0; p.alive = false; p.respawnAt = 0; p.ready = !!p.bot; }
-  console.log(`[房] ${r.code} 開戰（${{ tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式' }[r.mode]}，${mapOf(r).name}，${r.players.size} 人）`);
+  for (const p of r.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; p.zi = 0; p.alive = false; p.respawnAt = 0; p.ready = !!p.bot; }
+  console.log(`[房] ${r.code} 開戰（${{ tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式', zombie: '生化模式', hero: '生化英雄' }[r.mode]}，${mapOf(r).name}，${r.players.size} 人）`);
   // 先等大家載入地圖（最多 10 秒），再倒數 5 秒
   startRound(r, true);
 }
@@ -288,7 +306,9 @@ function startRound(r, first = false) {
   r.phase = first ? 'loading' : 'freeze';
   r.phaseUntil = Date.now() + (first ? LOAD_MAX_MS : freezeMs(r));
   const idx = [0, 0];
+  if (isZ(r)) zStartRound(r);
   for (const p of r.players.values()) {
+    if (isZ(r)) { const list = zHumanSpawns(r); spawnAt(p, list[idx[0]++ % list.length], 0); zSend(p); continue; }
     const sd = sideOf(r, p.team);
     const list = mapOf(r).teamSpawns[sd];
     spawnAt(p, list[idx[sd]++ % list.length], 0);
@@ -311,7 +331,8 @@ function goLive(r) {
   const now = Date.now();
   r.phase = 'live';
   if (r.mode === 'tdm') r.endsAt = now + r.rules.timeLimit * 60000;
-  else r.phaseUntil = now + (r.mode === 'bomb' ? BOMB.roundMs : ROUND_MS);
+  else r.phaseUntil = now + (r.mode === 'bomb' ? BOMB.roundMs : isZ(r) ? ZM.roundMs : ROUND_MS);
+  if (isZ(r)) { r.z.infectAt = now + ZM.infectMs; r.z.nextAmmo = now + 4000; r.z.nextBio = r.z.infectAt + 6000; }
   for (const p of r.players.values()) { p.kitUntil = now + KIT_MS; p.firedSince = false; }
   syncRoom(r);
 }
@@ -322,7 +343,11 @@ function endRound(r, winner, reason = 'elim') {
   r.phase = 'post';
   r.phaseUntil = Date.now() + (r.mode === 'bomb' ? BOMB.postMs : ROUND_POST_MS);
   if (winner >= 0) r.roundWins[winner] += 1;
-  if (winner >= 0 && r.roundWins[winner] >= r.rules.rounds) r.pendingEnd = winner;
+  if (isZ(r)) {
+    // 生化模式：固定打 N 回合，贏比較多回合的一方獲勝；活到最後的人類加分
+    for (const p of r.players.values()) if (p.alive && (p.zrole === 'human' || p.zrole === 'hero')) p.pts += ZM.pts.survive;
+    if (r.round >= r.rules.rounds) r.pendingEnd = r.roundWins[0] === r.roundWins[1] ? -1 : r.roundWins[0] > r.roundWins[1] ? 0 : 1;
+  } else if (winner >= 0 && r.roundWins[winner] >= r.rules.rounds) r.pendingEnd = winner;
   // 爆破模式：如果兩隊都差一回合就打到底（例如 6:6 打第 13 回合決勝）
   const alive = [0, 0];
   for (const p of r.players.values()) if (p.alive) alive[p.team]++;
@@ -474,7 +499,7 @@ function endMatch(r, winner, reason = '') {
   toRoom(r, {
     t: 'matchEnd', winner, mode: r.mode, reason,
     score: r.mode === 'tdm' ? r.score : r.roundWins,
-    players: [...r.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, bot: !!p.bot })),
+    players: [...r.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, bot: !!p.bot, pts: p.pts || 0, zi: p.zi || 0 })),
     best, roundLog: r.roundLog,
   });
   r.rec = []; r.recEv = []; r.best = null;
@@ -485,6 +510,7 @@ function endMatch(r, winner, reason = '') {
 // 有人離開或死亡後，檢查回合／對戰是否該結束
 function checkTeams(r) {
   if (r.state !== 'playing' || !isRounds(r)) return;
+  if (isZ(r)) return zCheck(r);
   const members = [teamCount(r, 0), teamCount(r, 1)];
   if (!members[0] || !members[1]) return endMatch(r, members[0] ? 0 : members[1] ? 1 : -1, 'forfeit');
   if (r.phase !== 'live') return;
@@ -542,6 +568,220 @@ function spawnAt(p, s, protect) {
   toRoom(p.room, { t: 'respawn', id: p.id, x: p.x, y: p.y, z: p.z, yaw: p.yaw, seq: p.seq, kit: p.loadout });
 }
 
+
+// ======================================================================
+// 生化模式／生化英雄
+// ======================================================================
+function zMax(p) { return ZM.zHp[p.zlvl - 1] * (p.zrole === 'mother' ? 2 : 1); }
+function zHumanSpawns(r) {
+  const m = mapOf(r);
+  return m.zSpawns?.human || [...m.teamSpawns[0], ...m.teamSpawns[1]];
+}
+// 殭屍復活點：離活著的人類越遠越好
+function zZombieSpawn(r) {
+  const m = mapOf(r);
+  const list = m.zSpawns?.zombie || [...m.teamSpawns[0], ...m.teamSpawns[1]];
+  const humans = [...r.players.values()].filter((q) => q.alive && q.team === 0);
+  let best = list[0], bd = -1;
+  for (const s of list) {
+    const d = humans.length ? Math.min(...humans.map((q) => Math.hypot(q.x - s[0], q.z - s[2]))) : Math.random() * 10;
+    const score = Math.min(d, 30) + Math.random() * 6;
+    if (score > bd) { bd = score; best = s; }
+  }
+  return best;
+}
+// 自己的生化狀態（身分、等級、經驗、血量上限、備用子彈）
+function zSend(p) {
+  const zombie = p.zrole === 'zombie' || p.zrole === 'mother';
+  const table = zombie ? ZM.zXp : ZM.hXp, lvl = zombie ? p.zlvl : p.zrole === 'hero' ? ZM.hXp.length : p.hlvl;
+  const xp = zombie ? p.zxp : p.hxp;
+  send(p.ws, { t: 'zstat', role: p.zrole, lvl, max: table.length, xp, from: table[lvl - 1], nxt: table[lvl] ?? null, hp: p.hp, maxHp: p.maxHp, res: p.reserve });
+}
+function zStartRound(r) {
+  const holds = mapOf(r).zHolds || mapOf(r).spots || [[0, 0]];
+  // 機器人人類這回合要一起守的地方
+  r.z = { started: false, infectAt: Infinity, heroOn: false, pickups: [], nextAmmo: Infinity, nextBio: Infinity, seq: 0, hold: holds[Math.floor(Math.random() * holds.length)] };
+  for (const p of r.players.values()) {
+    p.team = 0; p.zrole = 'human'; p.out = false; p.hxp = 0; p.hlvl = 1; p.zxp = 0; p.zlvl = 1; p.dmgAcc = 0; p.maxHp = 100;
+  }
+  toRoom(r, { t: 'pick', list: [] });
+}
+function addXp(p, n) {
+  if (p.zrole === 'human') {
+    p.hxp += n;
+    const l = levelOf(ZM.hXp, p.hxp);
+    if (l > p.hlvl) { p.hlvl = l; send(p.ws, { t: 'zlvl', lvl: l }); }
+  } else if (p.zrole === 'zombie' || p.zrole === 'mother') {
+    p.zxp += n;
+    const l = levelOf(ZM.zXp, p.zxp);
+    if (l > p.zlvl) {
+      p.zlvl = l;
+      p.maxHp = zMax(p);
+      p.hp = Math.min(p.maxHp, p.hp + Math.round(p.maxHp * ZM.levelHeal)); // 升級回 30% 血
+      send(p.ws, { t: 'zlvl', lvl: l });
+    }
+  } else return;
+  zSend(p);
+}
+// 變成殭屍（mother = 母體：血量兩倍）
+function makeZombie(p, mother) {
+  p.team = 1;
+  p.zrole = mother ? 'mother' : 'zombie';
+  p.zlvl = 1; p.zxp = 0;
+  p.maxHp = zMax(p); p.hp = p.maxHp;
+  p.weapon = 'melee'; p.reloadUntil = 0; p.adsSince = 0; p.heavyAt = 0; p.reserve = null;
+  if (p.bot) BOT.resetBrain(p.bot);
+}
+function infect(r, p, by, now) {
+  makeZombie(p, !by);
+  p.protectUntil = now + 600;
+  p.clawReadyAt = now + 1500; // 剛變身：1.5 秒後才能攻擊（不然會在人群裡瞬間連鎖感染）
+  toRoom(r, { t: 'infect', id: p.id, by: by ? by.id : 0, mother: !by });
+  zSend(p);
+  syncRoom(r);
+}
+// 傷害調整：人類（含英雄）依等級加傷害；打殭屍累積的傷害也換經驗
+function zDamage(p, target, dmg) {
+  if (p.team !== 0) return dmg;
+  const lvl = p.zrole === 'hero' ? ZM.hMult.length : p.hlvl || 1;
+  dmg = Math.round(dmg * ZM.hMult[lvl - 1]);
+  if (p.zrole === 'human' && target.team === 1) {
+    p.dmgAcc = (p.dmgAcc || 0) + Math.min(dmg, target.hp);
+    while (p.dmgAcc >= ZM.xp.dmgPer) { p.dmgAcc -= ZM.xp.dmgPer; addXp(p, ZM.xp.dmg); }
+  }
+  return dmg;
+}
+// 血量歸零：人類被殭屍打倒 → 感染（回傳 true，不算死亡）
+function zKilled(r, p, target, now) {
+  if (target.zrole !== 'human' || p.team !== 1) return false;
+  target.deaths += 1;
+  p.zi = (p.zi || 0) + 1;
+  p.pts += ZM.pts.infect;
+  infect(r, target, p, now);
+  addXp(p, ZM.xp.infect);
+  zCheck(r);
+  return true;
+}
+// 真的死掉：殭屍 5 秒後復活（被英雄砍死就出局）；英雄死了就死了
+function zDied(r, p, target, now) {
+  p.pts += ZM.pts.kill;
+  if (target.team === 1) {
+    if (r.mode === 'hero' && p.zrole === 'hero') { target.out = true; target.respawnAt = 0; }
+    else target.respawnAt = now + ZM.respawnMs;
+    if (p.zrole === 'human') addXp(p, ZM.xp.kill);
+    syncRoom(r);
+  }
+}
+// 擊退（子彈打殭屍、英雄長刀）
+function zKnock(p, q, speed, ms, now) {
+  const kx = q.x - p.x, kz = q.z - p.z, kl = Math.hypot(kx, kz) || 1;
+  const vx = kx / kl * speed, vz = kz / kl * speed;
+  q.knockUntil = now + 600;
+  if (q.bot) {
+    // 好幾個人一起打：擊退疊加（最多每秒 8 公尺）
+    const k = q.bot.knock && now < q.bot.knock.until ? q.bot.knock : { vx: 0, vz: 0, until: 0 };
+    let nx = k.vx + vx, nz = k.vz + vz;
+    const l = Math.hypot(nx, nz);
+    if (l > 8) { nx *= 8 / l; nz *= 8 / l; }
+    q.bot.knock = { vx: nx, vz: nz, until: Math.max(k.until, now + ms) };
+  } else send(q.ws, { t: 'knock', vx: +vx.toFixed(2), vz: +vz.toFixed(2), ms, add: 1 });
+}
+function zCheck(r) {
+  if (r.state !== 'playing') return;
+  if (r.players.size < 2) return endMatch(r, -1, 'forfeit');
+  if (r.phase !== 'live' || !r.z?.started) return;
+  let humans = 0, zombies = 0, zLeft = 0;
+  for (const p of r.players.values()) {
+    if (p.team === 0 && p.alive) humans++;
+    if (p.team === 1) { zombies++; if (!p.out) zLeft++; }
+  }
+  if (!humans) endRound(r, 1, 'elim');
+  else if (!zombies || (r.mode === 'hero' && !zLeft)) endRound(r, 0, 'elim'); // 殭屍都離開、或全部被英雄砍到出局
+}
+function startInfection(r, now) {
+  r.z.started = true;
+  const humans = [...r.players.values()].filter((p) => p.alive && p.team === 0);
+  if (!humans.length) return;
+  const m = humans[Math.floor(Math.random() * humans.length)];
+  infect(r, m, null, now);
+  console.log(`[房] ${r.code} 第 ${r.round} 回合母體殭屍：${m.name}`);
+}
+// 生化英雄：活著的人類剩下門檻人數時，全部變成英雄（拿發光長刀、600 血）
+function checkHero(r) {
+  const humans = [...r.players.values()].filter((p) => p.alive && p.zrole === 'human');
+  if (!humans.length || humans.length > heroCount(r)) return;
+  r.z.heroOn = true;
+  for (const p of humans) {
+    p.zrole = 'hero';
+    p.maxHp = ZM.heroHp; p.hp = ZM.heroHp;
+    p.weapon = 'melee'; p.reloadUntil = 0; p.adsSince = 0; p.heavyAt = 0;
+    zSend(p);
+  }
+  toRoom(r, { t: 'heroes', ids: humans.map((p) => p.id) });
+  syncRoom(r);
+}
+function respawnZombie(r, p) {
+  const mother = p.zrole === 'mother';
+  spawnAt(p, zZombieSpawn(r), 1000);
+  p.team = 1; p.zrole = mother ? 'mother' : 'zombie';
+  p.maxHp = zMax(p); p.hp = p.maxHp;
+  p.weapon = 'melee'; p.reserve = null;
+  zSend(p);
+}
+// ---- 彈藥箱（人類）／生化箱（殭屍）：隨機刷在地圖上 ----
+function pickupSpots(r) {
+  const m = mapOf(r);
+  return m.pickupSpots || [...(m.spots || []).map(([x, z]) => [x, MAP.surfaceAt(m.boxes, x, z), z]), ...m.teamSpawns[0], ...m.teamSpawns[1]];
+}
+function sendPickups(r, got) {
+  toRoom(r, { t: 'pick', list: r.z.pickups.map((k) => [k.id, k.kind, +k.x.toFixed(2), +k.y.toFixed(2), +k.z.toFixed(2)]), got });
+}
+function spawnPickup(r, kind) {
+  const z = r.z;
+  if (z.pickups.filter((k) => k.kind === kind).length >= ZM.pick.max) return;
+  const spots = pickupSpots(r).filter((s) => z.pickups.every((k) => Math.hypot(k.x - s[0], k.z - s[2]) > 5));
+  if (!spots.length) return;
+  // 盡量刷在離人遠一點的地方（不要直接刷在腳邊）
+  const ppl = [...r.players.values()].filter((q) => q.alive);
+  const far = spots.filter((s) => ppl.every((q) => Math.hypot(q.x - s[0], q.z - s[2]) > 6));
+  const pool = far.length ? far : spots;
+  const s = pool[Math.floor(Math.random() * pool.length)];
+  z.pickups.push({ id: ++z.seq, kind, x: s[0], y: s[1], z: s[2] });
+  sendPickups(r);
+}
+function pickupTick(r, now) {
+  const z = r.z;
+  for (let i = z.pickups.length - 1; i >= 0; i--) {
+    const k = z.pickups[i];
+    for (const p of r.players.values()) {
+      if (!p.alive || Math.hypot(p.x - k.x, p.z - k.z) > ZM.pick.r || Math.abs(p.y - k.y) > 1.6) continue;
+      if (k.kind === 'ammo' && p.zrole === 'human') {
+        p.reserve = fullReserve(p);
+        sendReserve(p);
+        addXp(p, ZM.xp.ammo);
+      } else if (k.kind === 'bio' && (p.zrole === 'zombie' || p.zrole === 'mother')) {
+        p.hp = Math.min(p.maxHp, p.hp + Math.round(p.maxHp * ZM.pick.heal));
+        addXp(p, ZM.xp.bio);
+        zSend(p);
+      } else continue;
+      z.pickups.splice(i, 1);
+      sendPickups(r, { id: k.id, by: p.id, kind: k.kind });
+      break;
+    }
+  }
+}
+function zTick(r, now) {
+  const z = r.z;
+  if (!z.started && now >= z.infectAt) { startInfection(r, now); syncRoom(r); }
+  for (const p of r.players.values()) {
+    if (!p.alive && p.team === 1 && p.respawnAt && now >= p.respawnAt && !p.out) { p.respawnAt = 0; respawnZombie(r, p); syncRoom(r); }
+  }
+  if (now >= z.nextAmmo) { z.nextAmmo = now + ZM.pick.every; spawnPickup(r, 'ammo'); }
+  if (z.started && now >= z.nextBio) { z.nextBio = now + ZM.pick.every; spawnPickup(r, 'bio'); }
+  pickupTick(r, now);
+  if (r.mode === 'hero' && z.started && !z.heroOn) checkHero(r);
+}
+
 // ---------- 命中判定 ----------
 // 延遲補償：回到射手畫面上看到的那個時間點的位置
 function positionAt(p, time) {
@@ -554,11 +794,15 @@ function positionAt(p, time) {
 }
 
 // ---------- 武器 ----------
-function weaponOf(p) { return WEAPONS[p.loadout[p.weapon]]; }
+// 手上拿的武器：殭屍只有爪子、英雄只有長刀，不管套裝
+function heldId(p) { return p.zrole === 'zombie' || p.zrole === 'mother' ? 'claw' : p.zrole === 'hero' ? 'herosword' : p.loadout[p.weapon]; }
+function weaponOf(p) { return WEAPONS[heldId(p)]; }
 function resetKit(p) {
   p.weapon = 'primary';
   p.ammoBy = {};
   for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[p.loadout[slot]]; if (w.mag) p.ammoBy[slot] = w.mag; }
+  // 生化模式：人類的子彈有限（身上另外只有 2 個備用彈匣，靠彈藥箱補）
+  p.reserve = p.room && isZ(p.room) ? fullReserve(p) : null;
   p.nadesLeft = { throw1: 1, throw2: 1 }; // 投擲物：每回合各一顆
   p.tknifeOut = 0; // 飛刀丟出去了沒（還沒撿回來就不能用近戰）
   p.burstN = 0;
@@ -572,19 +816,31 @@ function resetKit(p) {
 function finishReload(p, now) {
   if (!p.reloadUntil) return;
   const w = weaponOf(p);
+  const take = p.reloadTake ?? w.mag;
   if (w.shells) {
-    const n = WPN.shellsLoaded(w, now - p.reloadStart + RELOAD_SLACK);
+    const n = Math.min(take, WPN.shellsLoaded(w, now - p.reloadStart + RELOAD_SLACK));
     p.ammoBy[p.weapon] = Math.min(w.mag, p.reloadBase + n);
-    if (now >= p.reloadUntil) p.reloadUntil = 0;
+    if (p.reserve) p.reserve[p.weapon] = p.reserveBase - (p.ammoBy[p.weapon] - p.reloadBase);
+    if (now >= p.reloadUntil) { p.reloadUntil = 0; sendReserve(p); }
     return;
   }
-  if (now >= p.reloadUntil) { p.ammoBy[p.weapon] = w.mag; p.reloadUntil = 0; }
+  if (now >= p.reloadUntil) {
+    p.ammoBy[p.weapon] = Math.min(w.mag, p.reloadBase + take);
+    if (p.reserve) { p.reserve[p.weapon] = p.reserveBase - take; sendReserve(p); }
+    p.reloadUntil = 0;
+  }
 }
+function fullReserve(p) { return { primary: WEAPONS[p.loadout.primary].mag * ZM.reserveMags, secondary: WEAPONS[p.loadout.secondary].mag * ZM.reserveMags }; }
+function sendReserve(p) { if (p.reserve) send(p.ws, { t: 'res', res: p.reserve }); }
 function startReload(p) {
   const w = weaponOf(p);
   if (!p.alive || p.reloadUntil || !w.mag || p.ammoBy[p.weapon] >= w.mag) return;
   // 子彈打光才換彈比較久（要多拉一次槍機）
   const ammo = p.ammoBy[p.weapon];
+  // 生化模式：備用子彈用完就不能換彈
+  if (p.reserve && !((p.reserve[p.weapon] ?? 0) > 0)) return;
+  p.reloadTake = p.reserve ? Math.min(w.mag - ammo, p.reserve[p.weapon]) : w.mag - ammo;
+  p.reserveBase = p.reserve ? p.reserve[p.weapon] : 0;
   const ms = WPN.reloadTime(w, ammo);
   const now = Date.now();
   p.reloadStart = now;
@@ -760,17 +1016,20 @@ function readyToFire(p, now) {
   let cd = p.lastHeavy && w.heavy ? w.heavy.fireMs : w.fireMs; // 重擊之後要等比較久
   if (w.burst && p.burstN > 0 && p.burstN < w.burst.n) cd = w.burst.gapMs; // 三連發：同一串裡的下一發
   if (now < p.switchUntil || now - p.lastShot < cd * FIRE_SLACK) return null;
+  if (w.zombie && now < (p.clawReadyAt || 0)) return null;
   return w;
 }
 function applyDamage(p, target, dmg, headshot, weapon, now) {
   const r = p.room;
   p.protectUntil = 0; // 攻擊就取消重生保護
   if (now < target.protectUntil) return;
+  if (isZ(r)) dmg = zDamage(p, target, dmg);
   target.hp = Math.max(0, target.hp - dmg);
   send(p.ws, { t: 'hit', id: target.id, head: headshot, kill: target.hp <= 0 });
   send(target.ws, { t: 'damaged', hp: target.hp, from: p.id, fx: p.x, fz: p.z });
   if (target.bot) BOT.damaged(target, p, now);
   if (target.hp > 0) return;
+  if (isZ(r) && zKilled(r, p, target, now)) return; // 人類被殭屍打倒：變成殭屍，不算死
   target.alive = false;
   target.deaths += 1;
   p.kills += 1;
@@ -778,6 +1037,7 @@ function applyDamage(p, target, dmg, headshot, weapon, now) {
     target.respawnAt = now + RESPAWN_MS;
     r.score[p.team] += 1;
   }
+  if (isZ(r)) zDied(r, p, target, now);
   toRoom(r, { t: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z, khp: p.hp });
   recEvent(r, { k: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kx: p.x, kz: p.z });
   // 精彩程度比目前最佳的高：過一下（記到倒地）再存起來
@@ -810,7 +1070,7 @@ function handleShoot(p, msg) {
   if (!w || w.melee) return;
   cancelAct(p);
   finishReload(p, now);
-  if (p.reloadUntil && w.shells && p.ammoBy[p.weapon] > 0) p.reloadUntil = 0; // 霰彈槍裝到一半可以直接開槍
+  if (p.reloadUntil && w.shells && p.ammoBy[p.weapon] > 0) { p.reloadUntil = 0; sendReserve(p); } // 霰彈槍裝到一半可以直接開槍
   if (p.reloadUntil || p.ammoBy[p.weapon] <= 0) return;
   let d = aimDir(msg);
   if (!d) return;
@@ -863,7 +1123,11 @@ function handleShoot(p, msg) {
   recEvent(r, { k: 'shot', id: p.id, e: ends[0], es: ends.length > 1 ? ends : undefined, w: w.id });
   p.lastHip = !!(w.hipCone && (msg.h || !isScoped));
   for (const q of r.players.values()) if (q.bot && q.team !== p.team) BOT.hear(q, p, now, w.quiet ? QUIET_HEAR : Infinity);
-  for (const [q, h] of dmgBy) if (q.alive) applyDamage(p, q, Math.round(h.dmg), h.head, w.id, now);
+  for (const [q, h] of dmgBy) {
+    if (!q.alive) continue;
+    applyDamage(p, q, Math.round(h.dmg), h.head, w.id, now);
+    if (isZ(r) && q.alive && q.team === 1) zKnock(p, q, Math.min(6, h.dmg * 0.12), 200, now); // 子彈把殭屍往後推（好幾個人一起打可以壓住殭屍）
+  }
 }
 
 // 重擊開始舉刀：要舉滿 windMs 才能砍下去
@@ -908,6 +1172,22 @@ function handleMelee(p, msg) {
   const v = heavy ? 3 : Math.max(0, Math.min(2, num(msg.v, 0) | 0));
   toRoom(r, { t: 'swing', id: p.id, v }, p.id);
   recEvent(r, { k: 'swing', id: p.id, v });
+  // 英雄長刀：扇形範圍內的敵人全部砍到，並往後擊退
+  if (w0.cleave) {
+    const hd = Math.hypot(d[0], d[2]) || 1;
+    for (const q of [...r.players.values()]) {
+      if (q.id === p.id || !q.alive || q.team === p.team) continue;
+      const pos = positionAt(q, now - rewind);
+      const dx = pos.x - p.x, dz = pos.z - p.z, dist = Math.hypot(dx, dz);
+      if (dist > w.range + 0.5 || Math.abs(pos.y - p.y) > 2.2) continue;
+      const cos = (dx * d[0] + dz * d[2]) / ((dist || 1) * hd);
+      if (dist > 0.8 && cos < Math.cos(w0.cleave)) continue;
+      if (!los(r, o, [pos.x, pos.y + 1.1, pos.z])) continue;
+      applyDamage(p, q, w.body, false, w0.id, now);
+      if (q.alive) zKnock(p, q, w.knock || 6, 280, now);
+    }
+    return;
+  }
   if (!target) return;
   // 對方面向的方向跟「對方 → 我」相反，就是從背後砍
   const fx = -Math.sin(target.yaw), fz = -Math.cos(target.yaw);
@@ -1033,7 +1313,20 @@ function setRules(p, msg) {
   const r = p.room;
   if (!isHost(p) || r.state !== 'lobby') return;
   const was = r.mode;
-  if (MODES.includes(msg.mode)) r.mode = msg.mode;
+  if (MODES.includes(msg.mode)) {
+    // 生化模式最多 12 人；人太多就不能換回其他模式
+    if (!Z_MODES.includes(msg.mode) && r.players.size > ROOM_MAX) return send(p.ws, { t: 'error', msg: `其他模式最多 ${ROOM_MAX} 人，請先移除一些機器人` });
+    r.mode = msg.mode;
+  }
+  if (isZ(r) && !Z_MODES.includes(was)) {
+    for (const q of r.players.values()) q.team = 0;
+    if (!msg.map) r.rules.map = 'hospital';
+    if (!msg.rounds) r.rules.rounds = 7;
+  } else if (!isZ(r) && Z_MODES.includes(was)) {
+    // 從生化模式換回來：重新平均分隊
+    let i = 0;
+    for (const q of r.players.values()) q.team = i++ % 2;
+  }
   for (const k of Object.keys(RULE_OPTIONS)) {
     if (RULE_OPTIONS[k].includes(msg[k])) r.rules[k] = msg[k];
   }
@@ -1047,7 +1340,7 @@ function setRules(p, msg) {
 }
 function switchTeam(p, msg) {
   const r = p.room;
-  if (!r || r.state === 'playing') return;
+  if (!r || r.state === 'playing' || isZ(r)) return;
   const team = msg.team === 1 ? 1 : 0;
   if (team === p.team) return;
   if (teamCount(r, team) >= TEAM_MAX) return send(p.ws, { t: 'error', msg: `${MAP.teams[team].name}已經滿了` });
@@ -1083,7 +1376,8 @@ function makePlayer(ws) {
 // ---------- 機器人 ----------
 const NO_WS = { readyState: 3, send() {} }; // 機器人沒有真的連線
 function addBot(r, team, level) {
-  if (!BOT.LEVELS[level] || teamCount(r, team) >= TEAM_MAX || r.players.size >= ROOM_MAX) return false;
+  if (isZ(r)) team = 0;
+  if (!BOT.LEVELS[level] || (!isZ(r) && teamCount(r, team) >= TEAM_MAX) || r.players.size >= roomMax(r)) return false;
   const used = new Set([...r.players.values()].map((o) => o.name));
   const free = BOT.NAMES.filter((n) => !used.has(n));
   const p = makePlayer(NO_WS);
@@ -1101,15 +1395,16 @@ function handleAddBot(p, msg) {
   const r = p.room;
   if (!isHost(p) || r.state !== 'lobby') return;
   const team = msg.team === 1 ? 1 : 0;
-  if (!addBot(r, team, msg.level)) return send(p.ws, { t: 'error', msg: `${MAP.teams[team].name}已經滿了` });
+  if (!addBot(r, team, msg.level)) return send(p.ws, { t: 'error', msg: isZ(r) ? '房間已經滿了' : `${MAP.teams[team].name}已經滿了` });
   syncRoom(r);
 }
 function handleFillBots(p, msg) {
   const r = p.room;
   if (!isHost(p) || r.state !== 'lobby' || !BOT.LEVELS[msg.level]) return;
   let added = 0;
-  for (const team of [0, 1]) while (addBot(r, team, msg.level)) added++;
-  if (!added) return send(p.ws, { t: 'error', msg: '兩隊都已經滿了' });
+  if (isZ(r)) while (addBot(r, 0, msg.level)) added++;
+  else for (const team of [0, 1]) while (addBot(r, team, msg.level)) added++;
+  if (!added) return send(p.ws, { t: 'error', msg: isZ(r) ? '房間已經滿了' : '兩隊都已經滿了' });
   syncRoom(r);
 }
 
@@ -1206,7 +1501,11 @@ function tick() {
         continue;
       }
     } else if (now >= r.phaseUntil) {
-      if (r.phase === 'live' && r.mode === 'bomb') {
+      if (r.phase === 'live' && isZ(r)) {
+        // 時間到：還有人類活著就是人類贏
+        const humans = [...r.players.values()].filter((p) => p.alive && p.team === 0).length;
+        endRound(r, humans ? 0 : 1, 'time');
+      } else if (r.phase === 'live' && r.mode === 'bomb') {
         // 炸彈埋了 → 爆炸；沒埋 → 時間到防守方贏
         if (r.bomb && r.bomb.state === 'planted') explodeBomb(r, now);
         else endRound(r, 1 - r.attackTeam, 'time');
@@ -1223,6 +1522,7 @@ function tick() {
     if (r.state !== 'playing') continue;
     if (r.phase === 'live' || r.mode === 'tdm') knifeTick(r, now);
     if (r.state !== 'playing') continue;
+    if (isZ(r) && r.phase === 'live') { zTick(r, now); if (r.state !== 'playing') continue; }
     if (r.mode === 'bomb') {
       bombTick(r, now);
       if (r.state === 'playing' && r.phase === 'live') nadeTick(r, now);
@@ -1238,7 +1538,7 @@ function tick() {
 
     const list = [];
     for (const p of r.players.values()) {
-      list.push([p.id, +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(3), +p.pitch.toFixed(3), p.alive ? 1 : 0, WPN.LIST.indexOf(p.loadout[p.weapon]), p.adsSince ? 1 : 0, p.hp, p.ammoBy[p.weapon] ?? -1]);
+      list.push([p.id, +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(3), +p.pitch.toFixed(3), p.alive ? 1 : 0, WPN.LIST.indexOf(heldId(p)), p.adsSince ? 1 : 0, p.hp, p.ammoBy[p.weapon] ?? -1]);
     }
     toRoom(r, { t: 'snap', p: list });
     // 回放記錄：只留位置、角度、活著沒、武器、開鏡

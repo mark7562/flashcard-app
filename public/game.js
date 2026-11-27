@@ -35,6 +35,12 @@ const me = {
 };
 // 目前模式能拿的欄位（爆破模式多了兩個投擲物）
 const isRounds = () => !!room && room.mode !== 'tdm';
+// 生化模式：me.role = human / zombie / mother / hero；殭屍只能用爪子、英雄只能用長刀
+const isZ = () => !!room && (room.mode === 'zombie' || room.mode === 'hero');
+const zombieRole = (r) => r === 'zombie' || r === 'mother';
+function heldId() { return zombieRole(me.role) ? 'claw' : me.role === 'hero' ? 'herosword' : me.kit[me.weapon]; }
+const ROLE_NAMES = { human: '人類', zombie: '殭屍', mother: '母體殭屍', hero: '英雄' };
+function sleeveColor() { return zombieRole(me.role) ? 0x3f6a2e : me.role === 'hero' ? 0xd9a520 : MAP.teams[me.team].color; }
 function slotList() { return WPN.slotsFor(room?.mode); }
 function slotUsable(slot) {
   if (slot === 'melee' && me.tknifeOut) return false; // 飛刀丟出去了，還沒撿回來
@@ -81,6 +87,7 @@ function makeRemote(id) {
   const mate = info.team === me.team;
   // 身體是隊伍色、頭是玩家自選色；隊友的名字可以隔牆看到，敵人的不行
   const fig = makeFigure(info.color, info.name, { body: team.color, labelColor: team.color, xray: mate });
+  if (info.role && info.role !== 'human') fig.setRole(info.role); // 生化模式：殭屍綠皮膚、英雄金光
   fig.group.visible = false;
   scene.add(fig.group);
   fig.group.rotation.order = 'YXZ'; // 倒地動畫要先轉向再往後倒
@@ -158,7 +165,7 @@ function physics(dt) {
   me.vz += (wz - me.vz) * k;
   if (me.knock && performance.now() < me.knock.until) { me.vx = me.knock.vx; me.vz = me.knock.vz; } // 被球棒／大錘打退
 
-  if (jumpQueued && me.onGround) { me.vy = JUMP; me.onGround = false; }
+  if (jumpQueued && me.onGround) { me.vy = JUMP * (zombieRole(me.role) ? 1.15 : 1); me.onGround = false; } // 殭屍跳得比較高
   jumpQueued = false;
   me.vy -= GRAVITY * dt;
 
@@ -205,7 +212,7 @@ function traceEnd(origin, dir) {
 const camDir = new THREE.Vector3();
 const muzzle = new THREE.Vector3();
 // ---------- 武器 ----------
-function curW() { return WEAPONS[me.kit[me.weapon]]; }
+function curW() { return WEAPONS[heldId()]; }
 // 套用一整套裝備（復活、換套裝時）：子彈補滿、拿主武器
 function applyKit(kit) {
   me.kit = WPN.clean(kit);
@@ -224,7 +231,7 @@ function applyKit(kit) {
   me.heavyAt = 0;
   me.adsToggled = false;
   me.adsK = 0;
-  showWeapon(me.id, me.kit[me.weapon]);
+  showWeapon(me.id, heldId());
   updateAmmo();
 }
 // 第一人稱手上顯示誰的什麼武器（觀戰時顯示被觀戰的人的）
@@ -236,6 +243,7 @@ function showWeapon(owner, id) {
   views.setEmpty(false);
 }
 function switchWeapon(slot) {
+  if (zombieRole(me.role) || me.role === 'hero') return; // 殭屍、英雄只有一把
   if (!me.alive || !slotList().includes(slot) || slot === me.weapon || !slotUsable(slot)) return;
   if (!me.weapon.startsWith('throw')) me.prevWeapon = me.weapon;
   me.nadeHold = null;
@@ -501,6 +509,10 @@ function startReload() {
   if (w.bolt && now - me.lastShot < w.fireMs * 0.8) return; // 還在拉栓
   // 子彈打光才換彈比較久（多拉一次槍機／放套筒）；霰彈槍一顆一顆裝
   const ammo = me.ammoBy[me.weapon];
+  // 生化模式：備用子彈用完就不能換彈
+  if (me.reserve && !((me.reserve[me.weapon] ?? 0) > 0)) { toast('沒有備用子彈了！去撿彈藥箱 📦'); return; }
+  me.reloadTake = me.reserve ? Math.min(w.mag - ammo, me.reserve[me.weapon]) : w.mag - ammo;
+  me.reserveBase = me.reserve ? me.reserve[me.weapon] : 0;
   const empty = ammo <= 0;
   const ms = WPN.reloadTime(w, ammo);
   me.reloadEnd = now + ms;
@@ -514,11 +526,23 @@ function startReload() {
 function updateReload(now) {
   if (!me.reloadEnd) return;
   const w = curW();
+  const take = me.reloadTake ?? w.mag;
   if (w.shells) {
-    const n = Math.min(w.mag, me.reloadBase + WPN.shellsLoaded(w, now - me.reloadStart));
-    if (n !== me.ammoBy[me.weapon]) { me.ammoBy[me.weapon] = n; updateAmmo(); }
+    const n = Math.min(w.mag, me.reloadBase + Math.min(take, WPN.shellsLoaded(w, now - me.reloadStart)));
+    if (n !== me.ammoBy[me.weapon]) {
+      me.ammoBy[me.weapon] = n;
+      if (me.reserve) me.reserve[me.weapon] = me.reserveBase - (n - me.reloadBase);
+      updateAmmo();
+    }
   }
-  if (now >= me.reloadEnd) { me.reloadEnd = 0; me.ammoBy[me.weapon] = w.mag; updateAmmo(); }
+  if (now >= me.reloadEnd) {
+    me.reloadEnd = 0;
+    if (!w.shells) {
+      me.ammoBy[me.weapon] = Math.min(w.mag, me.reloadBase + take);
+      if (me.reserve) me.reserve[me.weapon] = me.reserveBase - take;
+    }
+    updateAmmo();
+  }
 }
 
 // ---------- 瞄準 ----------
@@ -650,13 +674,15 @@ function updateAmmo() {
   } else if (w.melee) {
     $('ammonow').textContent = '';
     $('ammomax').textContent = '';
-    $('reloadtext').textContent = '';
+    $('reloadtext').textContent = w.zombie ? '抓到人類兩下就會感染' : w.hero ? '被你砍倒的殭屍不能復活' : '';
   } else {
     const n = me.ammoBy[me.weapon] ?? 0;
     $('ammonow').textContent = n;
-    $('ammomax').textContent = ` / ${w.mag}`;
+    // 生化模式：右邊顯示身上剩多少備用子彈
+    const res = me.reserve ? me.reserve[me.weapon] ?? 0 : null;
+    $('ammomax').textContent = res === null ? ` / ${w.mag}` : ` / ${res}`;
     const low = n <= Math.ceil(w.mag / 6);
-    $('reloadtext').textContent = me.reloadEnd ? '換彈中…' : (low ? (IS_TOUCH ? '點 R 換彈' : '按 R 換彈') : '');
+    $('reloadtext').textContent = me.reloadEnd ? '換彈中…' : res === 0 && n === 0 ? '沒子彈了！找彈藥箱 📦' : res === 0 && low ? '備用子彈用完了' : (low ? (IS_TOUCH ? '點 R 換彈' : '按 R 換彈') : '');
   }
   // 電腦版：右下角的武器欄
   const box = $('wslots');
@@ -670,11 +696,25 @@ function updateAmmo() {
   });
   updateSwapButton();
 }
-function updateHp() { showHp(me.hp); }
-function showHp(hp) {
+function updateHp() { showHp(me.hp, me.maxHp || 100); }
+function showHp(hp, max = 100) {
   $('hptext').textContent = hp;
-  $('hpfill').style.width = hp + '%';
-  $('hpfill').classList.toggle('low', hp <= 30);
+  $('hpfill').style.width = Math.max(0, Math.min(100, hp / max * 100)) + '%';
+  $('hpfill').classList.toggle('low', hp <= max * 0.3);
+  $('hpfill').classList.toggle('zombie', zombieRole(me.role));
+  $('hpfill').classList.toggle('hero', me.role === 'hero');
+}
+// 生化模式：身分、等級、經驗條
+function updateZbar() {
+  const show = isZ() && playing && !!me.role;
+  $('zbar').classList.toggle('hidden', !show);
+  if (!show) return;
+  const z = me.zst || {};
+  $('zrole').textContent = (zombieRole(me.role) ? '🧟 ' : me.role === 'hero' ? '⚔ ' : '🙂 ') + ROLE_NAMES[me.role];
+  $('zrole').className = 'zrole ' + me.role;
+  $('zlvl').textContent = `Lv${z.lvl || 1}${z.lvl >= z.max ? ' MAX' : ''}`;
+  const k = z.nxt ? (z.xp - z.from) / (z.nxt - z.from) : 1;
+  $('zxpfill').style.width = Math.max(0, Math.min(100, k * 100)) + '%';
 }
 const specShown = { hp: null, ammo: null };
 let xhGap = 5;
@@ -719,6 +759,60 @@ function feed(killer, victim, head, weapon) {
   while ($('killfeed').children.length > 5) $('killfeed').lastChild.remove();
   setTimeout(() => div.remove(), 6000);
 }
+// 生化模式：擊殺訊息裡的「感染」
+function infectFeed(by, victim) {
+  const div = document.createElement('div');
+  if (by === me.id || victim === me.id) div.className = 'me';
+  const a = document.createElement('span'); a.textContent = nameOf(by); a.style.color = '#7ddc5a';
+  const b = document.createElement('span'); b.textContent = nameOf(victim); b.style.color = '#ffffff';
+  const mid = document.createElement('span'); mid.className = 'kfw'; mid.textContent = '🧟感染';
+  div.append(a, mid, b);
+  $('killfeed').prepend(div);
+  while ($('killfeed').children.length > 5) $('killfeed').lastChild.remove();
+  setTimeout(() => div.remove(), 6000);
+}
+function flashRed() {
+  const el = $('damage');
+  el.classList.add('show', 'infect');
+  setTimeout(() => el.classList.remove('show', 'infect'), 700);
+}
+// ---- 彈藥箱（黃黑綠色的箱子＋黃光柱）／生化箱（發綠光的箱子＋綠光柱） ----
+const pickups = new Map(); // id -> { group, kind }
+const pickGeo = { box: new THREE.BoxGeometry(0.7, 0.5, 0.5), band: new THREE.BoxGeometry(0.72, 0.1, 0.52), beam: new THREE.CylinderGeometry(0.08, 0.25, 6, 8, 1, true), bio: new THREE.BoxGeometry(0.55, 0.55, 0.55) };
+const pickMat = {
+  ammo: new THREE.MeshStandardMaterial({ color: 0x4f5a3a, roughness: 0.7 }),
+  band: new THREE.MeshStandardMaterial({ color: 0xffcf3a, emissive: 0x806000, roughness: 0.5 }),
+  bio: new THREE.MeshStandardMaterial({ color: 0x3dff6a, emissive: 0x18a038, roughness: 0.4, transparent: true, opacity: 0.9 }),
+  beamA: new THREE.MeshBasicMaterial({ color: 0xffd040, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+  beamB: new THREE.MeshBasicMaterial({ color: 0x40ff70, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+};
+function setPickups(list) {
+  const ids = new Set(list.map((k) => k[0]));
+  for (const [id, k] of pickups) if (!ids.has(id)) { scene.remove(k.group); pickups.delete(id); }
+  for (const [id, kind, x, y, z] of list) {
+    if (pickups.has(id)) continue;
+    const g = new THREE.Group();
+    const item = new THREE.Group();
+    if (kind === 'ammo') { item.add(new THREE.Mesh(pickGeo.box, pickMat.ammo), new THREE.Mesh(pickGeo.band, pickMat.band)); }
+    else item.add(new THREE.Mesh(pickGeo.bio, pickMat.bio));
+    item.position.y = 0.45;
+    const beam = new THREE.Mesh(pickGeo.beam, kind === 'ammo' ? pickMat.beamA : pickMat.beamB);
+    beam.position.y = 3;
+    g.add(item, beam);
+    g.position.set(x, y, z);
+    scene.add(g);
+    pickups.set(id, { group: g, item, kind });
+  }
+}
+function updatePickups(now) {
+  for (const k of pickups.values()) {
+    k.item.rotation.y = now * 0.0015;
+    k.item.position.y = 0.45 + Math.sin(now * 0.003) * 0.08;
+    // 只讓用得到的人看得清楚（人類看彈藥箱、殭屍看生化箱），另一種淡一點
+    const mine = (k.kind === 'ammo' && me.role === 'human') || (k.kind === 'bio' && zombieRole(me.role));
+    k.group.children[1].visible = mine;
+  }
+}
 function teamTable(team, players) {
   const wrap = document.createElement('div');
   wrap.className = `sb-team t${team}`;
@@ -745,8 +839,35 @@ function teamTable(team, players) {
   wrap.append(h, table);
   return wrap;
 }
+// 生化模式的排行榜：積分、擊殺、感染
+function zTable(players) {
+  const wrap = document.createElement('div');
+  wrap.className = 'sb-team zt';
+  const h = document.createElement('h4');
+  h.textContent = `排行榜（${players.length}）`;
+  const table = document.createElement('table');
+  const head = document.createElement('tr');
+  for (const t of ['玩家', '積分', '擊殺', '感染']) { const th = document.createElement('th'); th.textContent = t; head.append(th); }
+  table.append(head);
+  players.sort((a, b) => (b.pts || 0) - (a.pts || 0) || b.kills - a.kills);
+  for (const p of players) {
+    const tr = document.createElement('tr');
+    if (p.id === me.id) tr.className = 'me';
+    const td1 = document.createElement('td');
+    const role = p.id === me.id ? me.role : p.role;
+    if (playing && !(p.id === me.id ? me.alive : remotes.get(p.id)?.alive ?? p.alive)) td1.className = 'dead';
+    const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = colorOf(p.id);
+    td1.append(dot, document.createTextNode((playing ? (zombieRole(role) ? '🧟' : role === 'hero' ? '⚔' : '') : '') + p.name + (p.id === me.id ? '（你）' : '')));
+    tr.append(td1);
+    for (const v of [p.pts || 0, p.kills, p.zi || 0]) { const td = document.createElement('td'); td.textContent = v; tr.append(td); }
+    table.append(tr);
+  }
+  wrap.append(h, table);
+  return wrap;
+}
 function renderScores() {
   const all = [...roster.entries()].map(([id, p]) => ({ ...p, id }));
+  if (isZ()) { $('scores').replaceChildren(zTable(all)); return; }
   $('scores').replaceChildren(teamTable(0, all.filter((p) => p.team === 0)), teamTable(1, all.filter((p) => p.team === 1)));
 }
 function setScoreboard(show) { $('scoreboard').classList.toggle('hidden', !show); if (show) renderScores(); }
@@ -775,6 +896,7 @@ pollVersion();
 // ---------- 網路 ----------
 let room = null; // 目前所在房間（伺服器傳來的狀態）
 let helloed = false, kicked = false;
+let zInfectAt = 0; // 生化模式：母體殭屍出現的時間
 let roomDeadline = 0, freezeEnd = 0, resultsEnd = 0, spectateId = 0, specActive = 0, specAdsK = 0;
 function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
 // 不能動、不能開火：等待載入、開場倒數、回合準備
@@ -830,11 +952,12 @@ function onRoom(r) {
     ids.add(p.id);
     const old = roster.get(p.id);
     roster.set(p.id, { ...p, name: p.bot ? `🤖${p.name}` : p.name });
-    if (old && old.team !== p.team) removeRemote(p.id);
+    if (old && (old.team !== p.team || old.role !== p.role)) removeRemote(p.id); // 換隊、被感染、變英雄：重做模型
   }
   for (const id of [...roster.keys()]) if (!ids.has(id)) { roster.delete(id); removeRemote(id); }
   me.team = r.players.find((p) => p.id === me.id)?.team ?? 0;
-  views.setTeamColor(MAP.teams[me.team].color); // 袖子是隊伍色
+  if (r.z) zInfectAt = r.z.started ? 0 : performance.now() + r.z.infectIn;
+  views.setTeamColor(sleeveColor()); // 袖子是隊伍色（殭屍綠、英雄金）
   roomDeadline = performance.now() + r.timeLeft;
   if (r.state === 'results') resultsEnd = roomDeadline;
   if (r.state === 'playing') syncBomb();
@@ -851,6 +974,7 @@ function onRoom(r) {
     if (currentScreen() !== 'scrRoom') go('scrRoom');
   }
   if (!$('scoreboard').classList.contains('hidden')) renderScores();
+  if (playing) updateZbar();
 }
 
 function enterMatch() {
@@ -875,7 +999,7 @@ function enterMatch() {
   // 地圖畫好之後告訴伺服器「我載入完成了」
   requestAnimationFrame(() => requestAnimationFrame(() => send({ t: 'ready' })));
   checkOrientation();
-  updateHp(); updateAmmo();
+  updateHp(); updateAmmo(); updateZbar();
   toast(rulesText(room));
   if (!me.alive) {
     $('death').classList.add('hidden');
@@ -897,6 +1021,9 @@ function exitMatch() {
   if (bombMark) { scene.remove(bombMark); bombMark = null; }
   actors.clear();
   me.acting = null;
+  setPickups([]);
+  me.role = null; me.reserve = null; me.maxHp = 100; zInfectAt = 0;
+  $('zbar').classList.add('hidden');
   playing = false;
   me.alive = false;
   firing = false;
@@ -944,22 +1071,25 @@ function showResults(m, later = false) {
   if (document.pointerLockElement) document.exitPointerLock();
   const w = $('resWinner');
   w.className = 'res-winner ' + (m.winner < 0 ? 'draw' : `t${m.winner}`);
-  w.textContent = m.winner < 0 ? '平手！' : `${MAP.teams[m.winner].name}獲勝！`;
+  const zm = m.mode === 'zombie' || m.mode === 'hero';
+  w.textContent = m.winner < 0 ? '平手！' : zm ? (m.winner === 0 ? '🙂 人類獲勝！' : '🧟 殭屍獲勝！') : `${MAP.teams[m.winner].name}獲勝！`;
   const sc = $('resScore');
   sc.replaceChildren();
   const s0 = document.createElement('span'); s0.className = 's0'; s0.textContent = m.score[0];
   const s1 = document.createElement('span'); s1.className = 's1'; s1.textContent = m.score[1];
-  sc.append(s0, document.createTextNode(m.mode === 'tdm' ? '  擊殺  ' : '  回合  '), s1);
+  sc.append(s0, document.createTextNode(m.mode === 'tdm' ? '  擊殺  ' : zm ? '  人類 回合 殭屍  ' : '  回合  '), s1);
   for (const p of m.players) if (p.bot && !p.name.startsWith('🤖')) p.name = `🤖${p.name}`;
-  const mvp = [...m.players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths)[0];
-  $('resMvp').textContent = m.reason === 'forfeit' ? '對手隊伍的玩家都離開了'
+  const mvp = zm ? [...m.players].sort((a, b) => b.pts - a.pts)[0] : [...m.players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths)[0];
+  $('resMvp').textContent = m.reason === 'forfeit' ? (zm ? '人數不夠，對戰結束' : '對手隊伍的玩家都離開了')
+    : zm && mvp ? `⭐ MVP：${mvp.name}（${mvp.pts} 分 · 擊殺 ${mvp.kills} · 感染 ${mvp.zi}）`
     : mvp && mvp.kills > 0 ? `⭐ MVP：${mvp.name}（${mvp.kills} 殺 / ${mvp.deaths} 死）` : '';
   for (const p of m.players) {
     const r = roster.get(p.id);
-    if (r) { r.kills = p.kills; r.deaths = p.deaths; }
+    if (r) { r.kills = p.kills; r.deaths = p.deaths; r.pts = p.pts; r.zi = p.zi; }
   }
   const all = m.players.map((p) => ({ ...p, color: roster.get(p.id)?.color ?? 0xffffff }));
-  $('resTables').replaceChildren(teamTable(0, all.filter((p) => p.team === 0)), teamTable(1, all.filter((p) => p.team === 1)));
+  if (zm) $('resTables').replaceChildren(zTable(all));
+  else $('resTables').replaceChildren(teamTable(0, all.filter((p) => p.team === 0)), teamTable(1, all.filter((p) => p.team === 1)));
   $('touch').classList.add('hidden'); // 結算時收起觸控按鈕，免得蓋住表格
   $('scoreboard').classList.add('hidden');
   resultWinner = m.winner;
@@ -1081,6 +1211,7 @@ function updateReplay(dt, now) {
   if ($('scope').className !== cls) $('scope').className = cls;
   views.update(now, dt * slow, { visible: !!killerPose && !scopeOn, bob: 0, vy: 0, recoil: 0, ads: ez });
 }
+let lastZCount = 0;
 function updateMatchbar(now) {
   if (!room || room.state !== 'playing') return;
   const left = Math.max(0, roomDeadline - now);
@@ -1098,6 +1229,15 @@ function updateMatchbar(now) {
     $('mbSub').textContent = '等待載入';
   } else if (room.mode === 'tdm') {
     $('mbSub').textContent = room.phase === 'freeze' ? '準備開戰' : `目標 ${room.rules.scoreLimit} 殺`;
+  } else if (isZ()) {
+    // 生化模式：左邊人類贏的回合、右邊殭屍贏的回合；下面是感染倒數或雙方人數
+    const n = [0, 0];
+    if (me.alive) n[me.team]++;
+    for (const r of remotes.values()) if (r.alive) n[r.team]++;
+    const inf = zInfectAt ? Math.ceil((zInfectAt - now) / 1000) : 0;
+    $('mbSub').textContent = room.phase === 'freeze' ? `第 ${room.round} 回合 · 準備` : room.phase === 'post' ? `第 ${room.round} 回合結束`
+      : inf > 0 ? `☣ 感染倒數 ${inf}` : `人類 ${n[0]} · 殭屍 ${n[1]}`;
+    if (room.phase === 'live' && inf > 0 && inf <= 5 && inf !== lastZCount) { lastZCount = inf; beep(440, 0.08, 0.08, 'square'); }
   } else {
     const alive = [0, 0];
     if (me.alive) alive[me.team]++;
@@ -1152,6 +1292,53 @@ function handle(m) {
     case 'kit':
       applyKit(m.kit);
       break;
+    // ---------- 生化模式 ----------
+    case 'zstat': {
+      const was = me.role;
+      me.role = m.role; me.maxHp = m.maxHp; me.hp = m.hp; me.zst = m;
+      me.reserve = m.res ? { ...m.res } : null;
+      if (was !== m.role) {
+        // 身分變了（變殭屍、變英雄、新回合變回人類）：手上的東西換掉
+        me.reloadEnd = 0; me.heavyAt = 0; me.adsToggled = false; me.adsK = 0;
+        me.drawEnd = performance.now() + DRAW_MS;
+        showWeapon(me.id, heldId());
+        views.setTeamColor(sleeveColor());
+      }
+      updateHp(); updateAmmo(); updateZbar();
+      break;
+    }
+    case 'zlvl':
+      sfx('levelUp', 0.5);
+      toast(zombieRole(me.role) ? `🧟 升級 Lv${m.lvl}！血量上限提高` : `⬆ 升級 Lv${m.lvl}！傷害提高`);
+      break;
+    case 'res':
+      me.reserve = { ...m.res };
+      updateAmmo();
+      break;
+    case 'infect': {
+      zInfectAt = 0;
+      if (m.id === me.id) {
+        sfx('infect', 0.7);
+        banner(m.mother ? '你是母體殭屍！' : '你被感染了！', m.mother ? '去抓人類，抓兩下就能感染他們' : '現在你是殭屍，去抓剩下的人類', 'red', 3000);
+        flashRed();
+      } else {
+        sfx('growl', 0.3);
+        if (m.mother) banner('☣ 母體殭屍出現了！', `${nameOf(m.id)} 變成了殭屍，快跑！`, 'red', 2600);
+        if (m.by === me.id) toast(`🧟 感染了 ${nameOf(m.id)}`);
+      }
+      if (m.by) infectFeed(m.by, m.id);
+      break;
+    }
+    case 'heroes': {
+      sfx('hero', 0.6);
+      const mine = m.ids.includes(me.id);
+      banner(mine ? '⚔ 你是英雄！' : '⚔ 英雄出現了！', mine ? '拿起發光長刀，被你砍倒的殭屍不能復活' : m.ids.map(nameOf).join('、') + ' 變成了英雄', 'gold', 3200);
+      break;
+    }
+    case 'pick':
+      setPickups(m.list);
+      if (m.got?.by === me.id) { sfx('pickup', 0.6); toast(m.got.kind === 'ammo' ? '📦 彈藥補滿了' : '🧪 吃到生化箱：回血＋經驗'); }
+      break;
     // ---------- 投擲物 ----------
     case 'nade': {
       if (!playing) break;
@@ -1170,10 +1357,18 @@ function handle(m) {
       me.stunUntil = Math.max(me.stunUntil || 0, performance.now() + m.ms);
       shake = Math.max(shake, m.ms < 2000 ? 0.3 : 0.5);
       break;
-    case 'knock':
-      me.knock = { vx: m.vx, vz: m.vz, until: performance.now() + 260 };
-      shake = Math.max(shake, 0.4);
+    case 'knock': {
+      const nowK = performance.now();
+      if (m.add && me.knock && nowK < me.knock.until) {
+        // 生化模式：被好幾個人的子彈推，擊退會疊加（最多每秒 8 公尺）
+        let vx = me.knock.vx + m.vx, vz = me.knock.vz + m.vz;
+        const l = Math.hypot(vx, vz);
+        if (l > 8) { vx *= 8 / l; vz *= 8 / l; }
+        me.knock = { vx, vz, until: Math.max(me.knock.until, nowK + (m.ms || 260)) };
+      } else me.knock = { vx: m.vx, vz: m.vz, until: nowK + (m.ms || 260) };
+      if (!m.add) shake = Math.max(shake, 0.4);
       break;
+    }
     // ---------- 飛刀 ----------
     case 'tknife':
       effects.addKnife(m.kid, m.o, m.v, performance.now());
@@ -1348,9 +1543,15 @@ function handle(m) {
           hp.querySelector('b').textContent = `剩 ${m.khp} 血`;
           $('deathby').append(hp);
         }
-        const elim = isRounds();
+        const zRespawn = isZ() && zombieRole(me.role) && !roster.get(me.id)?.out;
+        const elim = isRounds() && !zRespawn;
         $('death').classList.toggle('spec', elim);
-        if (elim) {
+        if (zRespawn) {
+          $('respawn').textContent = '5 秒後復活…';
+          respawnAt = performance.now() + 5000;
+        } else if (elim) {
+          if (isZ()) $('respawn').textContent = zombieRole(me.role) ? '被英雄砍倒了，這回合出局' : '這回合陣亡，等下一回合…';
+          else
           $('respawn').textContent = '等待下一回合…';
           spectateId = 0;
           clearTimeout(deathTimer);
@@ -1384,14 +1585,16 @@ function handle(m) {
     case 'roundEnd': {
       if (room) room.roundWins = m.wins;
       const cls = m.winner === 0 ? 'blue' : m.winner === 1 ? 'red' : '';
-      const big = m.winner < 0 ? '這回合平手' : `${MAP.teams[m.winner].name}拿下這回合`;
+      const big = isZ() ? (m.winner === 0 ? '🙂 人類撐過去了！' : m.winner === 1 ? '🧟 殭屍感染了所有人' : '這回合平手')
+        : m.winner < 0 ? '這回合平手' : `${MAP.teams[m.winner].name}拿下這回合`;
       $('death').classList.add('hidden');
       const why = { bomb: '💥 炸彈爆炸', defuse: '✂ 炸彈被拆除', time: '⏱ 時間到', elim: '☠ 全部擊倒' }[m.reason];
-      const tail = m.last ? '比賽結束！' : `藍隊 ${m.wins[0]} : ${m.wins[1]} 紅隊`;
+      const tail = m.last ? '比賽結束！' : isZ() ? `人類 ${m.wins[0]} : ${m.wins[1]} 殭屍` : `藍隊 ${m.wins[0]} : ${m.wins[1]} 紅隊`;
       banner(big, room?.mode === 'bomb' && why ? `${why} · ${tail}` : tail, cls, 3500);
       actors.clear();
       me.acting = null;
       if (m.winner >= 0) beep(m.winner === me.team ? 880 : 330, 0.3, 0.1, 'triangle');
+      if (isZ()) setPickups([]);
       break;
     }
     case 'matchEnd':
@@ -1850,6 +2053,7 @@ $('layoutReset').addEventListener('click', () => { setSetting('layout', {}); set
 let kitOpen = false, lastCount = 0, kitShownSec = -1;
 function canKit(now = performance.now()) {
   if (!playing || !room || room.state !== 'playing') return false;
+  if (isZ() && me.role && me.role !== 'human') return false; // 殭屍、英雄不能換套裝
   if (!me.alive || room.phase !== 'live') return true;
   return now < me.kitUntil && !me.firedSince && !me.leftSpawn;
 }
@@ -2044,8 +2248,8 @@ function frame() {
       const bw = curW();
       if (firing || (bw.burst && me.burstN > 0 && me.burstN < bw.burst.n)) shoot(now);
       updateReload(now);
-    } else if (room?.mode === 'tdm') {
-      $('respawn').textContent = `${Math.max(0, Math.ceil((respawnAt - now) / 1000))} 秒後重生…`;
+    } else if (room?.mode === 'tdm' || (isZ() && zombieRole(me.role) && !roster.get(me.id)?.out)) {
+      $('respawn').textContent = `${Math.max(0, Math.ceil((respawnAt - now) / 1000))} 秒後${isZ() ? '復活' : '重生'}…`;
     }
     // 等待載入 → 開場倒數 → 開戰
     if (room?.phase === 'loading') {
@@ -2060,6 +2264,7 @@ function frame() {
     }
     updateKitUI(now);
     effects.update(dt, now);
+    updatePickups(now);
     updateNadeArc(now);
     updateBombHud(now);
     shake = Math.max(0, shake - dt * 2.5);
@@ -2173,8 +2378,8 @@ function frame() {
       $('reloadtext').textContent = '';
     }
   } else if (viewOwner !== me.id && playing) {
-    showWeapon(me.id, me.kit[me.weapon]);
-    views.setTeamColor(MAP.teams[me.team].color);
+    showWeapon(me.id, heldId());
+    views.setTeamColor(sleeveColor());
     specShown.hp = specShown.ammo = null;
     updateAmmo();
     updateHp();
@@ -2182,7 +2387,7 @@ function frame() {
   // 自己埋彈／拆彈：手上換成炸彈或剪線鉗，放開（或做完）再把武器拿回來
   if (!spec && playing && viewOwner === me.id) {
     const mAct = me.acting && me.alive ? me.acting : null;
-    const vid = mAct ? (mAct.kind === 'plant' ? 'c4' : 'kit') : me.kit[me.weapon];
+    const vid = mAct ? (mAct.kind === 'plant' ? 'c4' : 'kit') : heldId();
     if (viewWeapon !== vid && (mAct || viewWeapon === 'c4' || viewWeapon === 'kit')) {
       showWeapon(me.id, vid);
       if (mAct) views.act(mAct.kind, mAct.at, mAct.ms);

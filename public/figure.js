@@ -150,9 +150,15 @@ export function makeFigure(color, name = null, opts = {}) {
   const baton = melee([[0.03, 0.03, 0.16, tapeM, 0, 0, 0.02], [0.025, 0.025, 0.42, dark, 0, 0, -0.27], [0.02, 0.02, 0.04, accent, 0, 0, -0.5]]);
   const katana = melee([[0.012, 0.045, 0.9, steel, 0, 0.01, -0.5], [0.07, 0.07, 0.015, accent, 0, 0, -0.04], [0.035, 0.045, 0.26, redM, 0, 0, 0.1]]);
   const tknife = melee([[0.012, 0.035, 0.18, steel, 0, 0, -0.14], [0.025, 0.035, 0.11, redM, 0, 0, 0.0]]);
-  arm.add(gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, butterfly, bat, axe, hammer, baton, katana, tknife);
+  // 生化模式：殭屍爪、英雄長刀（會發光）
+  const zSkin = new THREE.MeshStandardMaterial({ color: 0x5f8f45, roughness: 0.85 });
+  const bone = new THREE.MeshStandardMaterial({ color: 0xe8dcc0, roughness: 0.4 });
+  const claw = melee([[0.1, 0.06, 0.12, zSkin, 0, 0, -0.04], [0.012, 0.012, 0.12, bone, -0.03, 0, -0.14], [0.012, 0.012, 0.13, bone, 0, 0, -0.15], [0.012, 0.012, 0.12, bone, 0.03, 0, -0.14]]);
+  const heroGlow = new THREE.MeshBasicMaterial({ color: 0xfff0a0 });
+  const herosword = melee([[0.02, 0.06, 1.2, heroGlow, 0, 0.01, -0.68], [0.1, 0.03, 0.03, accent, 0, 0, -0.06], [0.035, 0.045, 0.24, dark, 0, 0, 0.08]]);
+  arm.add(claw, herosword, gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, butterfly, bat, axe, hammer, baton, katana, tknife);
   const NADE_COLORS = { frag: 0x3d5a2a, flash: 0x9aa3ad, smoke: 0x5b6b5a, molotov: 0x8a5a2a, stun: 0x2f6fd6, decoy: 0xf2c230 };
-  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, butterfly, bat, axe, hammer, baton, katana, tknife };
+  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, butterfly, bat, axe, hammer, baton, katana, tknife, claw, herosword };
   for (const m of [body, head]) m.castShadow = true;
   group.add(body, head, visor, arm);
 
@@ -166,6 +172,19 @@ export function makeFigure(color, name = null, opts = {}) {
       for (const [k, m] of Object.entries(weapons)) m.visible = k === key;
     },
     setColor(c) { mat.color.setHex(c); headMat.color.setHex(c); },
+    // 生化模式的身分外觀：zombie 綠皮膚紅眼睛、mother 再大一號、hero 全身金光
+    setRole(role) {
+      const z = role === 'zombie' || role === 'mother';
+      if (z) {
+        mat.color.setHex(0x4a7a36); headMat.color.setHex(0x6a9a50); glow.color.setHex(0xff2020);
+        mat.emissive?.setHex(0x000000);
+      } else if (role === 'hero') {
+        mat.color.setHex(0xffcf40); mat.emissive.setHex(0x8a6a00); glow.color.setHex(0xfff6c0);
+      }
+      const sc = role === 'mother' ? 1.22 : 1;
+      body.scale.set(sc, sc, sc); head.scale.set(sc, sc, sc); body.position.y = 0.7 * sc;
+      head.position.y = 1.6 * (role === 'mother' ? 1.12 : 1); visor.position.y = 1.63 * (role === 'mother' ? 1.12 : 1);
+    },
     // 埋彈／拆彈：蹲下、手伸到地上（kneel = 0 站著 ~ 1 蹲好）
     kneel: 0,
     setKneel(k) {

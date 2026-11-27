@@ -385,6 +385,18 @@ export function createWorld(scene) {
       group.add(sea);
       group.add(skyline(map.half));
     }
+    if (map.theme === 'hospital') {
+      // 月光下的廢棄醫院：深藍夜空＋月亮；不能太暗（環境光給得比較亮）
+      group.add(skyDome([[-1, 0x05070f], [-0.02, 0x0c1020], [0.0, 0x26304f], [0.15, 0x161d36], [1, 0x070a18]]));
+      const moon = new THREE.Mesh(new THREE.CircleGeometry(14, 32), new THREE.MeshBasicMaterial({ color: 0xe8efff, fog: false }));
+      moon.position.set(160, 150, -180);
+      moon.lookAt(0, 0, 0);
+      group.add(moon);
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), new THREE.MeshLambertMaterial({ color: 0x101418 }));
+      ground.rotation.x = -Math.PI / 2; ground.position.y = -0.05;
+      group.add(ground);
+      group.add(skyline(map.half + 30));
+    }
     if (map.theme === 'harbor') {
       // 海上的黃昏：天空比碼頭亮，四周都是海
       group.add(skyDome([[-1, 0x2a2440], [-0.02, 0x4a3050], [0.0, 0xffb07a], [0.1, 0xf08a7a], [0.3, 0x8a5a9a], [1, 0x2a2a66]]));
@@ -413,7 +425,15 @@ export function createWorld(scene) {
     for (const l of neonLights) l.intensity = 0;
     edgeMat.blending = THREE.NormalBlending;
 
-    if (map.theme === 'harbor') {
+    if (map.theme === 'hospital') {
+      scene.background.set(0x0c1020);
+      scene.fog.color.set(0x1a2238);
+      scene.fog.near = 30; scene.fog.far = 120;
+      hemi.color.set(0xc8d4ff); hemi.groundColor.set(0x4a5060); hemi.intensity = 1.5;
+      sun.color.set(0xb8c8ff); sun.intensity = 1.1; // 月光
+      sun.position.set(25, 40, -30);
+      edgeMat.color.set(0x000000); edgeMat.opacity = 0.3;
+    } else if (map.theme === 'harbor') {
       scene.background.set(0x4a3050);
       scene.fog.color.set(0x9a6a86);
       scene.fog.near = 70; scene.fog.far = 260;

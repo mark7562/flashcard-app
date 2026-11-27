@@ -152,6 +152,8 @@
           <button data-mode="tdm" class="on">團隊死鬥</button>
           <button data-mode="elim">回合殲滅</button>
           <button data-mode="bomb">爆破模式</button>
+          <button data-mode="zombie">生化模式</button>
+          <button data-mode="hero">生化英雄</button>
         </div>
         <p id="createModeDesc" class="hint"></p>
         <label class="lbl" for="roomPass">密碼（選填，不填就是公開房間）</label>
@@ -204,6 +206,7 @@
               <button data-v="ship">夕陽貨輪</button>
               <button data-v="arena">經典競技場</button>
               <button data-v="metro">霓虹地鐵站</button>
+              <button data-v="hospital">廢棄醫院</button>
             </div>
           </div>
           <div class="setrow">模式
@@ -211,6 +214,8 @@
               <button data-v="tdm">團隊死鬥</button>
               <button data-v="elim">回合殲滅</button>
               <button data-v="bomb">爆破</button>
+              <button data-v="zombie">生化</button>
+              <button data-v="hero">生化英雄</button>
             </div>
           </div>
           <div class="setrow tdm-only">目標擊殺
@@ -226,7 +231,7 @@
           <div class="setrow">機器人
             <button id="fillBots" class="nbtn small fill">🤖 自動補滿兩隊</button>
           </div>
-          <div class="setrow elim-only">勝利回合
+          <div class="setrow elim-only"><span id="roundsLabel">勝利回合</span>
             <div id="ruleRounds" class="seg">
               <button data-v="3">3</button><button data-v="5">5</button><button data-v="7">7</button><button data-v="9">9</button>
             </div>
@@ -240,7 +245,7 @@
       </div>
     </section>
 
-    <div class="ver">v1.29</div>
+    <div class="ver">v1.30</div>
   </div>
 
   <!-- ===== 設定（標題畫面和遊戲中都能開） ===== -->
@@ -394,6 +399,7 @@
     <div id="hpbox">
       <div id="hpbar"><div id="hpfill"></div></div>
       <span id="hptext">100</span>
+      <div id="zbar" class="hidden"><span id="zrole" class="zrole"></span><span id="zlvl"></span><div id="zxp"><div id="zxpfill"></div></div></div>
     </div>
     <div id="ammo"><div id="wname"></div><span id="ammonow">30</span><small id="ammomax"> / 30</small><div id="reloadtext"></div></div>
     <div id="wslots"></div>

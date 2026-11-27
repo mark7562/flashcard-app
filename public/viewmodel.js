@@ -1726,6 +1726,84 @@ function sample(keys, t, out) {
 }
 const lastKeyTime = (keys) => keys[keys.length - 1][0];
 
+
+// ======================================================================
+// 生化模式：殭屍爪（兩隻綠色的手，指尖是爪子）、英雄長刀（發光的長刀）
+// ======================================================================
+const ZM_SKIN = new THREE.MeshStandardMaterial({ color: 0x5f8f45, roughness: 0.85 });
+const ZM_SKIN2 = new THREE.MeshStandardMaterial({ color: 0x4a7336, roughness: 0.9 });
+const ZM_CLAW = new THREE.MeshStandardMaterial({ color: 0xe8dcc0, roughness: 0.4 });
+const ZM_BLOOD = new THREE.MeshStandardMaterial({ color: 0x7a1010, roughness: 0.6 });
+function zombieHand(parent, from, to, flip) {
+  const g = new THREE.Group();
+  g.position.copy(from);
+  parent.add(g);
+  box(g, 0.075, 0.05, 0.09, ZM_SKIN); // 手掌
+  for (let i = 0; i < 4; i++) {
+    const x = (i - 1.5) * 0.019 * flip;
+    box(g, 0.014, 0.014, 0.05, ZM_SKIN2, x, 0.004, -0.065, -0.25); // 手指
+    box(g, 0.008, 0.008, 0.04, ZM_CLAW, x, -0.006, -0.105, -0.5); // 爪子
+  }
+  box(g, 0.012, 0.012, 0.035, ZM_CLAW, 0.042 * flip, -0.004, -0.04, -0.3, 0.6 * flip, 0); // 拇指爪
+  box(g, 0.03, 0.006, 0.03, ZM_BLOOD, 0.01 * flip, 0.026, 0.01);
+  const dir = to.clone().sub(from), len = dir.length();
+  dir.normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(Z_AXIS, dir);
+  const fore = box(g, 0.07, 0.07, len, ZM_SKIN2); // 前臂（破爛的袖子）
+  fore.quaternion.copy(q);
+  fore.position.copy(dir.clone().multiplyScalar(0.05 + len / 2));
+  const rag = box(g, 0.085, 0.085, len * 0.45, M.sleeve);
+  rag.quaternion.copy(q);
+  rag.position.copy(dir.clone().multiplyScalar(0.05 + len * 0.78));
+  return g;
+}
+function buildClaw() {
+  const root = new THREE.Group();
+  const knife = new THREE.Group(); // 右手（這一層做揮擊）
+  root.add(knife);
+  const r = zombieHand(knife, V(0, 0, 0), V(0.04, -0.2, 0.5), 1);
+  r.rotation.set(0.35, 0, -0.25);
+  const left = new THREE.Group();
+  root.add(left);
+  const l = zombieHand(left, V(-0.34, 0.01, 0.0), V(-0.4, -0.2, 0.5), -1);
+  l.rotation.set(0.35, 0, 0.25);
+  const L = (o) => ({ lx: 0, ly: 0, lz: 0, ...o });
+  return {
+    id: 'claw', root, knife, lhand: left, lhandRest: V(0, 0, 0), base: { p: V(0.2, -0.2, -0.32), r: [0, 0, 0] },
+    anims: {
+      draw: { keys: [[0, { py: -0.2, rx: 0.6, ly: -0.2 }], [0.35, {}]], sounds: [[0.05, 'growl']] },
+      // 右手往左下抓、左手往右下抓、雙手往前戳
+      swing0: { keys: [[0, {}], [0.08, { px: 0.06, py: 0.12, rz: -0.5, rx: 0.4 }], [0.2, { px: -0.25, py: -0.12, pz: -0.08, rz: 0.6, rx: -0.4 }], [0.45, {}]], sounds: [[0.07, 'swish0']] },
+      swing1: { keys: [[0, {}], [0.08, L({ lx: -0.05, ly: 0.12, lz: 0.02 })], [0.2, L({ lx: 0.28, ly: -0.1, lz: -0.1 })], [0.45, {}]], sounds: [[0.07, 'swish1']] },
+      swing2: { keys: [[0, {}], [0.08, { pz: 0.06, ...L({ lz: 0.06 }) }], [0.18, { pz: -0.2, py: 0.02, ...L({ lz: -0.2, ly: 0.02 }) }], [0.45, {}]], sounds: [[0.07, 'swish2']] },
+      inspect: { keys: [[0, {}], [0.3, { py: 0.1, px: -0.08, rz: -0.4, rx: 0.3 }], [0.8, { py: 0.12, px: -0.1, rz: -0.6, rx: 0.4 }], [1.1, { py: 0.1, ...L({ ly: 0.12, lx: 0.08 }) }], [1.6, {}]], sounds: [[0.3, 'growl']] },
+    },
+  };
+}
+function buildHeroSword() {
+  const o = meleeBase('herosword', [0.9, 0.15, -0.25], V(0.22, -0.2, -0.33));
+  const k = o.knife;
+  const gold = new THREE.MeshStandardMaterial({ color: 0xffd34d, emissive: 0xffb300, emissiveIntensity: 0.7, roughness: 0.3, metalness: 0.6 });
+  const glow = new THREE.MeshBasicMaterial({ color: 0xfff3b0 });
+  box(k, 0.008, 0.05, 0.95, glow, 0, 0.005, -0.56); // 發光的刀刃
+  const aura = box(k, 0.03, 0.09, 1.0, new THREE.MeshBasicMaterial({ color: 0xffd34d, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }), 0, 0.005, -0.56);
+  aura.renderOrder = 2;
+  box(k, 0.08, 0.025, 0.03, gold, 0, 0, -0.07); // 護手
+  box(k, 0.03, 0.035, 0.2, M.dark, 0, 0, 0.04); // 刀柄
+  box(k, 0.036, 0.04, 0.03, gold, 0, 0, 0.15);
+  const R = { px: 0.1, py: 0.14, pz: 0.02, rx: 1.0, rz: -0.5 };
+  Object.assign(o, { anims: {
+    draw: { keys: [[0, { py: -0.2, rx: 0.8 }], [0.4, {}]], sounds: [[0.05, 'heavy']] },
+    ...heavyKit([
+      [{ px: 0.1, py: 0.12, rz: -0.9, ry: 0.5, kr: 0.4 }, { px: -0.28, py: -0.12, pz: -0.08, rz: 0.8, ry: -0.8, kr: -0.4 }, 0.22, 0.5],
+      [{ px: -0.22, py: 0.05, ry: -1.0, rz: 0.6 }, { px: 0.18, py: -0.04, pz: -0.08, ry: 0.9, rz: -0.6 }, 0.22, 0.5],
+      [{ py: 0.16, rx: 0.9, pz: 0.04 }, { py: -0.14, rx: -0.6, pz: -0.14 }, 0.22, 0.5],
+    ], R, [[0.14, { px: -0.25, py: -0.18, pz: -0.14, rx: -0.6, rz: 0.9, ry: -0.6 }], [0.3, { px: -0.25, py: -0.2, pz: -0.12, rx: -0.65, rz: 0.9, ry: -0.6 }], [0.7, {}]], [[0, 'heavy']], 0.4),
+    inspect: { keys: [[0, {}], [0.4, { px: -0.12, py: 0.08, ry: 0.9, rz: 0.3 }], [1.2, { px: -0.12, py: 0.1, ry: 1.0, rz: 0.35 }], [1.6, {}]], sounds: [[0.3, 'flip']] },
+  } });
+  return o;
+}
+
 // ======================================================================
 export function createViewModels(camera, playSound) {
   const vm = new THREE.Group();
@@ -1736,6 +1814,7 @@ export function createViewModels(camera, playSound) {
     lmg: buildLmg(), burst: buildBurst(), carbine: buildCarbine(), autoshotgun: buildAutoShotgun(),
     mpistol: buildMpistol(), revolver: buildRevolver(),
     butterfly: buildButterfly(), bat: buildBat(), axe: buildAxe(), hammer: buildHammer(), baton: buildBaton(), katana: buildKatana(), tknife: buildTknife(),
+    claw: buildClaw(), herosword: buildHeroSword(),
   };
   W.c4 = buildC4();
   W.kit = buildKit();
