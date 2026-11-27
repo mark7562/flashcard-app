@@ -236,7 +236,7 @@
       </div>
     </section>
 
-    <div class="ver">v1.11</div>
+    <div class="ver">v1.12</div>
   </div>
 
   <!-- ===== 設定（標題畫面和遊戲中都能開） ===== -->
@@ -276,6 +276,13 @@
             <button data-v="high">強</button>
           </div>
         </div>
+        <div class="setrow">瞄準方式
+          <div id="setAdsMode" class="seg">
+            <button data-v="toggle">點一下切換</button>
+            <button data-v="hold">按住瞄準</button>
+          </div>
+        </div>
+        <label>開鏡靈敏度<input id="setAdsSens" type="range" min="0.3" max="2" step="0.05" /><output id="setAdsSensVal"></output></label>
         <p class="hint">瞄準輔助：準心在敵人身上時轉動會稍微變慢；開槍時會輕輕帶向敵人身體中心。往別的方向轉時不會干擾你。</p>
       </div>
       <div id="setKeys" class="sets hidden">
@@ -330,6 +337,7 @@
 
   <!-- ===== 遊戲中 HUD ===== -->
   <div id="hud" class="hidden">
+    <div id="scope" class="hidden"></div>
     <div id="crosshair"></div>
     <div id="hitmarker"></div>
     <div id="damage"></div>
@@ -381,6 +389,7 @@
     <button class="tbtn" id="btnReload">R</button>
     <button class="tbtn" id="btnJump">⤒</button>
     <button class="tbtn" id="btnFire">🔫</button>
+    <button class="tbtn" id="btnAim">◎</button>
     <button class="tbtn" id="btnSwap"><span id="swapIcon">⇄</span><small id="swapLabel"></small></button>
     <div id="swapPop" class="hidden"></div>
   </div>

@@ -337,24 +337,44 @@ function resetKit(p) {
   p.switchUntil = 0;
   p.heavyAt = 0;
   p.lastHeavy = false;
+  p.adsSince = 0;
 }
+// 換彈完成了沒；霰彈槍是一顆一顆裝，裝到第幾顆就先算幾顆
 function finishReload(p, now) {
-  if (p.reloadUntil && now >= p.reloadUntil) { p.ammoBy[p.weapon] = weaponOf(p).mag; p.reloadUntil = 0; }
+  if (!p.reloadUntil) return;
+  const w = weaponOf(p);
+  if (w.shells) {
+    const n = WPN.shellsLoaded(w, now - p.reloadStart + RELOAD_SLACK);
+    p.ammoBy[p.weapon] = Math.min(w.mag, p.reloadBase + n);
+    if (now >= p.reloadUntil) p.reloadUntil = 0;
+    return;
+  }
+  if (now >= p.reloadUntil) { p.ammoBy[p.weapon] = w.mag; p.reloadUntil = 0; }
 }
 function startReload(p) {
   const w = weaponOf(p);
   if (!p.alive || p.reloadUntil || !w.mag || p.ammoBy[p.weapon] >= w.mag) return;
   // 子彈打光才換彈比較久（要多拉一次槍機）
-  const ms = p.ammoBy[p.weapon] <= 0 && w.reloadEmptyMs ? w.reloadEmptyMs : w.reloadMs;
-  p.reloadUntil = Date.now() + ms - RELOAD_SLACK;
-  toRoom(p.room, { t: 'reload', id: p.id, ms }, p.id); // 讓其他人看到、聽到你在換彈
+  const ammo = p.ammoBy[p.weapon];
+  const ms = WPN.reloadTime(w, ammo);
+  const now = Date.now();
+  p.reloadStart = now;
+  p.reloadBase = ammo;
+  p.reloadUntil = now + ms - RELOAD_SLACK;
+  p.adsSince = 0;
+  toRoom(p.room, { t: 'reload', id: p.id, ms, n: w.mag - ammo, empty: ammo <= 0 }, p.id); // 讓其他人看到、聽到你在換彈
 }
 function switchWeapon(p, slot) {
   if (!WPN.HAND_SLOTS.includes(slot) || p.weapon === slot) return;
   p.weapon = slot;
   p.reloadUntil = 0; // 換武器會中斷換彈
   p.heavyAt = 0;
+  p.adsSince = 0;
   p.switchUntil = Date.now() + SWITCH_MS;
+}
+// 現在算不算「已經開好鏡」（開鏡時間打一點折扣，容許網路延遲）
+function scoped(p, w, now) {
+  return !!w.ads && p.adsSince > 0 && now - p.adsSince >= w.ads.ms * 0.6;
 }
 // 現在能不能換套裝：死掉等重生、開場準備時間、剛復活 10 秒內而且還沒開過火
 function canChangeKit(p) {
@@ -421,34 +441,56 @@ function handleShoot(p, msg) {
   const w = readyToFire(p, now);
   if (!w || w.melee) return;
   finishReload(p, now);
+  if (p.reloadUntil && w.shells && p.ammoBy[p.weapon] > 0) p.reloadUntil = 0; // 霰彈槍裝到一半可以直接開槍
   if (p.reloadUntil || p.ammoBy[p.weapon] <= 0) return;
-  const d = aimDir(msg);
+  let d = aimDir(msg);
   if (!d) return;
   p.lastShot = now;
   p.ammoBy[p.weapon] -= 1;
   p.firedSince = true;
   const o = eyeOrigin(p, msg);
-
-  let best = 200;
-  for (const b of mapOf(r).boxes) best = Math.min(best, rayBox(o, d, b.min, b.max));
-  if (d[1] < 0) best = Math.min(best, -o[1] / d[1]); // 地面
+  const seed = num(msg.s, 1) >>> 0;
+  const isScoped = scoped(p, w, now);
+  // 狙擊槍沒開好鏡：子彈落在畫面中心的大圈圈裡（用同一個種子，跟射手畫面上看到的一樣）
+  if (w.hipCone && (msg.h || !isScoped)) d = WPN.coneDirs(d, seed, 1, w.hipCone)[0];
+  // 霰彈槍：一發好幾顆彈丸
+  const dirs = w.pellets ? WPN.coneDirs(d, seed, w.pellets, w.pelletSpread * (msg.a && isScoped ? w.ads.spread : 1)) : [d];
 
   const rewind = p.bot ? 0 : Math.min(250, p.rtt / 2 + 100);
-  let target = null;
-  let headshot = false;
+  const targets = [];
   for (const q of r.players.values()) {
     if (q.id === p.id || !q.alive || q.team === p.team) continue; // 子彈會穿過隊友（沒有友軍傷害）
-    const pos = positionAt(q, now - rewind);
-    const th = raySphere(o, d, [pos.x, pos.y + 1.6, pos.z], 0.3);
-    const tb = rayBox(o, d, [pos.x - 0.42, pos.y, pos.z - 0.42], [pos.x + 0.42, pos.y + 1.42, pos.z + 0.42]);
-    const t = Math.min(th, tb);
-    if (t < best) { best = t; target = q; headshot = th <= tb; }
+    targets.push([q, positionAt(q, now - rewind)]);
+  }
+  const dmgBy = new Map(); // 目標 -> { dmg, head }
+  const ends = [];
+  for (const dd of dirs) {
+    let best = 200;
+    for (const b of mapOf(r).boxes) best = Math.min(best, rayBox(o, dd, b.min, b.max));
+    if (dd[1] < 0) best = Math.min(best, -o[1] / dd[1]); // 地面
+    let target = null, headshot = false;
+    for (const [q, pos] of targets) {
+      const th = raySphere(o, dd, [pos.x, pos.y + 1.6, pos.z], 0.3);
+      const tb = rayBox(o, dd, [pos.x - 0.42, pos.y, pos.z - 0.42], [pos.x + 0.42, pos.y + 1.42, pos.z + 0.42]);
+      const t = Math.min(th, tb);
+      if (t < best) { best = t; target = [q, pos]; headshot = th <= tb; }
+    }
+    ends.push([+(o[0] + dd[0] * best).toFixed(2), +(o[1] + dd[1] * best).toFixed(2), +(o[2] + dd[2] * best).toFixed(2)]);
+    if (!target) continue;
+    const [q, pos] = target;
+    let dmg = headshot ? w.head : w.body;
+    // 栓動狙擊：打到腰部以上（胸口）也是一發
+    if (!headshot && w.chest && o[1] + dd[1] * best >= pos.y + 0.8) dmg = w.chest;
+    dmg *= WPN.falloff(w, best);
+    const cur = dmgBy.get(q) || { dmg: 0, head: false };
+    cur.dmg += dmg;
+    cur.head = cur.head || headshot;
+    dmgBy.set(q, cur);
   }
 
-  const end = [o[0] + d[0] * best, o[1] + d[1] * best, o[2] + d[2] * best];
-  toRoom(r, { t: 'shot', id: p.id, o, e: end, w: w.id }, p.id);
+  toRoom(r, { t: 'shot', id: p.id, o, e: ends[0], es: ends.length > 1 ? ends : undefined, w: w.id }, p.id);
   for (const q of r.players.values()) if (q.bot && q.team !== p.team) BOT.hear(q, p, now);
-  if (target) applyDamage(p, target, headshot ? w.head : w.body, headshot, w.id, now);
+  for (const [q, h] of dmgBy) if (q.alive) applyDamage(p, q, Math.round(h.dmg), h.head, w.id, now);
 }
 
 // 重擊開始舉刀：要舉滿 windMs 才能砍下去
@@ -513,6 +555,8 @@ function handleState(p, msg) {
   if (!p.leftSpawn && r.phase === 'live' && !MAP.inSpawn(mapOf(r), p.team, x, z)) p.leftSpawn = true;
   p.yaw = num(msg.yaw, p.yaw);
   p.pitch = Math.max(-1.6, Math.min(1.6, num(msg.pitch, p.pitch)));
+  // 瞄準：記住從什麼時候開始瞄（狙擊槍要瞄滿才準）
+  if (msg.ads && weaponOf(p).ads && !p.reloadUntil) { if (!p.adsSince) p.adsSince = now; } else p.adsSince = 0;
   p.lastStateAt = now;
   p.history.push({ t: now, x, y, z });
   while (p.history.length && p.history[0].t < now - 1000) p.history.shift();
@@ -560,7 +604,7 @@ function makePlayer(ws) {
     kills: 0, deaths: 0, seq: 0, rtt: 100, lastShot: 0,
     x: 0, y: 0, z: 0, yaw: 0, pitch: 0, hp: 100, alive: false,
     loadout: { ...WPN.DEFAULT_LOADOUT }, weapon: 'primary', ammoBy: {}, switchUntil: 0, kitUntil: 0, firedSince: false, ready: false,
-    reloadUntil: 0, respawnAt: 0, protectUntil: 0, history: [], lastStateAt: Date.now(),
+    reloadUntil: 0, reloadStart: 0, reloadBase: 0, adsSince: 0, respawnAt: 0, protectUntil: 0, history: [], lastStateAt: Date.now(),
   };
 }
 
@@ -575,8 +619,7 @@ function addBot(r, team, level) {
   p.name = free.length ? free[Math.floor(Math.random() * free.length)] : `機器人${p.id}`;
   p.color = COLORS[Math.floor(Math.random() * COLORS.length)];
   p.bot = BOT.makeBrain(level);
-  const pick = (list) => list[Math.floor(Math.random() * list.length)];
-  p.loadout = WPN.clean(Object.fromEntries(Object.entries(WPN.CHOICES).map(([k, v]) => [k, pick(v)])));
+  p.loadout = BOT.pickLoadout(level);
   p.room = r;
   p.team = team;
   r.players.set(p.id, p);
@@ -710,7 +753,7 @@ setInterval(() => {
 
     const list = [];
     for (const p of r.players.values()) {
-      list.push([p.id, +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(3), +p.pitch.toFixed(3), p.alive ? 1 : 0, WPN.LIST.indexOf(p.loadout[p.weapon])]);
+      list.push([p.id, +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(3), +p.pitch.toFixed(3), p.alive ? 1 : 0, WPN.LIST.indexOf(p.loadout[p.weapon]), p.adsSince ? 1 : 0]);
     }
     toRoom(r, { t: 'snap', p: list });
   }

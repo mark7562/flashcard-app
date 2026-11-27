@@ -13,6 +13,8 @@ const DEFAULTS = {
   vert: 1, // 垂直靈敏度（相對於水平）
   invertY: false, // 反轉上下
   aimAssist: IS_TOUCH ? 'low' : 'off', // 瞄準輔助：off / low / high
+  adsMode: IS_TOUCH ? 'toggle' : 'hold', // 瞄準方式：toggle 點一下切換 / hold 按住
+  adsSens: 1, // 開鏡靈敏度（放大越多本來就會越慢，這個再乘上去）
   keys: { ...DEFAULT_KEYS }, // 電腦按鍵
   btnScale: 1, // 手機按鈕大小
   swapPair: ['primary', 'secondary'], // 手機切換鈕：點一下在這兩把之間切換

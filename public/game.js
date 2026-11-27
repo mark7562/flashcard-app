@@ -28,11 +28,12 @@ const me = {
   hp: 100, alive: false, seq: 0, reloadEnd: 0, lastShot: 0, recoil: 0,
   kit: { ...WPN.DEFAULT_LOADOUT }, weapon: 'primary', ammoBy: {}, drawEnd: 0, kitUntil: 0, firedSince: false, swingAt: 0,
   combo: 0, heavyAt: 0, lastHeavy: false, lastDry: 0, meleeHitAt: 0,
+  reloadStart: 0, reloadBase: 0, adsHeld: false, adsToggled: false, adsK: 0, adsOn: false,
 };
 const roster = new Map(); // id -> { name, color, kills, deaths }
 const remotes = new Map(); // id -> { group, buf: [...], alive }
 const keys = {};
-const TOUCH_BTNS = ['btnFire', 'btnJump', 'btnReload', 'btnScore', 'btnMenu', 'btnSwap']; // 可以調整位置的手機按鈕
+const TOUCH_BTNS = ['btnFire', 'btnJump', 'btnReload', 'btnScore', 'btnMenu', 'btnSwap', 'btnAim']; // 可以調整位置的手機按鈕
 let ws = null, playing = false, firing = false, jumpQueued = false;
 let moveVec = { x: 0, y: 0 }; // 手機搖桿
 let rtt = 0, lastSend = 0, respawnAt = 0;
@@ -129,7 +130,8 @@ function physics(dt) {
   const len = Math.hypot(fx, fz);
   if (len > 1) { fx /= len; fz /= len; }
   const sin = Math.sin(me.yaw), cos = Math.cos(me.yaw);
-  const sp = SPEED * curW().speed; // 拿手槍、刀跑比較快
+  const w = curW();
+  const sp = SPEED * w.speed * (w.ads ? 1 + (w.ads.speed - 1) * me.adsK : 1); // 拿手槍、刀跑比較快；瞄準時走比較慢
   const wx = (fx * cos + fz * sin) * sp;
   const wz = (-fx * sin + fz * cos) * sp;
   const accel = me.onGround ? 14 : 4;
@@ -190,6 +192,8 @@ function applyKit(kit) {
   me.reloadEnd = 0;
   me.drawEnd = performance.now() + DRAW_MS;
   me.heavyAt = 0;
+  me.adsToggled = false;
+  me.adsK = 0;
   showWeapon(me.id, me.kit[me.weapon]);
   updateAmmo();
 }
@@ -207,6 +211,7 @@ function switchWeapon(slot) {
   me.reloadEnd = 0; // 換武器會中斷換彈
   me.drawEnd = performance.now() + DRAW_MS;
   me.heavyAt = 0;
+  me.adsToggled = false; // 換武器就放下瞄準（按住模式：還按著的話會自動再瞄）
   send({ t: 'weapon', s: slot });
   showWeapon(me.id, me.kit[me.weapon]);
   updateAmmo();
@@ -217,7 +222,13 @@ function cycleWeapon(dir) {
 }
 function shoot(now) {
   const w = curW();
-  if (!me.alive || me.reloadEnd || frozen(now) || now < me.drawEnd || now - me.lastShot < cooldown(w)) return;
+  if (!me.alive || frozen(now) || now < me.drawEnd || now - me.lastShot < cooldown(w)) return;
+  if (me.reloadEnd) {
+    // 霰彈槍一顆一顆裝：已經裝進去的可以直接開槍（會中斷換彈）
+    if (!(w.shells && me.ammoBy[me.weapon] > 0)) return;
+    me.reloadEnd = 0;
+    views.cancel();
+  }
   if (w.melee) { if (!me.heavyAt) swing(now, w); return; }
   if (me.ammoBy[me.weapon] <= 0) {
     if (now - me.lastDry > 250) { me.lastDry = now; sfx('dry', 0.4); } // 喀一聲
@@ -228,27 +239,41 @@ function shoot(now) {
   me.ammoBy[me.weapon] -= 1;
   me.firedSince = true;
   camera.getWorldDirection(camDir);
+  const full = !!w.ads && me.adsOn && me.adsK >= 0.98; // 完全瞄好了
   const moving = Math.hypot(me.vx, me.vz) > 1;
-  const spread = (me.onGround ? (moving ? w.spread[1] : w.spread[0]) : w.spread[2]) + me.recoil * 0.03;
+  let spread = (me.onGround ? (moving ? w.spread[1] : w.spread[0]) : w.spread[2]) + me.recoil * 0.03;
+  if (w.ads) spread *= 1 + (w.ads.spread - 1) * me.adsK; // 瞄準比較準
   camDir.x += (Math.random() - 0.5) * spread;
   camDir.y += (Math.random() - 0.5) * spread;
   camDir.z += (Math.random() - 0.5) * spread;
   camDir.normalize();
   const origin = new THREE.Vector3(me.x, me.y + EYE, me.z);
-  send({ t: 'shoot', d: camDir.toArray().map((v) => +v.toFixed(4)), o: origin.toArray().map((v) => +v.toFixed(3)) });
+  const seed = (Math.random() * 2147483647) | 0;
+  const hip = !!w.hipCone && !full; // 狙擊槍沒開鏡：子彈落在大圈圈裡
+  const d = camDir.toArray().map((v) => +v.toFixed(4));
+  send({ t: 'shoot', d, o: origin.toArray().map((v) => +v.toFixed(3)), s: seed, h: hip ? 1 : 0, a: full ? 1 : 0 });
 
-  const end = traceEnd(origin, camDir);
+  // 跟伺服器用同一個種子算出彈道
+  let dirs = [d];
+  if (hip) dirs = WPN.coneDirs(d, seed, 1, w.hipCone);
+  if (w.pellets) dirs = WPN.coneDirs(dirs[0], seed, w.pellets, w.pelletSpread * (full ? w.ads.spread : 1));
   views.fire(now);
   views.muzzleWorld(muzzle);
-  addTracer(muzzle.clone(), end);
-  addSpark(end);
+  for (const dd of dirs) {
+    const end = traceEnd(origin, new THREE.Vector3().fromArray(dd));
+    addTracer(muzzle.clone(), end);
+    addSpark(end);
+  }
   // 後座力
   me.pitch = Math.min(1.5, me.pitch + w.kick);
-  me.yaw += (Math.random() - 0.5) * 0.004;
+  me.yaw += (Math.random() - 0.5) * (0.004 + w.kick * 0.15);
   me.recoil = Math.min(1, me.recoil + w.recoil);
   sfx(w.id, w.id === 'pistol' ? 0.42 : 0.5);
-  // 打光自動換彈；手槍先停一下，讓人看到套筒停在後面
-  if (me.ammoBy[me.weapon] === 0) { if (w.id === 'pistol') { const slot = me.weapon; setTimeout(() => { if (me.weapon === slot) startReload(); }, 350); } else startReload(); }
+  // 打光自動換彈；手槍先停一下讓人看到套筒停在後面；栓狙、霰彈槍先拉栓／泵動
+  if (me.ammoBy[me.weapon] === 0) {
+    const wait = w.lockBack ? 350 : w.bolt ? 1050 : w.shells ? 700 : 0;
+    if (wait) { const slot = me.weapon; setTimeout(() => { if (me.weapon === slot && me.alive) startReload(); }, wait); } else startReload();
+  }
   updateAmmo();
 }
 function cooldown(w) { return me.lastHeavy && w.heavy ? w.heavy.fireMs : w.fireMs; }
@@ -313,20 +338,63 @@ function doInspect() {
 function startReload() {
   const w = curW();
   if (!me.alive || me.reloadEnd || !w.mag || me.ammoBy[me.weapon] >= w.mag) return;
-  // 子彈打光才換彈比較久（多拉一次槍機／放套筒）
-  const empty = me.ammoBy[me.weapon] <= 0;
-  const ms = empty && w.reloadEmptyMs ? w.reloadEmptyMs : w.reloadMs;
   const now = performance.now();
+  if (w.bolt && now - me.lastShot < w.fireMs * 0.8) return; // 還在拉栓
+  // 子彈打光才換彈比較久（多拉一次槍機／放套筒）；霰彈槍一顆一顆裝
+  const ammo = me.ammoBy[me.weapon];
+  const empty = ammo <= 0;
+  const ms = WPN.reloadTime(w, ammo);
   me.reloadEnd = now + ms;
+  me.reloadStart = now;
+  me.reloadBase = ammo;
   send({ t: 'reload' });
-  views.reload(now, ms, empty);
+  views.reload(now, ms, empty, w.mag - ammo);
   updateAmmo();
+}
+// 霰彈槍：換彈中，每裝進一顆就加一顆
+function updateReload(now) {
+  if (!me.reloadEnd) return;
+  const w = curW();
+  if (w.shells) {
+    const n = Math.min(w.mag, me.reloadBase + WPN.shellsLoaded(w, now - me.reloadStart));
+    if (n !== me.ammoBy[me.weapon]) { me.ammoBy[me.weapon] = n; updateAmmo(); }
+  }
+  if (now >= me.reloadEnd) { me.reloadEnd = 0; me.ammoBy[me.weapon] = w.mag; updateAmmo(); }
+}
+
+// ---------- 瞄準 ----------
+// 電腦預設「按住右鍵」，手機預設「點一下切換」，設定裡可以改
+function aimPress(down) {
+  me.adsHeld = down;
+  if (down) me.adsToggled = !me.adsToggled;
+}
+function adsWanted() { return settings.adsMode === 'hold' ? me.adsHeld : me.adsToggled; }
+// 能不能瞄準：跳起來、換彈、拔槍、拉栓的時候不行
+function adsAllowed(now) {
+  const w = curW();
+  return !!w.ads && me.alive && me.onGround && !me.reloadEnd && now >= me.drawEnd && !(w.bolt && views.cycling);
+}
+let lastAdsSent = false;
+function updateAds(dt, now) {
+  const w = curW();
+  const was = me.adsOn;
+  me.adsOn = adsWanted() && adsAllowed(now);
+  if (me.adsOn && !was && w.ads?.scope) sfx('scopeIn', 0.5);
+  const rate = w.ads ? 1000 / w.ads.ms : 10;
+  me.adsK = me.adsOn ? Math.min(1, me.adsK + rate * dt) : Math.max(0, me.adsK - rate * 1.4 * dt);
+  if (!w.ads) me.adsK = 0;
+}
+// 瞄準時的靈敏度：放大越多越慢（再乘上設定的「開鏡靈敏度」）
+function aimSens() {
+  const w = curW();
+  if (!w.ads || !me.adsK) return 1;
+  return 1 + (settings.adsSens / w.ads.zoom - 1) * me.adsK;
 }
 
 // ---------- HUD ----------
 function updateAmmo() {
   const w = curW();
-  views.setEmpty(w.id === 'pistol' && me.ammoBy[me.weapon] === 0 && !me.reloadEnd); // 手槍打光：套筒停在後面
+  views.setEmpty(!!w.lockBack && me.ammoBy[me.weapon] === 0 && !me.reloadEnd); // 手槍打光：套筒停在後面
   $('wname').textContent = `${w.icon} ${w.name}`;
   if (w.melee) {
     $('ammonow').textContent = '';
@@ -430,7 +498,7 @@ function setScoreboard(show) { $('scoreboard').classList.toggle('hidden', !show)
 // ---------- 網路 ----------
 let room = null; // 目前所在房間（伺服器傳來的狀態）
 let helloed = false, kicked = false;
-let roomDeadline = 0, freezeEnd = 0, resultsEnd = 0, spectateId = 0, specActive = 0;
+let roomDeadline = 0, freezeEnd = 0, resultsEnd = 0, spectateId = 0, specActive = 0, specAdsK = 0;
 function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
 // 不能動、不能開火：等待載入、開場倒數、回合準備
 function frozen(now = performance.now()) {
@@ -684,13 +752,14 @@ function handle(m) {
     case 'snap': {
       if (!playing) break;
       const now = performance.now();
-      for (const [id, x, y, z, yaw, pitch, alive, wi] of m.p) {
+      for (const [id, x, y, z, yaw, pitch, alive, wi, ads] of m.p) {
         if (id === me.id) continue;
         const r = remotes.get(id) || (roster.has(id) ? makeRemote(id) : null);
         if (!r) continue;
         if (alive && r.corpse) clearCorpse(r);
         r.alive = !!alive;
         if (wi >= 0) { r.wid = WPN.LIST[wi]; r.fig.setWeapon(r.wid); }
+        r.ads = !!ads;
         r.buf.push({ t: now, x, y, z, yaw, pitch });
         if (r.buf.length > 20) r.buf.shift();
       }
@@ -703,10 +772,21 @@ function handle(m) {
       const r = remotes.get(m.id);
       if (r) r.arm.getWorldPosition(o);
       if (m.id === specActive) { views.fire(performance.now()); views.muzzleWorld(o); } // 觀戰：跟著開槍
-      addTracer(o, e);
-      addSpark(e);
+      for (const end of m.es || [m.e]) { // 霰彈槍有好幾顆彈丸
+        const pe = new THREE.Vector3().fromArray(end);
+        addTracer(o, pe);
+        addSpark(pe);
+      }
       const dist = Math.hypot(o.x - me.x, o.z - me.z);
-      sfx(m.w === 'pistol' ? 'pistol' : 'rifle', 0.45 / (1 + dist * 0.07), dist / 70); // 越遠越小聲、越悶
+      const sw = WEAPONS[m.w] && !WEAPONS[m.w].melee ? m.w : 'rifle';
+      const loud = sw === 'sniper' || sw === 'shotgun' ? 0.05 : 0.07; // 狙擊槍、霰彈槍傳得比較遠
+      sfx(sw, 0.45 / (1 + dist * loud), dist / 70); // 越遠越小聲、越悶
+      // 附近的人拉栓／泵動也聽得到（觀戰時由手上的動畫播）
+      if (dist < 30 && m.id !== specActive) {
+        const v = 0.3 / (1 + dist * 0.15);
+        if (sw === 'sniper') { sfx('boltUp', v, 0, 0.37); sfx('boltBack', v, 0, 0.46); sfx('boltFwd', v, 0, 0.62); }
+        if (sw === 'shotgun') sfx('pump', v, 0, 0.26);
+      }
       break;
     }
     case 'reload': {
@@ -715,13 +795,18 @@ function handle(m) {
       if (!r) break;
       r.reloadStart = performance.now();
       r.reloadMs = m.ms;
-      if (m.id === specActive) { const w = WEAPONS[r.wid || 'rifle']; views.reload(r.reloadStart, m.ms, !!w.reloadEmptyMs && m.ms >= w.reloadEmptyMs); }
+      const rw = WEAPONS[r.wid || 'rifle'];
+      if (m.id === specActive) views.reload(r.reloadStart, m.ms, !!m.empty, m.n);
       const p = r.group.position, d = Math.hypot(p.x - me.x, p.z - me.z);
-      if (d < 30) {
+      if (d < 30 && m.id !== specActive) {
         const v = 0.35 / (1 + d * 0.15);
-        sfx('magOut', v, 0, m.ms * 0.0002);
-        sfx('magIn', v, 0, m.ms * 0.0006);
-        if (m.ms > 2000) sfx('bolt', v, 0, m.ms * 0.00068);
+        if (rw.shells) {
+          for (let i = 0; i < (m.n || 1); i++) sfx('shellIn', v, 0, (rw.shells.startMs + i * rw.shells.eachMs) / 1000 - 0.02);
+        } else {
+          sfx('magOut', v, 0, m.ms * 0.0002);
+          sfx('magIn', v, 0, m.ms * 0.0006);
+          if (m.empty) sfx('bolt', v, 0, m.ms * 0.00068);
+        }
       }
       break;
     }
@@ -760,6 +845,7 @@ function handle(m) {
         me.hp = 0;
         firing = false;
         me.heavyAt = 0;
+        me.adsToggled = false;
         kitOpen = true; // 死掉的時候可以換套裝
         updateHp();
         $('deathby').textContent = `擊倒你的是：${nameOf(m.killer)}`;
@@ -831,7 +917,11 @@ function onInput(code, down) {
     else switchWeapon(WPN.HAND_SLOTS[i]);
   }
   if (a === 'kit' && down) toggleKitPick();
-  if (a === 'heavy') { if (down) startHeavy(); else releaseHeavy(); }
+  // 右鍵：拿刀＝重擊，拿槍＝瞄準
+  if (a === 'heavy') {
+    if (curW().melee) { if (down) startHeavy(); else releaseHeavy(); }
+    else { if (!down) releaseHeavy(); aimPress(down); }
+  }
   if (a === 'inspect' && down) doInspect();
   if (a === 'score') setScoreboard(down);
   return true;
@@ -853,7 +943,7 @@ document.addEventListener('pointerlockchange', () => {
 });
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
-  const k = 0.0022 * settings.mouse * aaSlow;
+  const k = 0.0022 * settings.mouse * aaSlow * aimSens();
   const dy = -e.movementX * k, dp = -e.movementY * k * settings.vert * (settings.invertY ? -1 : 1);
   me.yaw += dy; me.pitch += dp;
   userYaw += dy; userPitch += dp;
@@ -879,7 +969,7 @@ document.addEventListener('keydown', (e) => {
   if (onInput(e.code, true)) e.preventDefault();
 });
 document.addEventListener('keyup', (e) => onInput(e.code, false));
-addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; setScoreboard(false); });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; firing = false; me.adsHeld = false; setScoreboard(false); });
 function resume() {
   $('paused').classList.add('hidden');
   uiClick();
@@ -942,6 +1032,11 @@ function onTouchStart(e) {
         s.timer = setTimeout(() => { s.heavy = startHeavy(); }, 250);
         touches.set(t.identifier, s);
       } else if (btn.id === 'btnFire') { firing = true; touches.set(t.identifier, { role: 'fire', x: t.clientX, y: t.clientY, btn }); }
+      else if (btn.id === 'btnAim') {
+        // 瞄準鈕：點一下切換或按住（看設定）；按著也可以拖動轉視角
+        aimPress(true);
+        touches.set(t.identifier, { role: 'aim', x: t.clientX, y: t.clientY, btn });
+      }
       else if (btn.id === 'btnSwap') {
         // 點一下＝切換；按住＝跳出其他武器，滑過去放開就換
         const s = { role: 'swap', btn, hover: null, open: false };
@@ -992,8 +1087,8 @@ function onTouchMove(e) {
       });
       s.hover = el?.dataset.slot || null;
       for (const o of document.querySelectorAll('#swapPop .swopt')) o.classList.toggle('on', o === el);
-    } else if (s.role === 'look' || s.role === 'fire' || s.role === 'knife') {
-      const k = LOOK_SENS * settings.touch * aaSlow;
+    } else if (s.role === 'look' || s.role === 'fire' || s.role === 'knife' || s.role === 'aim') {
+      const k = LOOK_SENS * settings.touch * aaSlow * aimSens();
       const dy = -(t.clientX - s.x) * k, dp = -(t.clientY - s.y) * k * settings.vert * (settings.invertY ? -1 : 1);
       me.yaw += dy; me.pitch += dp;
       userYaw += dy; userPitch += dp;
@@ -1008,6 +1103,7 @@ function onTouchEnd(e) {
     if (!s) continue;
     if (s.role === 'move') { moveVec = { x: 0, y: 0 }; $('stick').classList.remove('on'); }
     if (s.role === 'fire') firing = false;
+    if (s.role === 'aim') aimPress(false);
     if (s.role === 'knife') {
       clearTimeout(s.timer);
       if (s.heavy) releaseHeavy(); else shoot(performance.now());
@@ -1356,7 +1452,7 @@ function frame() {
     if (me.alive) {
       if (frozen(now)) { me.vx = me.vz = 0; jumpQueued = false; } else physics(dt);
       if (firing) shoot(now);
-      if (me.reloadEnd && now >= me.reloadEnd) { me.reloadEnd = 0; me.ammoBy[me.weapon] = curW().mag; updateAmmo(); }
+      updateReload(now);
     } else if (room?.mode === 'tdm') {
       $('respawn').textContent = `${Math.max(0, Math.ceil((respawnAt - now) / 1000))} 秒後重生…`;
     }
@@ -1377,9 +1473,12 @@ function frame() {
     if (!$('results').classList.contains('hidden')) {
       $('resLeave').textContent = `返回房間（${Math.max(0, Math.ceil((resultsEnd - now) / 1000))}）`;
     }
-    if (now - lastSend >= SEND_MS && me.alive) {
+    if (me.alive) updateAds(dt, now); else { me.adsOn = false; me.adsK = 0; }
+    // 開鏡／關鏡時馬上告訴伺服器（狙擊槍要瞄滿才準）
+    if (me.alive && (now - lastSend >= SEND_MS || me.adsOn !== lastAdsSent)) {
       lastSend = now;
-      send({ t: 'state', seq: me.seq, x: +me.x.toFixed(3), y: +me.y.toFixed(3), z: +me.z.toFixed(3), yaw: +me.yaw.toFixed(3), pitch: +me.pitch.toFixed(3) });
+      lastAdsSent = me.adsOn;
+      send({ t: 'state', seq: me.seq, x: +me.x.toFixed(3), y: +me.y.toFixed(3), z: +me.z.toFixed(3), yaw: +me.yaw.toFixed(3), pitch: +me.pitch.toFixed(3), ads: me.adsOn ? 1 : 0 });
     }
     for (const r of remotes.values()) {
       r.group.visible = r.alive || !!r.corpse;
@@ -1427,9 +1526,31 @@ function frame() {
   }
   // 走出重生區：這條命就不能再換套裝
   if (me.alive && room?.phase === 'live' && !me.leftSpawn && !MAP.inSpawn(curMap, me.team, me.x, me.z)) me.leftSpawn = true;
+  // 瞄準：畫面放大；狙擊槍瞄好時換成狙擊鏡畫面（觀戰時跟著被觀戰的人）
+  let zw = null, zk = 0;
+  if (spec) {
+    zw = WEAPONS[spec[1].wid || 'rifle'];
+    const rate = zw.ads ? 1000 / zw.ads.ms : 10;
+    specAdsK = spec[1].ads && zw.ads ? Math.min(1, specAdsK + rate * dt) : Math.max(0, specAdsK - rate * 1.4 * dt);
+    zk = specAdsK;
+  } else if (playing && me.alive) { zw = curW(); zk = me.adsK; }
+  const ez = zk * zk * (3 - 2 * zk);
+  const fov = settings.fov / (zw?.ads ? 1 + (zw.ads.zoom - 1) * ez : 1);
+  if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
+  const scopeOn = !!zw?.ads?.scope && zk > 0.9;
+  const scopeCls = scopeOn ? zw.ads.scope : 'hidden';
+  if ($('scope').className !== scopeCls) $('scope').className = scopeCls;
+  if (scopeOn && !spec) {
+    // 狙擊鏡會微微晃（栓狙晃比較多，移動時晃更多）
+    const amp = (zw.ads.scope === 'bolt' ? 0.0032 : 0.002) * (Math.hypot(me.vx, me.vz) > 1 ? 3 : 1);
+    camera.rotation.x += Math.sin(now * 0.0013) * amp + Math.sin(now * 0.0031) * amp * 0.3;
+    camera.rotation.y += Math.sin(now * 0.0009 + 1) * amp * 1.3;
+  }
+  document.body.classList.toggle('noxhair', zk > 0.3 || !!zw?.hipCone); // 狙擊槍不開鏡沒有準心
+  document.body.classList.toggle('melee', playing && !!curW().melee);
   views.update(now, dt, spec
-    ? { visible: true, bob: 0, vy: 0, recoil: 0 }
-    : { visible: playing && me.alive, bob, vy: me.onGround ? 0 : me.vy, recoil: me.recoil });
+    ? { visible: !scopeOn, bob: 0, vy: 0, recoil: 0, ads: ez }
+    : { visible: playing && me.alive && !scopeOn, bob, vy: me.onGround ? 0 : me.vy, recoil: me.recoil, ads: ez });
   updateRemotePoses(now);
 
   for (let i = tracers.length - 1; i >= 0; i--) {

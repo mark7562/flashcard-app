@@ -91,6 +91,56 @@ const SFX = {
     tone(t, 0.07, v * 0.45, 'sine', 230, 80);
     noise(t + 0.015, 0.14, v * 0.12, 'highpass', 1800 * (1 - m * 0.6), 1200);
   },
+  // 衝鋒槍：快、薄、偏高音
+  smg(t, v, m) {
+    const top = 6500 * (1 - m * 0.8);
+    noise(t, 0.055, v * 0.75, 'bandpass', top * 0.5, 1100, 0.8);
+    tone(t, 0.06, v * 0.5, 'sine', 210, 70);
+    tone(t, 0.02, v * 0.2, 'square', 1500 * (1 - m * 0.5), 900);
+    noise(t + 0.01, 0.12, v * 0.12, 'highpass', 2200 * (1 - m * 0.6), 1500);
+  },
+  // 霰彈槍：又寬又重的「轟」
+  shotgun(t, v, m) {
+    const top = 4200 * (1 - m * 0.8);
+    noise(t, 0.16, v * 1.1, 'lowpass', top, 350);
+    tone(t, 0.2, v * 1.0, 'sine', 95, 35);
+    noise(t + 0.01, 0.06, v * 0.5, 'bandpass', 1800 * (1 - m * 0.5), 700, 0.6);
+    noise(t + 0.05, 0.5, v * 0.22, 'lowpass', 900 * (1 - m * 0.5), 200);
+  },
+  // 栓動狙擊：很響的爆裂聲＋長長的回音
+  sniper(t, v, m) {
+    const top = 7500 * (1 - m * 0.75);
+    noise(t, 0.05, v * 1.1, 'highpass', top * 0.25, top * 0.25);
+    noise(t, 0.14, v * 1.0, 'lowpass', top, 500);
+    tone(t, 0.22, v * 0.9, 'sine', 120, 30);
+    noise(t + 0.06, 0.9, v * 0.25, 'bandpass', 700 * (1 - m * 0.4), 180, 0.7);
+    noise(t + 0.35, 0.6, v * 0.1, 'bandpass', 500, 150, 0.7);
+  },
+  // 半自動狙擊：比栓狙短一點、乾一點
+  dmr(t, v, m) {
+    const top = 6500 * (1 - m * 0.75);
+    noise(t, 0.04, v * 0.9, 'highpass', top * 0.3, top * 0.3);
+    noise(t, 0.11, v * 0.9, 'lowpass', top, 550);
+    tone(t, 0.16, v * 0.8, 'sine', 150, 40);
+    noise(t + 0.04, 0.5, v * 0.18, 'bandpass', 850 * (1 - m * 0.4), 250, 0.7);
+  },
+  // 大口徑手槍：低沉有力的「碰」
+  deagle(t, v, m) {
+    const top = 5000 * (1 - m * 0.8);
+    noise(t, 0.09, v * 1.0, 'lowpass', top, 450);
+    tone(t, 0.14, v * 0.85, 'sine', 120, 40);
+    tone(t, 0.03, v * 0.25, 'square', 900 * (1 - m * 0.5), 400);
+    noise(t + 0.03, 0.35, v * 0.16, 'bandpass', 700 * (1 - m * 0.5), 220, 0.8);
+  },
+  pump(t, v) {
+    noise(t, 0.07, v * 0.5, 'bandpass', 1300, 700, 2); tone(t, 0.04, v * 0.3, 'square', 260, 180);
+    noise(t + 0.16, 0.06, v * 0.55, 'bandpass', 1700, 1100, 2.5); tone(t + 0.16, 0.04, v * 0.3, 'square', 380, 260);
+  },
+  shellIn(t, v) { noise(t, 0.04, v * 0.45, 'bandpass', 2000, 1300, 3); tone(t + 0.02, 0.04, v * 0.2, 'triangle', 600, 420); },
+  boltUp(t, v) { noise(t, 0.05, v * 0.4, 'bandpass', 2600, 1800, 3); tone(t, 0.03, v * 0.2, 'square', 900, 700); },
+  boltBack(t, v) { noise(t, 0.09, v * 0.45, 'bandpass', 1800, 900, 2); },
+  boltFwd(t, v) { noise(t, 0.08, v * 0.45, 'bandpass', 1100, 2000, 2); tone(t + 0.07, 0.04, v * 0.3, 'square', 520, 360); },
+  scopeIn(t, v) { noise(t, 0.05, v * 0.15, 'bandpass', 3200, 2600, 4); },
   dry(t, v) { tone(t, 0.02, v * 0.3, 'square', 2600, 2000); },
   magOut(t, v) { noise(t, 0.04, v * 0.4, 'bandpass', 1600, 1200, 3); tone(t + 0.01, 0.05, v * 0.15, 'triangle', 900, 700); },
   magIn(t, v) {

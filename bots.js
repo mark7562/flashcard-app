@@ -2,7 +2,8 @@
 // 機器人跟真人用同一套規則：同樣的血量、射速、彈匣、命中判定，也看不到牆後面的人
 const MAP = require('./public/map.js');
 const { segmentBlocked } = require('./geom.js');
-const { WEAPONS } = require('./public/weapons.js');
+const WPN = require('./public/weapons.js');
+const { WEAPONS } = WPN;
 
 // ---------- 難度設定 ----------
 // react：反應時間（毫秒）  turn：轉身速度（弧度/秒）  error：瞄準誤差（弧度）
@@ -29,6 +30,23 @@ const LEVELS = {
     fov: 1.4, range: 42, rangeFalloff: 28, speed: 6.3, spot: 0.6, guardMs: [3500, 7000], jumpy: 0.25, knife: 0.5, pistol: true,
   },
 };
+
+// 每個難度挑主武器的比例（新手比較少拿狙擊槍）；scope：開好鏡之後還要再瞄多久才開槍
+const KIT_WEIGHTS = {
+  easy: { primary: { rifle: 5, smg: 3, shotgun: 2, sniper: 0.5, dmr: 1 }, secondary: { pistol: 3, deagle: 1 }, scope: [700, 1200] },
+  normal: { primary: { rifle: 4, smg: 3, shotgun: 2, sniper: 1.2, dmr: 1.5 }, secondary: { pistol: 2, deagle: 1.5 }, scope: [400, 800] },
+  hard: { primary: { rifle: 4, smg: 3, shotgun: 2, sniper: 2, dmr: 2 }, secondary: { pistol: 1.5, deagle: 2 }, scope: [220, 480] },
+};
+function weighted(table) {
+  const entries = Object.entries(table);
+  let r = Math.random() * entries.reduce((a, [, v]) => a + v, 0);
+  for (const [k, v] of entries) { r -= v; if (r <= 0) return k; }
+  return entries[0][0];
+}
+function pickLoadout(level) {
+  const t = KIT_WEIGHTS[level] || KIT_WEIGHTS.normal;
+  return WPN.clean({ primary: weighted(t.primary), secondary: weighted(t.secondary), melee: 'knife', throw1: 'frag', throw2: 'flash' });
+}
 
 const NAMES = [
   '阿方', '小塊', '鐵頭', '方方', '積木', '豆腐', '磚頭', '小立', '大正', '方糖',
@@ -314,7 +332,7 @@ function makeBrain(level) {
     target: 0, reactAt: 0, aimOff: [0, 0], head: false, burstLeft: 0, nextShotAt: 0, sprayN: 0,
     strafeDir: 0, strafeUntil: 0, lastSeen: null, lastSeenAt: 0, holdUntil: 0, retreated: false,
     stuckCheckAt: 0, stuckPos: [0, 0, 0], idleUntil: 0, alert: null, heardAt: 0,
-    vy: 0, ground: true, jumpCd: 0, guard: null, guardUntil: 0, lookSweep: 0,
+    vy: 0, ground: true, jumpCd: 0, guard: null, guardUntil: 0, lookSweep: 0, scopeWait: 500,
   };
 }
 function resetBrain(b) {
@@ -451,10 +469,11 @@ function think(p, r, now, dt, api) {
 
   // ---- 視覺：找看得到的最近敵人 ----
   let seen = null, bestD = Infinity;
+  const longGun = !!WEAPONS[p.loadout.primary].ads?.scope; // 拿狙擊槍看得比較遠
   for (const q of r.players.values()) {
     if (q.team === p.team || !q.alive) continue;
     const dx = q.x - p.x, dz = q.z - p.z, dist = Math.hypot(dx, dz);
-    if (dist > c.range) continue;
+    if (dist > c.range * (longGun ? 1.5 : 1)) continue;
     const inView = Math.abs(angleDiff(yawTo(dx, dz), p.yaw)) < c.fov || dist < 4 || q.id === b.target;
     if (!inView || !canSee(p, q, map.boxes)) continue;
     if (dist < bestD) { bestD = dist; seen = q; }
@@ -495,6 +514,8 @@ function think(p, r, now, dt, api) {
   let want = p.weapon;
   if (seen) {
     if (b.knife && bestD < 3) want = 'melee'; // 貼很近就拔刀
+    else if (longGun && c.pistol && bestD < 7 && p.ammoBy.secondary > 0) want = 'secondary'; // 狙擊手被貼臉就拔手槍
+    else if (longGun && p.weapon === 'secondary' && bestD > 10 && p.ammoBy.primary > 0) want = 'primary';
     else if (p.weapon === 'melee') want = p.ammoBy.primary > 0 || !c.pistol ? 'primary' : 'secondary';
     else if (p.weapon === 'primary' && p.ammoBy.primary <= 0 && c.pistol && p.ammoBy.secondary > 0) want = 'secondary';
     else if (p.weapon === 'secondary' && p.ammoBy.secondary <= 0) want = 'primary';
@@ -502,6 +523,8 @@ function think(p, r, now, dt, api) {
   if (want !== p.weapon) api.switchTo(p, want);
   const W = WEAPONS[p.loadout[p.weapon]];
   const ammo = W.mag ? p.ammoBy[p.weapon] : 0;
+  const scopeGun = !!W.ads?.scope;
+  if (!(b.state === 'engage' && seen && scopeGun) || p.reloadUntil) p.adsSince = 0;
   // 沒子彈就換彈；沒在打的時候，彈匣剩一半也先補滿
   if (W.mag && !p.reloadUntil && (ammo <= 0 || (!seen && b.state === 'patrol' && ammo < W.mag * 0.5))) api.reload(p);
 
@@ -526,16 +549,30 @@ function think(p, r, now, dt, api) {
         api.melee(p, { d: [-Math.sin(p.yaw) * cp, Math.sin(p.pitch), -Math.cos(p.yaw) * cp], o: [p.x, eyeY, p.z], v: (b.swingN = ((b.swingN || 0) + 1) % 3) });
         b.nextShotAt = now + W.fireMs + rand(0, 200);
       }
+    } else if (scopeGun && (!p.adsSince || now - p.adsSince < W.ads.ms + b.scopeWait || !b.ground)) {
+      // 狙擊槍：先開鏡，開好後再瞄一下才開槍（不會秒狙）；拉栓的時候不開鏡
+      if (!p.adsSince && b.ground && now >= b.nextShotAt - W.ads.ms && now >= b.reactAt - W.ads.ms && !p.reloadUntil && ammo > 0) {
+        p.adsSince = now;
+        b.scopeWait = rand(...(KIT_WEIGHTS[b.level] || KIT_WEIGHTS.normal).scope);
+      }
+    } else if (W.pellets && dist > 16) {
+      // 霰彈槍太遠打不到：往前壓
     } else if (now >= b.reactAt && aligned && now >= b.nextShotAt && ammo > 0 && !p.reloadUntil) {
       // 距離越遠越不準；連射越久越散；在空中更不準（跟玩家一樣）
-      const err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray) * (b.ground ? 1 : 2.2);
+      let err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray) * (b.ground ? 1 : 2.2);
+      if (scopeGun) err = c.error * (0.5 + dist / (c.rangeFalloff * 2.5)); // 開鏡比較準
       const jy = p.yaw + randn() * err;
       const jp = p.pitch + randn() * err;
       b.sprayN += 1;
       const cp = Math.cos(jp);
-      api.shoot(p, { d: [-Math.sin(jy) * cp, Math.sin(jp), -Math.cos(jy) * cp], o: [p.x, eyeY, p.z] });
+      api.shoot(p, { d: [-Math.sin(jy) * cp, Math.sin(jp), -Math.cos(jy) * cp], o: [p.x, eyeY, p.z], s: (Math.random() * 1e9) | 0, a: scopeGun ? 1 : 0 });
       b.burstLeft -= 1;
-      if (b.burstLeft <= 0) {
+      if (W.bolt) p.adsSince = 0; // 拉栓：先退出狙擊鏡
+      if (W.fireMs >= 300) {
+        // 半自動、栓動、泵動：一發一發打
+        b.sprayN = 0;
+        b.nextShotAt = now + W.fireMs * 1.05 + rand(c.pause[0] * 0.4, c.pause[1] * 0.6);
+      } else if (b.burstLeft <= 0) {
         b.sprayN = 0;
         b.nextShotAt = now + rand(c.pause[0], c.pause[1]);
         b.burstLeft = randInt(c.burst[0], c.burst[1]);
@@ -548,13 +585,16 @@ function think(p, r, now, dt, api) {
       b.strafeUntil = now + rand(500, 1300);
       if (b.strafeDir && Math.random() < c.jumpy) wantJump = true; // 偶爾邊閃邊跳
     }
+    if (W.pellets && dist > 6) { mx += dx / dist; mz += dz / dist; } // 霰彈槍、衝鋒槍喜歡貼近
+    else if (W.id === 'smg' && dist > 14) { mx += dx / dist * 0.6; mz += dz / dist * 0.6; }
+    if (p.adsSince) b.strafeDir = 0; // 開鏡時站穩
     if (b.strafeDir && !W.melee) {
       // 閃躲時不要從高台上掉下去
       const sx = (-dz / dist) * b.strafeDir, sz = (dx / dist) * b.strafeDir;
       const k = nav.cellOf(p.x + sx * 0.9, p.z + sz * 0.9);
       if (nav.ok[k] && Math.abs(nav.h[k] - p.y) <= STEP) { mx += sx; mz += sz; } else b.strafeDir = -b.strafeDir;
     }
-    if (c.flank && dist > 22) { mx += dx / dist * 0.7; mz += dz / dist * 0.7; } // 老手太遠會往前壓
+    if (c.flank && dist > 22 && !scopeGun) { mx += dx / dist * 0.7; mz += dz / dist * 0.7; } // 老手太遠會往前壓
     b.path = null;
   } else {
     // ---- 移動：巡邏 / 查看 / 搜尋 / 撤退 / 守點 ----
@@ -614,7 +654,7 @@ function think(p, r, now, dt, api) {
 
   // ---- 移動與物理 ----
   if (wantJump) jump(b, now);
-  const speed = (b.state === 'engage' && !W.melee ? c.speed * 0.6 : b.state === 'guard' ? 0 : c.speed) * W.speed;
+  const speed = (b.state === 'engage' && !W.melee ? c.speed * 0.6 : b.state === 'guard' ? 0 : c.speed) * W.speed * (p.adsSince ? W.ads.speed : 1);
   const blocked = move(p, b, nav, mx, mz, speed, dt);
   if (blocked && b.state !== 'engage') {
     // 被擋住：先試著跳，跳了還是過不去就換條路
@@ -645,4 +685,4 @@ function record(p, now) {
 // 伺服器啟動時先把每張地圖的尋路網格算好
 function prepare() { for (const id of MAP.order) navFor(MAP.get(id)); }
 
-module.exports = { LEVELS, NAMES, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };
+module.exports = { LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };

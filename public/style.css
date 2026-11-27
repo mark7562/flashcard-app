@@ -629,7 +629,7 @@ body.touch #wslots { display: none; }
 }
 .kr-opt.on { border-color: var(--cyan); background: rgba(0, 229, 255, 0.2); box-shadow: 0 0 8px rgba(0, 229, 255, 0.4); }
 .kr-opt.off { opacity: 0.55; }
-.kr-info { grid-column: 2; font-size: 12px; color: var(--muted); }
+.kr-info { grid-column: 2; font-size: 12px; color: var(--muted); white-space: pre-line; }
 .kitform .nbtn.using { border-color: #ffbe0b; color: #ffbe0b; }
 @media (max-height: 520px) { .kitform { gap: 6px; } .kr-opt { padding: 4px 10px; font-size: 14px; } }
 /* 矮螢幕（手機橫放）：倒數數字和換套裝選單不要疊在一起 */
@@ -659,3 +659,38 @@ body.touch #kitChip { top: max(104px, calc(env(safe-area-inset-top) + 96px)); }
 /* 手機：擊殺訊息最多 3 行、字小一點，不要碰到右邊的按鈕 */
 body.touch #killfeed { font-size: 12px; }
 body.touch #killfeed div:nth-child(n+4) { display: none; }
+
+/* ===== 瞄準 ===== */
+#btnAim { right: max(110px, calc(env(safe-area-inset-right) + 82px)); bottom: max(200px, calc(env(safe-area-inset-bottom) + 184px)); width: 56px; height: 56px; font-size: 26px; border-color: rgba(0, 245, 212, 0.55); }
+body.melee #btnAim, body.spectating #btnAim { display: none; }
+body.noxhair #crosshair { opacity: 0; }
+/* 狙擊鏡畫面：外面全黑，中間圓形的鏡片 */
+#scope { position: absolute; inset: 0; pointer-events: none; }
+#scope.hidden { display: none; }
+#scope.bolt { background: radial-gradient(circle at center, rgba(0,0,0,0) 0, rgba(0,0,0,0) 40vmin, rgba(0,0,0,0.55) 43vmin, #000 44vmin); }
+#scope.dmr { background: radial-gradient(circle at center, rgba(0,0,0,0) 0, rgba(0,0,0,0) 32vmin, rgba(0,0,0,0.6) 35vmin, #000 36vmin); }
+#scope::before, #scope::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+/* 栓狙：細十字線＋中間留空、外側變粗 */
+#scope.bolt::before {
+  width: 88vmin; height: 88vmin;
+  background:
+    linear-gradient(#000, #000) center / 1.5px 100% no-repeat,
+    linear-gradient(#000, #000) center / 100% 1.5px no-repeat,
+    linear-gradient(#000, #000) center top / 5px 30% no-repeat,
+    linear-gradient(#000, #000) center bottom / 5px 30% no-repeat,
+    linear-gradient(#000, #000) left center / 30% 5px no-repeat,
+    linear-gradient(#000, #000) right center / 30% 5px no-repeat;
+}
+#scope.bolt::after { width: 4px; height: 4px; border-radius: 50%; background: #ff2a2a; box-shadow: 0 0 4px #ff2a2a; }
+/* 連狙：倒 V 準星＋下方刻度 */
+#scope.dmr::before {
+  width: 72vmin; height: 72vmin;
+  background:
+    linear-gradient(#111, #111) center / 1px 100% no-repeat,
+    linear-gradient(#111, #111) center / 100% 1px no-repeat;
+  opacity: 0.6;
+}
+#scope.dmr::after {
+  width: 14px; height: 14px; margin-top: 7px; border-left: 2px solid #ff6a2a; border-top: 2px solid #ff6a2a;
+  transform: translate(-50%, -50%) rotate(45deg); filter: drop-shadow(0 0 2px #ff6a2a);
+}

@@ -118,14 +118,15 @@ const SLIDERS = [
   ['setMusic', 'music', (v) => v + '%'],
   ['setVert', 'vert', (v) => v.toFixed(2) + 'x'],
   ['setBtnScale', 'btnScale', (v) => Math.round(v * 100) + '%'],
+  ['setAdsSens', 'adsSens', (v) => v.toFixed(2) + 'x'],
 ];
 
 // ---------- 按鍵設定（電腦） ----------
 const ACTIONS = [
   ['forward', '前進'], ['back', '後退'], ['left', '左移'], ['right', '右移'],
   ['jump', '跳躍'], ['reload', '換彈'], ['fire', '開槍'], ['score', '計分板'],
-  ['w1', '主武器'], ['w2', '副武器（手槍）'], ['w3', '刀'], ['kit', '換套裝'],
-  ['heavy', '重擊（拿刀時）'], ['inspect', '檢視武器'],
+  ['w1', '主武器'], ['w2', '副武器'], ['w3', '刀'], ['kit', '換套裝'],
+  ['heavy', '瞄準／刀的重擊'], ['inspect', '檢視武器'],
 ];
 export function keyName(code) {
   if (!code) return '（未設定）';
@@ -197,6 +198,7 @@ function syncSettingsUI() {
   for (const b of document.querySelectorAll('#setQuality button')) b.classList.toggle('on', b.dataset.q === settings.quality);
   for (const b of document.querySelectorAll('#setInvert button')) b.classList.toggle('on', b.dataset.v === (settings.invertY ? '1' : '0'));
   for (const b of document.querySelectorAll('#setAssist button')) b.classList.toggle('on', b.dataset.v === settings.aimAssist);
+  for (const b of document.querySelectorAll('#setAdsMode button')) b.classList.toggle('on', b.dataset.v === settings.adsMode);
   renderKeys();
   $('muteBtn').classList.toggle('off', !settings.musicOn);
 }
@@ -309,6 +311,9 @@ export function initMenu(handlers) {
   }
   for (const b of document.querySelectorAll('#setAssist button')) {
     b.addEventListener('click', () => { setSetting('aimAssist', b.dataset.v); syncSettingsUI(); uiClick(); });
+  }
+  for (const b of document.querySelectorAll('#setAdsMode button')) {
+    b.addEventListener('click', () => { setSetting('adsMode', b.dataset.v); syncSettingsUI(); uiClick(); });
   }
   for (const b of document.querySelectorAll('#setTabs button')) {
     b.addEventListener('click', () => {

@@ -61,8 +61,44 @@ export function makeFigure(color, name = null, opts = {}) {
   part(knife, 0.015, 0.06, 0.3, steel, 0, 0, -0.2); // 刀刃
   part(knife, 0.025, 0.09, 0.02, dark, 0, 0, -0.04); // 護手
   part(knife, 0.035, 0.045, 0.14, poly, 0, 0, 0.04); // 刀柄
-  arm.add(gun, pistol, knife);
-  const weapons = { rifle: gun, pistol, knife };
+  const wood = new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 0.8 });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xaab2be, roughness: 0.3, metalness: 0.7 });
+  const smg = new THREE.Group();
+  part(smg, 0.08, 0.1, 0.32, dark, 0, 0, -0.1);
+  part(smg, 0.085, 0.085, 0.18, poly, 0, 0, -0.34);
+  part(smg, 0.05, 0.05, 0.1, dark, 0, 0, -0.48);
+  part(smg, 0.05, 0.22, 0.06, dark, 0, -0.16, -0.16, 0.08); // 長彈匣
+  part(smg, 0.05, 0.12, 0.06, poly, 0, -0.1, 0.02, -0.35);
+  part(smg, 0.06, 0.07, 0.07, dark, 0, 0.08, -0.12); // 全息
+  part(smg, 0.02, 0.02, 0.2, dark, 0, 0, 0.14);
+  const shotgun = new THREE.Group();
+  part(shotgun, 0.08, 0.11, 0.34, dark, 0, 0, -0.1);
+  part(shotgun, 0.04, 0.04, 0.6, dark, 0, 0.04, -0.55); // 槍管
+  part(shotgun, 0.07, 0.07, 0.2, wood, 0, -0.03, -0.45); // 護木
+  part(shotgun, 0.05, 0.12, 0.06, wood, 0, -0.1, 0.03, -0.4);
+  part(shotgun, 0.06, 0.1, 0.24, wood, 0, -0.04, 0.22);
+  const sniper = new THREE.Group();
+  part(sniper, 0.08, 0.1, 0.5, poly, 0, -0.02, -0.2);
+  part(sniper, 0.03, 0.03, 0.55, dark, 0, 0.02, -0.7); // 長槍管
+  part(sniper, 0.055, 0.055, 0.34, dark, 0, 0.12, -0.12); // 狙擊鏡
+  part(sniper, 0.075, 0.075, 0.06, dark, 0, 0.12, -0.3);
+  part(sniper, 0.05, 0.12, 0.06, poly, 0, -0.1, 0.04, -0.35);
+  part(sniper, 0.07, 0.11, 0.26, poly, 0, -0.03, 0.22);
+  part(sniper, 0.06, 0.02, 0.02, steel, 0.06, 0.04, 0.05); // 槍栓握柄
+  const dmr = new THREE.Group();
+  part(dmr, 0.08, 0.1, 0.42, dark, 0, 0, -0.12);
+  part(dmr, 0.085, 0.085, 0.36, poly, 0, 0, -0.5);
+  part(dmr, 0.03, 0.03, 0.2, dark, 0, 0, -0.78);
+  part(dmr, 0.06, 0.15, 0.07, dark, 0, -0.12, -0.2, 0.15);
+  part(dmr, 0.05, 0.12, 0.06, poly, 0, -0.1, 0.02, -0.35);
+  part(dmr, 0.045, 0.045, 0.24, dark, 0, 0.1, -0.12); // 狙擊鏡
+  part(dmr, 0.065, 0.1, 0.18, poly, 0, -0.02, 0.2);
+  const deagle = new THREE.Group();
+  part(deagle, 0.065, 0.07, 0.32, chrome, 0, 0.03, -0.14);
+  part(deagle, 0.055, 0.15, 0.08, poly, 0, -0.08, -0.02, -0.25);
+  part(deagle, 0.012, 0.014, 0.012, accent, 0, 0.07, -0.28);
+  arm.add(gun, pistol, knife, smg, shotgun, sniper, dmr, deagle);
+  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle };
   for (const m of [body, head]) m.castShadow = true;
   group.add(body, head, visor, arm);
 
