@@ -21,18 +21,18 @@
     },
     smg: {
       id: 'smg', slot: 'primary', name: '衝鋒槍', short: '衝鋒槍', icon: '🔫',
-      mag: 30, fireMs: 70, reloadMs: 1600, reloadEmptyMs: 2000, body: 20, head: 50, speed: 1.08,
-      spread: [0.006, 0.03, 0.07], recoil: 0.13, kick: 0.0045, falloff: [10, 28, 0.7],
+      mag: 32, fireMs: 62, reloadMs: 1600, reloadEmptyMs: 2000, body: 21, head: 52, speed: 1.08,
+      spread: [0.01, 0.03, 0.07], recoil: 0.12, kick: 0.0042, falloff: [10, 26, 0.6],
       ads: { zoom: 1.25, ms: 130, spread: 0.5, speed: 0.85 },
       desc: '射速最快、跑得快，近中距離很兇；遠距離傷害會掉',
     },
     shotgun: {
       id: 'shotgun', slot: 'primary', name: '泵動霰彈槍', short: '霰彈槍', icon: '🔫',
-      mag: 6, fireMs: 900, reloadMs: 0, body: 16, head: 24, speed: 1,
-      spread: [0, 0, 0], recoil: 0.5, kick: 0.03, falloff: [5, 18, 0.25],
-      pellets: 8, pelletSpread: 0.085, moveSpread: 1.3, shells: { startMs: 500, eachMs: 480, pumpMs: 500 },
+      mag: 6, fireMs: 850, reloadMs: 0, body: 17, head: 26, speed: 1,
+      spread: [0, 0, 0], recoil: 0.5, kick: 0.03, falloff: [7, 22, 0.3],
+      pellets: 9, pelletSpread: 0.075, moveSpread: 1.3, shells: { startMs: 500, eachMs: 480, pumpMs: 500 },
       ads: { zoom: 1.15, ms: 150, spread: 0.75, speed: 0.8 },
-      desc: '一發 8 顆彈丸，近距離一發擊倒；每發要泵動上膛，一顆一顆裝彈（可以中途開槍）',
+      desc: '一發 9 顆彈丸，近距離一發擊倒；每發要泵動上膛，一顆一顆裝彈（可以中途開槍）',
     },
     sniper: {
       id: 'sniper', slot: 'primary', name: '栓動狙擊槍', short: '栓狙', icon: '🎯',
@@ -57,7 +57,7 @@
     },
     deagle: {
       id: 'deagle', slot: 'secondary', name: '大口徑手槍', short: '大口徑', icon: '🔫',
-      mag: 7, fireMs: 380, reloadMs: 1700, reloadEmptyMs: 2000, body: 34, head: 100, speed: 1.05,
+      mag: 7, fireMs: 340, reloadMs: 1700, reloadEmptyMs: 2000, body: 38, head: 100, speed: 1.05,
       spread: [0.004, 0.05, 0.1], recoil: 0.75, kick: 0.035, falloff: [15, 40, 0.8], lockBack: true,
       ads: { zoom: 1.25, ms: 170, spread: 0.4, speed: 0.85 },
       desc: '身體三發、爆頭一發擊倒；只有 7 發、後座很大',

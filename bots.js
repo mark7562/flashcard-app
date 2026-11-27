@@ -683,7 +683,7 @@ function think(p, r, now, dt, api) {
         b.nextShotAt = now + rand(c.pause[0], c.pause[1]);
         b.burstLeft = randInt(c.burst[0], c.burst[1]);
       } else {
-        b.nextShotAt = now + Math.max(100, W.fireMs * (p.weapon === 'secondary' ? 1.4 : 1));
+        b.nextShotAt = now + Math.max(W.fireMs, 60) * (p.weapon === "secondary" ? 1.4 : 1);
       }
     }
     if (c.strafe > 0 && now >= b.strafeUntil) {
