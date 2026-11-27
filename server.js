@@ -315,6 +315,8 @@ function startRound(r, first = false) {
     spawnAt(p, list[idx[sd]++ % list.length], 0);
   }
   r.nades = []; r.smokes = []; r.fires = []; r.knives = []; r.decoys = [];
+  r.roundFirstKill = false;
+  for (const p of r.players.values()) { p.roundKills = 0; p.roundHeads = 0; p.clutchVs = 0; }
   if (r.mode === 'bomb') giveBomb(r);
   if (!first) toRoom(r, { t: 'round', n: r.round, freeze: freezeMs(r), swap, attack: r.attackTeam });
   syncRoom(r);
@@ -357,7 +359,13 @@ function endRound(r, winner, reason = 'elim') {
     planted: !!(r.bomb && ['planted', 'exploded', 'defused'].includes(r.bomb.state)), alive,
   });
   for (const p of r.players.values()) { p.actKind = null; }
-  toRoom(r, { t: 'roundEnd', winner, wins: r.roundWins, last: r.pendingEnd !== null, reason, side: r.roundLog.at(-1).side });
+  // 殘局勝利：贏的那隊只剩一個人活著，而且他曾經一個人對多個（或一對一）
+  let clutch = null;
+  if (winner >= 0 && !isZ(r)) {
+    const al = [...r.players.values()].filter((p) => p.alive && p.team === winner);
+    if (al.length === 1 && al[0].clutchVs >= 1) clutch = { id: al[0].id, vs: al[0].clutchVs };
+  }
+  toRoom(r, { t: 'roundEnd', winner, wins: r.roundWins, last: r.pendingEnd !== null, reason, side: r.roundLog.at(-1).side, clutch });
   syncRoom(r);
 }
 
@@ -517,6 +525,8 @@ function checkTeams(r) {
   if (r.phase !== 'live') return;
   const alive = [0, 0];
   for (const p of r.players.values()) if (p.alive) alive[p.team]++;
+  // 殘局：隊上只剩自己、對面還有人 → 記下來（贏了回合要顯示「殘局勝利」）
+  for (const p of r.players.values()) if (p.alive && alive[p.team] === 1 && alive[1 - p.team] > 0) p.clutchVs = Math.max(p.clutchVs || 0, alive[1 - p.team]);
   if (r.mode === 'bomb') {
     const A = r.attackTeam, D = 1 - A, planted = r.bomb && r.bomb.state === 'planted';
     if (!alive[D]) endRound(r, A, 'elim'); // 防守方全滅：進攻方贏（不管炸彈有沒有埋）
@@ -1027,7 +1037,8 @@ function readyToFire(p, now) {
   if (w.zombie && now < (p.clawReadyAt || 0)) return null;
   return w;
 }
-function applyDamage(p, target, dmg, headshot, weapon, now) {
+// extra：{ smoke: 子彈穿過煙霧 }
+function applyDamage(p, target, dmg, headshot, weapon, now, extra = {}) {
   const r = p.room;
   p.protectUntil = 0; // 攻擊就取消重生保護
   if (now < target.protectUntil) return;
@@ -1046,7 +1057,19 @@ function applyDamage(p, target, dmg, headshot, weapon, now) {
     r.score[p.team] += 1;
   }
   if (isZ(r)) zDied(r, p, target, now, weapon);
-  toRoom(r, { t: 'kill', killer: p.id, rs: isZ(r) && target.team === 1 && !target.out ? target.respawnMs : undefined, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z, khp: p.hp });
+  // 擊殺特效用的資訊：這回合第幾殺、首殺、殘局（自己是隊上最後一個活著的）、穿煙、盲狙
+  p.roundKills = (p.roundKills || 0) + 1;
+  const first = !r.roundFirstKill;
+  r.roundFirstKill = true;
+  let clutch = 0;
+  if (isRounds(r) && !isZ(r)) {
+    const mates = [...r.players.values()].filter((q) => q.alive && q.team === p.team && q !== p).length;
+    const foes = [...r.players.values()].filter((q) => q.alive && q.team !== p.team).length + 1; // 包含剛被打倒的這個
+    if (!mates) clutch = foes;
+  }
+  const ns = !!(WEAPONS[weapon]?.hipCone && p.lastHip);
+  toRoom(r, { t: 'kill', killer: p.id, rs: isZ(r) && target.team === 1 && !target.out ? target.respawnMs : undefined, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z, khp: p.hp,
+    rk: p.roundKills, first: first || undefined, clutch: clutch || undefined, smoke: extra.smoke || undefined, ns: ns || undefined });
   recEvent(r, { k: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kx: p.x, kz: p.z });
   // 精彩程度比目前最佳的高：過一下（記到倒地）再存起來
   const rate = rateKill(p, target, headshot, weapon, now);
@@ -1133,7 +1156,8 @@ function handleShoot(p, msg) {
   for (const q of r.players.values()) if (q.bot && q.team !== p.team) BOT.hear(q, p, now, w.quiet ? QUIET_HEAR : Infinity);
   for (const [q, h] of dmgBy) {
     if (!q.alive) continue;
-    applyDamage(p, q, Math.round(h.dmg), h.head, w.id, now);
+    const smoke = !!(r.smokes?.length && NADE.segSmoke(o, [q.x, q.y + 1.2, q.z], r.smokes, now));
+    applyDamage(p, q, Math.round(h.dmg), h.head, w.id, now, { smoke });
     if (isZ(r) && q.alive && q.team === 1) zKnock(p, q, Math.min(6, h.dmg * 0.12), 200, now); // 子彈把殭屍往後推（好幾個人一起打可以壓住殭屍）
   }
 }

@@ -743,7 +743,64 @@ function toast(text) {
 function nameOf(id) { return roster.get(id)?.name ?? '?'; }
 function colorOf(id) { return '#' + (roster.get(id)?.color ?? 0xffffff).toString(16).padStart(6, '0'); }
 function teamCss(id) { return MAP.teams[roster.get(id)?.team ?? 0].css; }
-function feed(killer, victim, head, weapon) {
+// ---------- 擊殺圖示 ----------
+const KILL_ICONS = {
+  // 盲狙：狙擊鏡＋紅色禁止符號
+  ns: '<svg class="kfi" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M12 4.5v4M12 15.5v4M4.5 12h4M15.5 12h4" stroke="#fff" stroke-width="1.8"/><circle cx="12" cy="12" r="10.3" fill="none" stroke="#ff4d4d" stroke-width="2.2"/><path d="M4.8 4.8l14.4 14.4" stroke="#ff4d4d" stroke-width="2.4"/></svg>',
+  // 穿煙：一團灰色煙霧，被一道黃色彈道穿過
+  smoke: '<svg class="kfi" viewBox="0 0 24 24"><circle cx="8" cy="14" r="5" fill="#9aa3af"/><circle cx="13" cy="9" r="6" fill="#b8c0cc"/><circle cx="17" cy="14.5" r="4.6" fill="#a7afbb"/><circle cx="11.5" cy="16" r="4.4" fill="#c4cbd5"/><path d="M0.5 12.5h21" stroke="#ffd34d" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 1.6"/><path d="M21 10.3l2.6 2.2-2.6 2.2z" fill="#ffd34d"/></svg>',
+};
+function skullSvg(color) {
+  return `<svg viewBox="0 0 24 24"><path d="M12 2.5c-5 0-8.5 3.4-8.5 8 0 2.7 1.2 4.6 3 5.8V20c0 .8.6 1.4 1.4 1.4h1.3v-2h1.4v2h2.8v-2h1.4v2h1.3c.8 0 1.4-.6 1.4-1.4v-3.7c1.8-1.2 3-3.1 3-5.8 0-4.6-3.5-8-8.5-8z" fill="${color}"/><circle cx="8.7" cy="11" r="2.3" fill="#120c1e"/><circle cx="15.3" cy="11" r="2.3" fill="#120c1e"/><path d="M12 13.6l-1.4 2.4h2.8z" fill="#120c1e"/></svg>`;
+}
+const KILL_TIERS = [
+  ['擊殺', '#ffffff'], ['雙殺', '#00e5ff'], ['三殺', '#b06bff'], ['四殺', '#ff9a3c'], ['ACE 團滅', '#ffd34d'],
+];
+let killFxTimer = 0;
+// 自己擊殺：殲滅、爆破顯示大的骷髏徽章（連殺會升級）；其他模式只顯示一行小字
+function showKillFx(m) {
+  const w = WEAPONS[m.w];
+  me.rk = (me.rk || 0) + 1;
+  if (m.head) me.rh = (me.rh || 0) + 1;
+  if (!(isRounds() && !isZ())) {
+    const el = $('killsmall');
+    el.textContent = `${m.head ? '💀 爆頭擊殺' : '擊殺'} ${nameOf(m.victim)}`;
+    el.classList.add('show');
+    clearTimeout(killFxTimer);
+    killFxTimer = setTimeout(() => el.classList.remove('show'), 1500);
+    return;
+  }
+  const enemies = [...roster.values()].filter((p) => p.team !== me.team).length;
+  const rk = m.rk || me.rk;
+  const ace = enemies >= 3 && rk >= enemies;
+  const [title, color] = ace ? KILL_TIERS[4] : KILL_TIERS[Math.min(rk, 4) - 1];
+  const el = $('killbadge');
+  el.style.setProperty('--kc', color);
+  el.querySelector('.kb-skull').innerHTML = skullSvg(m.head ? '#ff4d6d' : color);
+  el.querySelector('.kb-title').textContent = title;
+  el.querySelector('.kb-name').textContent = nameOf(m.victim);
+  const tags = [];
+  if (m.head) tags.push(['爆頭', 'hot']);
+  if (w?.melee) tags.push(['🔪 刀殺', 'hot']);
+  if (m.first) tags.push(['首殺', 'gold']);
+  if (m.clutch) tags.push([`殘局 1v${m.clutch}`, 'gold']);
+  if (m.smoke) tags.push(['穿煙', '']);
+  if (m.ns) tags.push(['盲狙', 'hot']);
+  const box = el.querySelector('.kb-tags');
+  box.replaceChildren(...tags.map(([t, c]) => { const sp = document.createElement('span'); sp.textContent = t; if (c) sp.className = c; return sp; }));
+  el.classList.remove('hidden', 'pop', 'ace');
+  void el.offsetWidth; // 重新播放動畫
+  el.classList.add('pop');
+  if (ace) el.classList.add('ace');
+  // 音效：連殺越多，音越高、越華麗
+  const lv = ace ? 5 : Math.min(rk, 4);
+  const base = [0, 660, 740, 830, 990, 1175][lv];
+  for (let i = 0; i < Math.min(lv, 4) + 1; i++) beep(base * (1 + i * 0.25), 0.1, 0.09, 'triangle', i * 0.06);
+  if (m.head) beep(1800, 0.06, 0.08, 'square', 0.02);
+  clearTimeout(killFxTimer);
+  killFxTimer = setTimeout(() => el.classList.add('hidden'), 1650);
+}
+function feed(killer, victim, head, weapon, m = {}) {
   const div = document.createElement('div');
   if (killer === me.id || victim === me.id) div.className = 'me';
   const a = document.createElement('span'); a.textContent = nameOf(killer); a.style.color = teamCss(killer);
@@ -753,6 +810,9 @@ function feed(killer, victim, head, weapon) {
   const mid = document.createElement('span');
   mid.className = 'kfw' + (head ? ' head' : '');
   mid.textContent = `${w ? w.icon + w.short : '🔫'}${head ? ' 💀' : ''}`;
+  // 盲狙、穿煙的小圖示接在武器後面
+  if (m.ns) mid.insertAdjacentHTML('beforeend', KILL_ICONS.ns);
+  if (m.smoke) mid.insertAdjacentHTML('beforeend', KILL_ICONS.smoke);
   if (!killer || killer === victim) div.append(mid, b); // 被炸彈炸死、自己炸到自己
   else div.append(a, mid, b);
   $('killfeed').prepend(div);
@@ -1045,6 +1105,7 @@ function banner(big, small = '', cls = '', ms = 2200) {
   const el = $('banner');
   $('bannerBig').textContent = big;
   $('bannerSmall').textContent = small;
+  $('bannerStat').textContent = '';
   el.className = 'show ' + cls;
   clearTimeout(bannerTimer);
   if (ms) bannerTimer = setTimeout(() => { el.className = cls; }, ms);
@@ -1520,8 +1581,8 @@ function handle(m) {
       if (k) k.kills = m.kk;
       if (v) v.deaths = m.vd;
       if (room && m.score) room.score = m.score;
-      feed(m.killer, m.victim, m.head, m.w);
-      if (m.killer === me.id && m.victim !== me.id) toast(m.head ? `🎯 爆頭擊殺 ${nameOf(m.victim)}` : `擊殺 ${nameOf(m.victim)}`);
+      feed(m.killer, m.victim, m.head, m.w, m);
+      if (m.killer === me.id && m.victim !== me.id) showKillFx(m);
       if (m.victim === me.id) {
         me.alive = false;
         me.hp = 0;
@@ -1574,6 +1635,7 @@ function handle(m) {
       break;
     }
     case 'round':
+      me.rk = 0; me.rh = 0;
       effects.clear();
       actors.clear();
       me.acting = null;
@@ -1594,7 +1656,12 @@ function handle(m) {
       $('death').classList.add('hidden');
       const why = { bomb: '💥 炸彈爆炸', defuse: '✂ 炸彈被拆除', time: '⏱ 時間到', elim: '☠ 全部擊倒' }[m.reason];
       const tail = m.last ? '比賽結束！' : isZ() ? `人類 ${m.wins[0]} : ${m.wins[1]} 殭屍` : `藍隊 ${m.wins[0]} : ${m.wins[1]} 紅隊`;
-      banner(big, room?.mode === 'bomb' && why ? `${why} · ${tail}` : tail, cls, 3500);
+      // 殘局勝利：大字；不然在橫幅下面顯示自己這回合的擊殺數
+      const myClutch = m.clutch && m.clutch.id === me.id;
+      if (myClutch) banner('🏆 殘局勝利！', `一個人打贏 1v${m.clutch.vs} · ${tail}`, 'gold', 4000);
+      else banner(big, room?.mode === 'bomb' && why ? `${why} · ${tail}` : tail, cls, 3500);
+      $('bannerStat').textContent = !isZ() && me.rk ? `本回合 ${me.rk} 殺${me.rh ? ` · ${me.rh} 爆頭` : ''}` : '';
+      if (myClutch) [523, 659, 784, 1047].forEach((f, i) => beep(f, 0.22, 0.12, 'triangle', i * 0.12));
       actors.clear();
       me.acting = null;
       if (m.winner >= 0) beep(m.winner === me.team ? 880 : 330, 0.3, 0.1, 'triangle');

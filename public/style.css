@@ -697,6 +697,35 @@ body.touch #wslots { display: none; }
 /* 擊殺訊息中間的武器（爆頭加骷髏頭） */
 #killfeed .kfw { margin: 0 6px; padding: 0 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); color: #dfe7f7; font-size: 0.9em; }
 #killfeed .kfw.head { background: rgba(255, 77, 109, 0.25); color: #fff; }
+/* 擊殺紀錄的小圖示：盲狙（狙擊鏡＋禁止）、穿煙（煙霧＋子彈） */
+#killfeed .kfi { width: 1.6em; height: 1.6em; vertical-align: -0.45em; margin-left: 4px; }
+/* 擊殺徽章（殲滅、爆破）：準心下方，骷髏＋文字，從大縮小蹦出來 */
+#killbadge { position: absolute; left: 50%; top: calc(50% + 46px); transform: translateX(-50%); text-align: center; pointer-events: none; z-index: 6; --kc: #ffffff; }
+#killbadge.pop { animation: kbpop 1.6s ease-out forwards; }
+@keyframes kbpop {
+  0% { opacity: 0; transform: translateX(-50%) scale(1.8); }
+  8% { opacity: 1; transform: translateX(-50%) scale(0.92); }
+  14% { transform: translateX(-50%) scale(1.04); }
+  20% { transform: translateX(-50%) scale(1); }
+  78% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-50%) scale(0.96) translateY(-6px); }
+}
+#killbadge .kb-skull { width: 46px; height: 46px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  border: 3px solid var(--kc); background: rgba(10, 8, 24, 0.55); box-shadow: 0 0 14px var(--kc); }
+#killbadge .kb-skull svg { width: 30px; height: 30px; }
+#killbadge .kb-title { margin-top: 4px; font-size: 22px; font-weight: 900; letter-spacing: 0.12em; color: var(--kc); text-shadow: 0 0 10px var(--kc), 0 2px 4px #000; }
+#killbadge .kb-name { font-size: 13px; color: #e6ecf7; text-shadow: 0 1px 3px #000; }
+#killbadge .kb-tags { margin-top: 3px; display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }
+#killbadge .kb-tags span { font-size: 12px; font-weight: 800; padding: 1px 7px; border-radius: 9px; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(255, 255, 255, 0.35); color: #fff; }
+#killbadge .kb-tags span.hot { border-color: #ff4d6d; color: #ffb3c1; }
+#killbadge .kb-tags span.gold { border-color: #ffd34d; color: #ffe8a0; }
+#killbadge.ace .kb-skull { animation: kbglow 0.5s ease-in-out infinite alternate; }
+@keyframes kbglow { from { box-shadow: 0 0 10px var(--kc); } to { box-shadow: 0 0 30px var(--kc), 0 0 60px var(--kc); } }
+/* 團隊死鬥、生化：只有一行小字 */
+#killsmall { position: absolute; left: 50%; top: calc(50% + 40px); transform: translateX(-50%); font-size: 14px; font-weight: 800; color: #fff;
+  text-shadow: 0 1px 3px #000; opacity: 0; transition: opacity 0.4s; pointer-events: none; white-space: nowrap; }
+#killsmall.show { opacity: 1; transition: none; }
+#bannerStat { margin-top: 6px; font-size: 15px; font-weight: 800; color: #ffe8a0; text-shadow: 0 1px 4px #000; }
 #resLeave { align-self: center; width: auto; padding: 8px 22px; margin-top: 2px; }
 @media (max-height: 520px) { #resLeave { padding: 5px 16px; font-size: 14px; } }
 
