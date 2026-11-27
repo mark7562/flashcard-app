@@ -69,18 +69,24 @@
       heavy: { body: 80, back: 100, range: 2.0, windMs: 300, fireMs: 1100 },
       desc: '輕擊兩刀擊倒；重擊（右鍵／手機長按）傷害 80；從背後一刀擊倒；拿著跑得最快',
     },
-    frag: { id: 'frag', slot: 'throw', name: '手榴彈', short: '手榴彈', icon: '💣', disabled: true, desc: '爆破模式限定' },
-    flash: { id: 'flash', slot: 'throw', name: '閃光彈', short: '閃光彈', icon: '✨', disabled: true, desc: '爆破模式限定' },
+    // 投擲物（爆破模式限定）：每回合各一顆；數值在 nades.js
+    frag: { id: 'frag', slot: 'throw', name: '手榴彈', short: '手榴彈', icon: '💣', nade: true, speed: 1.05, desc: '1.6 秒後爆炸，範圍 6.5 公尺、最多 100 傷害；會炸到自己，不會炸到隊友；可以暫時炸開煙霧' },
+    flash: { id: 'flash', slot: 'throw', name: '閃光彈', short: '閃光彈', icon: '✨', nade: true, speed: 1.05, desc: '1.4 秒後爆開，看著它的人白畫面約 3 秒（側面 1.5 秒）；自己也會被閃' },
+    smoke: { id: 'smoke', slot: 'throw', name: '煙霧彈', short: '煙霧彈', icon: '💨', nade: true, speed: 1.05, desc: '停下來後冒出半徑 4.5 公尺的濃煙，維持 15 秒；會蓋掉火焰' },
+    molotov: { id: 'molotov', slot: 'throw', name: '火焰彈', short: '火焰彈', icon: '🔥', nade: true, speed: 1.05, desc: '碰到地面就燒起來，半徑 3 公尺、7 秒，每秒約 32 傷害；隊友和自己也會被燒；被煙霧蓋掉' },
+    stun: { id: 'stun', slot: 'throw', name: '震撼彈', short: '震撼彈', icon: '🚨', nade: true, speed: 1.05, desc: '1.4 秒後爆開，8 公尺內看得到它的人 3 秒內畫面搖晃、移動和轉身變慢' },
   };
   // 每個欄位可以選的武器
   const CHOICES = {
     primary: ['rifle', 'smg', 'shotgun', 'sniper', 'dmr'], secondary: ['pistol', 'deagle'], melee: ['knife'],
-    throw1: ['frag', 'flash'], throw2: ['frag', 'flash'],
+    throw1: ['frag', 'flash', 'smoke', 'molotov', 'stun'], throw2: ['frag', 'flash', 'smoke', 'molotov', 'stun'],
   };
   const SLOT_OF = { primary: 'primary', secondary: 'secondary', melee: 'melee', throw1: 'throw', throw2: 'throw' };
-  const DEFAULT_LOADOUT = { primary: 'rifle', secondary: 'pistol', melee: 'knife', throw1: 'frag', throw2: 'flash' };
-  // 目前的模式能拿在手上的欄位（投擲物要等爆破模式）
+  const DEFAULT_LOADOUT = { primary: 'rifle', secondary: 'pistol', melee: 'knife', throw1: 'flash', throw2: 'smoke' };
+  // 能拿在手上的欄位（投擲物只有爆破模式能用）
   const HAND_SLOTS = ['primary', 'secondary', 'melee'];
+  const BOMB_SLOTS = ['primary', 'secondary', 'melee', 'throw1', 'throw2'];
+  const slotsFor = (mode) => (mode === 'bomb' ? BOMB_SLOTS : HAND_SLOTS);
   const LIST = Object.keys(WEAPONS); // 同步位置時用編號代表武器
 
   // 檢查玩家送來的套裝，不合法的欄位換成預設
@@ -141,7 +147,7 @@
     return out;
   }
 
-  const W = { WEAPONS, CHOICES, SLOT_OF, DEFAULT_LOADOUT, HAND_SLOTS, LIST, clean, falloff, reloadTime, shellsLoaded, coneDirs };
+  const W = { WEAPONS, CHOICES, SLOT_OF, DEFAULT_LOADOUT, HAND_SLOTS, BOMB_SLOTS, slotsFor, LIST, clean, falloff, reloadTime, shellsLoaded, coneDirs };
   if (typeof module !== 'undefined' && module.exports) module.exports = W;
   else root.GAME_WEAPONS = W;
 })(typeof self !== 'undefined' ? self : this);

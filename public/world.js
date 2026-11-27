@@ -164,7 +164,16 @@ function paintedFloor(map) {
       for (let a = zn.x1; a <= zn.x2; a += 1) { g.beginPath(); g.moveTo(X(a), y); g.lineTo(X(a), y + h); g.stroke(); }
       for (let a = zn.z1; a <= zn.z2; a += 1) { g.beginPath(); g.moveTo(x, Z(a)); g.lineTo(x + w, Z(a)); g.stroke(); }
     }
-    if (zn.hazard) {
+    if (zn.hazard === 'n' || zn.hazard === 's') {
+      // 南北向的出生區：警示線畫在靠地圖中間那一邊
+      const edge = zn.hazard === 'n' ? Z(zn.z2) - px * 0.8 : Z(zn.z1);
+      g.save();
+      g.beginPath(); g.rect(x, edge, w, px * 0.8); g.clip();
+      g.fillStyle = '#1a1a1a'; g.fillRect(x, edge, w, px * 0.8);
+      g.strokeStyle = '#ffbe0b'; g.lineWidth = px * 0.3;
+      for (let k = -2; k < w / px + 2; k++) { g.beginPath(); g.moveTo(x + k * px, edge - px); g.lineTo(x + k * px + px * 3, edge + px * 2); g.stroke(); }
+      g.restore();
+    } else if (zn.hazard) {
       // 出生區邊緣的黃黑警示線
       const edge = zn.x1 < 0 ? X(zn.x2) - px * 0.8 : X(zn.x1);
       g.save();
@@ -184,6 +193,17 @@ function paintedFloor(map) {
   for (const ci of f.circles || []) {
     g.strokeStyle = ci.color; g.lineWidth = px * 0.25;
     g.beginPath(); g.arc(X(ci.x), Z(ci.z), ci.r * px, 0, Math.PI * 2); g.stroke();
+  }
+  // 包點範圍：粗框＋斜線
+  for (const rc of f.rects || []) {
+    const x = X(rc.x1), y = Z(rc.z1), w = (rc.x2 - rc.x1) * px, h = (rc.z2 - rc.z1) * px;
+    g.save();
+    g.beginPath(); g.rect(x, y, w, h); g.clip();
+    g.strokeStyle = rc.color.replace(/[\d.]+\)$/, '0.12)'); g.lineWidth = px * 0.35;
+    for (let k = -h; k < w; k += px * 1.5) { g.beginPath(); g.moveTo(x + k, y); g.lineTo(x + k + h, y + h); g.stroke(); }
+    g.restore();
+    g.strokeStyle = rc.color; g.lineWidth = px * 0.3;
+    g.strokeRect(x, y, w, h);
   }
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (const l of f.labels || []) {

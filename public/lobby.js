@@ -6,10 +6,11 @@ import { profile } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
 const TEAMS = window.GAME_MAP.teams;
-const MODE_NAMES = { tdm: '團隊死鬥', elim: '回合殲滅' };
+const MODE_NAMES = { tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式' };
 const MODE_DESC = {
   tdm: '死了 3 秒後重生，先達到目標擊殺數，或時間到時擊殺比較多的隊伍獲勝。',
   elim: '死了要等下一回合才能復活，把對面全部擊倒就贏一回合，先贏到指定回合數的隊伍獲勝。',
+  bomb: '一隊進攻、一隊防守，半場交換。進攻方把炸彈埋在 A 或 B 包點並讓它爆炸；防守方阻止或拆彈。死了等下一回合，可以用投擲物。地圖：霓虹地鐵站。',
 };
 
 let send = () => {};
@@ -25,7 +26,7 @@ export function mapName(id) { return window.GAME_MAP.get(id).name; }
 export function rulesText(r) {
   return `${mapName(r.rules.map)} · ` + (r.mode === 'tdm'
     ? `${MODE_NAMES.tdm} · 目標 ${r.rules.scoreLimit} 殺 · ${r.rules.timeLimit} 分鐘`
-    : `${MODE_NAMES.elim} · 先贏 ${r.rules.rounds} 回合`);
+    : `${MODE_NAMES[r.mode]} · 先贏 ${r.rules.rounds} 回合`);
 }
 
 // ---------- 大廳 ----------
@@ -159,7 +160,8 @@ export function renderRoom(r) {
   const hr = $('hostRules');
   hr.classList.toggle('hidden', !isHost || r.state !== 'lobby');
   hr.classList.toggle('tdm', r.mode === 'tdm');
-  hr.classList.toggle('elim', r.mode === 'elim');
+  hr.classList.toggle('elim', r.mode !== 'tdm');
+  hr.classList.toggle('bomb', r.mode === 'bomb');
   const mark = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === String(v)); };
   mark('ruleMap', r.rules.map);
   mark('ruleMode', r.mode);

@@ -126,7 +126,8 @@ const ACTIONS = [
   ['forward', '前進'], ['back', '後退'], ['left', '左移'], ['right', '右移'],
   ['jump', '跳躍'], ['reload', '換彈'], ['fire', '開槍'], ['score', '計分板'],
   ['w1', '主武器'], ['w2', '副武器'], ['w3', '刀'], ['kit', '換套裝'],
-  ['heavy', '瞄準／刀的重擊'], ['inspect', '檢視武器'],
+  ['w4', '投擲物（爆破模式）'], ['use', '埋彈／拆彈（按住）'],
+  ['heavy', '瞄準／刀的重擊／丟近'], ['inspect', '檢視武器'],
 ];
 export function keyName(code) {
   if (!code) return '（未設定）';

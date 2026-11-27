@@ -414,6 +414,7 @@ body.touch #hpbar { width: 120px; }
 .hostrules .setrow { grid-template-columns: 80px 1fr; font-size: 14px; }
 .hostrules .seg button { padding: 6px 8px; font-size: 14px; }
 .hostrules.tdm .elim-only, .hostrules.elim .tdm-only { display: none; }
+.hostrules.bomb .map-row, .hostrules.bomb #ruleRounds [data-v="3"], .hostrules:not(.bomb) #ruleRounds [data-v="9"] { display: none; }
 
 @media (max-height: 520px) {
   #title.sub .topbar { display: none; }
@@ -713,3 +714,22 @@ body.replaying #hud > :not(#replay):not(#killfeed):not(#hitmarker):not(#scope) {
 #deathby .khp.low .khp-bar i { background: #ff4d6d; }
 #deathby .khp b { color: #fff; }
 #deathby .khp.low b { color: #ff8fa3; }
+
+/* ===== 爆破模式 ===== */
+#flashOverlay { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 5; }
+#bombInfo {
+  position: absolute; top: 74px; left: 50%; transform: translateX(-50%); padding: 5px 14px; border-radius: 6px; white-space: nowrap;
+  background: rgba(7, 4, 24, 0.7); border: 1px solid rgba(0, 229, 255, 0.45); color: #e8eefc; font-size: 14px; font-weight: 700; text-shadow: 0 1px 3px #000;
+}
+#bombInfo.att { border-color: rgba(255, 190, 11, 0.6); }
+#actBar { position: absolute; left: 50%; top: 62%; transform: translateX(-50%); width: min(340px, 60vw); text-align: center; }
+#actBar .ab-label { font-size: 16px; font-weight: 800; color: #ffe066; text-shadow: 0 2px 6px #000; margin-bottom: 6px; }
+#actBar .ab-track { height: 10px; border-radius: 5px; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(255, 224, 102, 0.6); overflow: hidden; }
+#actBar .ab-track i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ffbe0b, #ff6b35); }
+#mbTime.bombtime { color: #ff4d6d; animation: rpPulse 0.8s ease-in-out infinite; }
+#btnAct { left: calc(50% - 43px); bottom: max(120px, calc(env(safe-area-inset-bottom) + 104px)); width: 86px; height: 86px; font-size: 30px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; border-color: rgba(255, 190, 11, 0.8); }
+#btnAct small { font-size: 13px; margin-top: 4px; color: #ffe066; }
+#btnAct.hidden { display: none; }
+#wslots .ws.used { opacity: 0.35; text-decoration: line-through; }
+#banner.bomb #bannerBig { color: #ffbe0b; } #banner.defuse #bannerBig { color: #5cf2ff; }
+@media (max-height: 420px) { #bombInfo { top: 58px; font-size: 12px; padding: 3px 10px; } }

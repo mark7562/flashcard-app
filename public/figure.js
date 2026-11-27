@@ -97,8 +97,12 @@ export function makeFigure(color, name = null, opts = {}) {
   part(deagle, 0.065, 0.07, 0.32, chrome, 0, 0.03, -0.14);
   part(deagle, 0.055, 0.15, 0.08, poly, 0, -0.08, -0.02, -0.25);
   part(deagle, 0.012, 0.014, 0.012, accent, 0, 0.07, -0.28);
-  arm.add(gun, pistol, knife, smg, shotgun, sniper, dmr, deagle);
-  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle };
+  const nadeMat = new THREE.MeshStandardMaterial({ color: 0x3d5a2a, roughness: 0.5 });
+  const nade = new THREE.Group();
+  part(nade, 0.09, 0.13, 0.09, nadeMat, 0, 0.02, -0.05);
+  arm.add(gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade);
+  const NADE_COLORS = { frag: 0x3d5a2a, flash: 0x9aa3ad, smoke: 0x5b6b5a, molotov: 0x8a5a2a, stun: 0x2f6fd6 };
+  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade };
   for (const m of [body, head]) m.castShadow = true;
   group.add(body, head, visor, arm);
 
@@ -107,7 +111,9 @@ export function makeFigure(color, name = null, opts = {}) {
     setWeapon(id) {
       if (fig.weapon === id) return;
       fig.weapon = id;
-      for (const [k, m] of Object.entries(weapons)) m.visible = k === (weapons[id] ? id : 'rifle');
+      const key = NADE_COLORS[id] ? 'nade' : weapons[id] ? id : 'rifle';
+      if (NADE_COLORS[id]) nadeMat.color.setHex(NADE_COLORS[id]);
+      for (const [k, m] of Object.entries(weapons)) m.visible = k === key;
     },
     setColor(c) { mat.color.setHex(c); headMat.color.setHex(c); },
     setName(text, c = mat.color.getHex()) {

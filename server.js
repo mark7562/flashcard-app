@@ -5,7 +5,8 @@ const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const MAP = require('./public/map.js');
-const { rayBox, raySphere } = require('./geom.js');
+const { rayBox, raySphere, segmentBlocked } = require('./geom.js');
+const NADE = require('./public/nades.js');
 const BOT = require('./bots.js');
 const WPN = require('./public/weapons.js');
 const { WEAPONS } = WPN;
@@ -32,8 +33,14 @@ const RESULTS_MS = 12000; // 結算畫面顯示多久
 const REC_MS = 7000; // 最佳擊殺回放：伺服器記住最近幾秒的位置和事件
 const CLIP_BEFORE = 2600, CLIP_AFTER = 800, CLIP_MAX = 6000; // 回放從擊殺前多久播到擊殺後多久（連殺最長 6 秒）
 const COLORS = MAP.colors;
-const MODES = ['tdm', 'elim'];
-const RULE_OPTIONS = { scoreLimit: [25, 50, 75, 100], timeLimit: [5, 10, 15], rounds: [3, 5, 7], map: MAP.order };
+const MODES = ['tdm', 'elim', 'bomb'];
+const RULE_OPTIONS = { scoreLimit: [25, 50, 75, 100], timeLimit: [5, 10, 15], rounds: [3, 5, 7, 9], map: MAP.order };
+// 爆破模式
+const BOMB = {
+  map: 'metro', freezeMs: 10000, roundMs: 105000, fuseMs: 40000, plantMs: 3000, defuseMs: 6000,
+  pickR: 1.6, defuseR: 1.8, blastR: 18, blastDmg: 260, postMs: 5000,
+};
+const isRounds = (r) => r.mode !== 'tdm'; // 回合制（殲滅、爆破）
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 // 目前的版本號（從 index.html 右下角的版本文字讀出來）：瀏覽器拿到的網頁比較舊就會自動重新載入
@@ -71,9 +78,11 @@ function toRoom(r, msg, exceptId) {
 }
 // ---------- 最佳擊殺回放 ----------
 // 每一格記錄所有人的位置；開槍、揮刀、擊殺也記下來，選出最精彩的一次擊殺，對戰結束時一起送出去
+let simHook = null; // 模擬測試用：收到每個事件
 function recEvent(r, ev) {
   if (r.state !== 'playing') return;
   ev.t = Date.now();
+  if (simHook) simHook(r, ev);
   r.recEv.push(ev);
 }
 function pruneRec(r, now) {
@@ -156,6 +165,7 @@ function roomState(r) {
   return {
     code: r.code, name: r.name, hostId: r.hostId, mode: r.mode, rules: r.rules, state: r.state,
     locked: !!r.password, score: r.score, roundWins: r.roundWins, round: r.round, phase: r.phase, timeLeft, ready,
+    attackTeam: r.attackTeam, bomb: r.mode === 'bomb' ? bombSummary(r) : null,
     players: [...r.players.values()].map((p) => ({
       id: p.id, name: p.name, color: p.color, team: p.team, kills: p.kills, deaths: p.deaths, alive: p.alive,
       bot: p.bot ? p.bot.level : null,
@@ -185,11 +195,13 @@ function createRoom(p, msg) {
     name: cleanText(msg.name, 20) || `${p.name}的房間`,
     password: cleanText(msg.password, 12),
     mode: MODES.includes(msg.mode) ? msg.mode : 'tdm',
+    attackTeam: 1, bomb: null, roundLog: [],
     rules: { scoreLimit: 50, timeLimit: 10, rounds: 5, map: MAP.order.includes(msg.map) ? msg.map : MAP.defaultMap },
     hostId: p.id, state: 'lobby', players: new Map(),
     score: [0, 0], roundWins: [0, 0], round: 0, phase: null, phaseUntil: 0, endsAt: 0, resultsUntil: 0, pendingEnd: null,
-    rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null,
+    rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null, nades: [], smokes: [], fires: [],
   };
+  if (r.mode === 'bomb') { r.rules.map = BOMB.map; r.rules.rounds = 7; }
   rooms.set(r.code, r);
   console.log(`[房] ${p.name} 建立房間 ${r.code}「${r.name}」`);
   addToRoom(p, r);
@@ -246,39 +258,50 @@ function leaveRoom(p) {
 // ---------- 對戰流程 ----------
 function startMatch(r) {
   if (r.state !== 'lobby') return;
-  if (r.mode === 'elim' && (!teamCount(r, 0) || !teamCount(r, 1))) {
-    return send(r.players.get(r.hostId).ws, { t: 'error', msg: '回合殲滅模式需要兩隊都至少有 1 個人，可以用「＋ 機器人」補位' });
+  if (isRounds(r) && (!teamCount(r, 0) || !teamCount(r, 1))) {
+    return send(r.players.get(r.hostId).ws, { t: 'error', msg: `${r.mode === 'bomb' ? '爆破' : '回合殲滅'}模式需要兩隊都至少有 1 個人，可以用「＋ 機器人」補位` });
   }
   r.state = 'playing';
   r.score = [0, 0];
   r.roundWins = [0, 0];
   r.round = 0;
   r.pendingEnd = null;
+  r.attackTeam = 1; r.bomb = null; r.roundLog = []; r.nades = []; r.smokes = []; r.fires = [];
   r.rec = []; r.recEv = []; r.best = null; r.bestScore = 0; r.pendingBest = null;
   for (const p of r.players.values()) { p.kills = 0; p.deaths = 0; p.alive = false; p.respawnAt = 0; p.ready = !!p.bot; }
-  console.log(`[房] ${r.code} 開戰（${r.mode === 'tdm' ? '團隊死鬥' : '回合殲滅'}，${mapOf(r).name}，${r.players.size} 人）`);
+  console.log(`[房] ${r.code} 開戰（${{ tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式' }[r.mode]}，${mapOf(r).name}，${r.players.size} 人）`);
   // 先等大家載入地圖（最多 10 秒），再倒數 5 秒
   startRound(r, true);
 }
 
 // 回合開始（死鬥模式只有一個「回合」）：所有人回出生點
+// 出生點用哪一組：爆破模式看攻守（0 = 防守那邊、1 = 進攻那邊），其他模式看隊伍
+function sideOf(r, team) { return r.mode === 'bomb' ? (team === r.attackTeam ? 1 : 0) : team; }
+function freezeMs(r) { return r.mode === 'bomb' ? BOMB.freezeMs : FREEZE_MS; }
 function startRound(r, first = false) {
   r.round += 1;
+  let swap = false;
+  // 爆破模式：打完上半場（先贏 N 回合 → 前 N-1 回合）兩隊交換攻守
+  if (r.mode === 'bomb' && !first && r.round === r.rules.rounds) { r.attackTeam = 1 - r.attackTeam; swap = true; }
   r.phase = first ? 'loading' : 'freeze';
-  r.phaseUntil = Date.now() + (first ? LOAD_MAX_MS : FREEZE_MS);
+  r.phaseUntil = Date.now() + (first ? LOAD_MAX_MS : freezeMs(r));
   const idx = [0, 0];
   for (const p of r.players.values()) {
-    const list = mapOf(r).teamSpawns[p.team];
-    spawnAt(p, list[idx[p.team]++ % list.length], 0);
+    const sd = sideOf(r, p.team);
+    const list = mapOf(r).teamSpawns[sd];
+    spawnAt(p, list[idx[sd]++ % list.length], 0);
   }
-  if (!first) toRoom(r, { t: 'round', n: r.round, freeze: FREEZE_MS });
+  r.nades = []; r.smokes = []; r.fires = [];
+  if (r.mode === 'bomb') giveBomb(r);
+  if (!first) toRoom(r, { t: 'round', n: r.round, freeze: freezeMs(r), swap, attack: r.attackTeam });
   syncRoom(r);
 }
 // 載入完成 → 倒數
 function startCountdown(r) {
+  const ms = r.mode === 'bomb' ? BOMB.freezeMs : COUNTDOWN_MS;
   r.phase = 'freeze';
-  r.phaseUntil = Date.now() + COUNTDOWN_MS;
-  toRoom(r, { t: 'round', n: r.round, freeze: COUNTDOWN_MS });
+  r.phaseUntil = Date.now() + ms;
+  toRoom(r, { t: 'round', n: r.round, freeze: ms, attack: r.attackTeam });
   syncRoom(r);
 }
 // 倒數結束 → 開打
@@ -286,18 +309,157 @@ function goLive(r) {
   const now = Date.now();
   r.phase = 'live';
   if (r.mode === 'tdm') r.endsAt = now + r.rules.timeLimit * 60000;
-  else r.phaseUntil = now + ROUND_MS;
+  else r.phaseUntil = now + (r.mode === 'bomb' ? BOMB.roundMs : ROUND_MS);
   for (const p of r.players.values()) { p.kitUntil = now + KIT_MS; p.firedSince = false; }
   syncRoom(r);
 }
 
-function endRound(r, winner) {
+// reason：elim 全滅 / time 時間到 / bomb 炸彈爆炸 / defuse 拆除炸彈
+function endRound(r, winner, reason = 'elim') {
+  if (r.phase !== 'live') return;
   r.phase = 'post';
-  r.phaseUntil = Date.now() + ROUND_POST_MS;
+  r.phaseUntil = Date.now() + (r.mode === 'bomb' ? BOMB.postMs : ROUND_POST_MS);
   if (winner >= 0) r.roundWins[winner] += 1;
   if (winner >= 0 && r.roundWins[winner] >= r.rules.rounds) r.pendingEnd = winner;
-  toRoom(r, { t: 'roundEnd', winner, wins: r.roundWins, last: r.pendingEnd !== null });
+  // 爆破模式：如果兩隊都差一回合就打到底（例如 6:6 打第 13 回合決勝）
+  const alive = [0, 0];
+  for (const p of r.players.values()) if (p.alive) alive[p.team]++;
+  r.roundLog.push({
+    n: r.round, winner, reason, side: winner < 0 ? null : winner === r.attackTeam ? 'attack' : 'defend',
+    planted: !!(r.bomb && ['planted', 'exploded', 'defused'].includes(r.bomb.state)), alive,
+  });
+  for (const p of r.players.values()) { p.actKind = null; }
+  toRoom(r, { t: 'roundEnd', winner, wins: r.roundWins, last: r.pendingEnd !== null, reason, side: r.roundLog.at(-1).side });
   syncRoom(r);
+}
+
+// ---------- 爆破模式：炸彈 ----------
+function bombSummary(r) {
+  const b = r.bomb;
+  if (!b) return null;
+  return { st: b.state, carrier: b.carrier || 0, x: +b.x.toFixed(2), y: +b.y.toFixed(2), z: +b.z.toFixed(2), site: b.site || '', left: b.explodeAt ? Math.max(0, b.explodeAt - Date.now()) : 0 };
+}
+function sendBomb(r) { toRoom(r, { t: 'bomb', b: bombSummary(r) }); }
+function giveBomb(r) {
+  const att = [...r.players.values()].filter((p) => p.team === r.attackTeam && p.alive);
+  if (!att.length) { r.bomb = null; return; }
+  // 優先給真人
+  const humans = att.filter((p) => !p.bot);
+  const pool = humans.length && Math.random() < 0.7 ? humans : att;
+  const c = pool[Math.floor(Math.random() * pool.length)];
+  r.bomb = { state: 'carried', carrier: c.id, x: c.x, y: c.y, z: c.z, site: '', plantedAt: 0, explodeAt: 0 };
+}
+function dropBomb(r, p) {
+  const b = r.bomb;
+  if (!b || b.state !== 'carried' || b.carrier !== p.id) return;
+  b.state = 'dropped';
+  b.carrier = 0;
+  b.x = p.x; b.z = p.z; b.y = MAP.surfaceAt(mapOf(r).boxes, p.x, p.z);
+  if (b.y > p.y + 0.3) b.y = p.y;
+  sendBomb(r);
+}
+function siteAt(r, x, z) {
+  return (mapOf(r).sites || []).find((s) => x >= s.x1 && x <= s.x2 && z >= s.z1 && z <= s.z2) || null;
+}
+// 開始／停止埋彈、拆彈（要按住，不能動、不能開槍）
+function handleAct(p, msg) {
+  const r = p.room;
+  if (!r || r.mode !== 'bomb' || r.phase !== 'live' || !p.alive || !r.bomb) return;
+  const now = Date.now();
+  if (!msg.on) { if (p.actKind) { p.actKind = null; toRoom(r, { t: 'act', id: p.id, on: false }); } return; }
+  const b = r.bomb;
+  let kind = null;
+  if (p.team === r.attackTeam && b.state === 'carried' && b.carrier === p.id && siteAt(r, p.x, p.z)) kind = 'plant';
+  if (p.team !== r.attackTeam && b.state === 'planted' && Math.hypot(p.x - b.x, p.z - b.z) <= BOMB.defuseR && Math.abs(p.y - b.y) < 1.5) kind = 'defuse';
+  if (!kind || p.actKind) return;
+  p.actKind = kind;
+  p.actAt = now;
+  p.actPos = [p.x, p.z];
+  toRoom(r, { t: 'act', id: p.id, on: true, kind, ms: kind === 'plant' ? BOMB.plantMs : BOMB.defuseMs });
+}
+function cancelAct(p) {
+  if (!p.actKind) return;
+  p.actKind = null;
+  if (p.room) toRoom(p.room, { t: 'act', id: p.id, on: false });
+}
+function bombTick(r, now) {
+  const b = r.bomb;
+  if (!b || r.phase !== 'live') return;
+  if (b.state === 'carried') {
+    const c = r.players.get(b.carrier);
+    if (!c || !c.alive) { if (c) dropBomb(r, c); else { b.state = 'dropped'; b.carrier = 0; sendBomb(r); } }
+    else { b.x = c.x; b.y = c.y; b.z = c.z; }
+  }
+  if (b.state === 'dropped') {
+    // 進攻方走過去就撿起來
+    for (const p of r.players.values()) {
+      if (!p.alive || p.team !== r.attackTeam) continue;
+      if (Math.hypot(p.x - b.x, p.z - b.z) <= BOMB.pickR && Math.abs(p.y - b.y) < 1.6) {
+        b.state = 'carried'; b.carrier = p.id; sendBomb(r);
+        break;
+      }
+    }
+  }
+  for (const p of r.players.values()) {
+    if (!p.actKind) continue;
+    const moved = Math.hypot(p.x - p.actPos[0], p.z - p.actPos[1]) > 0.7;
+    if (!p.alive || moved) { cancelAct(p); continue; }
+    if (p.actKind === 'plant' && now - p.actAt >= BOMB.plantMs) {
+      const site = siteAt(r, p.x, p.z);
+      if (!site || b.state !== 'carried' || b.carrier !== p.id) { cancelAct(p); continue; }
+      p.actKind = null;
+      b.state = 'planted'; b.carrier = 0; b.site = site.id;
+      b.x = p.x; b.z = p.z; b.y = p.y;
+      b.plantedAt = now; b.explodeAt = now + BOMB.fuseMs;
+      r.phaseUntil = b.explodeAt;
+      p.plants = (p.plants || 0) + 1;
+      toRoom(r, { t: 'act', id: p.id, on: false });
+      toRoom(r, { t: 'planted', id: p.id, site: site.id, fuse: BOMB.fuseMs });
+      sendBomb(r);
+      syncRoom(r);
+      recEvent(r, { k: 'planted', id: p.id });
+    } else if (p.actKind === 'defuse' && now - p.actAt >= BOMB.defuseMs) {
+      if (b.state !== 'planted') { cancelAct(p); continue; }
+      p.actKind = null;
+      b.state = 'defused';
+      p.defuses = (p.defuses || 0) + 1;
+      toRoom(r, { t: 'act', id: p.id, on: false });
+      toRoom(r, { t: 'defused', id: p.id });
+      sendBomb(r);
+      endRound(r, 1 - r.attackTeam, 'defuse');
+      return;
+    }
+  }
+}
+// 炸彈爆炸：範圍內的人都會受傷（不分隊伍），進攻方贏
+function explodeBomb(r, now) {
+  const b = r.bomb;
+  b.state = 'exploded';
+  toRoom(r, { t: 'boom', x: b.x, y: b.y, z: b.z, r: BOMB.blastR });
+  for (const q of r.players.values()) {
+    if (!q.alive) continue;
+    const d = Math.hypot(q.x - b.x, q.y - b.y, q.z - b.z);
+    if (d >= BOMB.blastR) continue;
+    const dmg = Math.round(BOMB.blastDmg * (1 - d / BOMB.blastR));
+    if (dmg > 0) envDamage(r, q, dmg, 'bomb', 0, now);
+  }
+  sendBomb(r);
+  endRound(r, r.attackTeam, 'bomb');
+}
+// 不是玩家直接造成的傷害（炸彈、自己的手榴彈）：attacker 0 = 環境
+function envDamage(r, q, dmg, weapon, attackerId, now) {
+  const a = attackerId ? r.players.get(attackerId) : null;
+  if (a && a !== q && a.team !== q.team) return applyDamage(a, q, dmg, false, weapon, now);
+  q.hp = Math.max(0, q.hp - dmg);
+  send(q.ws, { t: 'damaged', hp: q.hp, from: attackerId || 0, fx: q.x, fz: q.z });
+  if (q.hp > 0) return;
+  q.alive = false;
+  q.deaths += 1;
+  if (a && a === q) { /* 自殺 */ }
+  if (r.mode === 'tdm') q.respawnAt = now + RESPAWN_MS;
+  toRoom(r, { t: 'kill', killer: attackerId || 0, victim: q.id, head: false, w: weapon, kk: a ? a.kills : 0, vd: q.deaths, score: r.score, kx: q.x, kz: q.z, khp: a ? a.hp : 0 });
+  recEvent(r, { k: 'kill', killer: attackerId || 0, victim: q.id, head: false, w: weapon, kx: q.x, kz: q.z });
+  if (r.mode !== 'tdm') checkTeams(r);
 }
 
 function endMatch(r, winner, reason = '') {
@@ -311,7 +473,7 @@ function endMatch(r, winner, reason = '') {
     t: 'matchEnd', winner, mode: r.mode, reason,
     score: r.mode === 'tdm' ? r.score : r.roundWins,
     players: [...r.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, bot: !!p.bot })),
-    best,
+    best, roundLog: r.roundLog,
   });
   r.rec = []; r.recEv = []; r.best = null;
   syncRoom(r);
@@ -320,12 +482,18 @@ function endMatch(r, winner, reason = '') {
 
 // 有人離開或死亡後，檢查回合／對戰是否該結束
 function checkTeams(r) {
-  if (r.state !== 'playing' || r.mode !== 'elim') return;
+  if (r.state !== 'playing' || !isRounds(r)) return;
   const members = [teamCount(r, 0), teamCount(r, 1)];
   if (!members[0] || !members[1]) return endMatch(r, members[0] ? 0 : members[1] ? 1 : -1, 'forfeit');
   if (r.phase !== 'live') return;
   const alive = [0, 0];
   for (const p of r.players.values()) if (p.alive) alive[p.team]++;
+  if (r.mode === 'bomb') {
+    const A = r.attackTeam, D = 1 - A, planted = r.bomb && r.bomb.state === 'planted';
+    if (!alive[D]) endRound(r, A, 'elim'); // 防守方全滅：進攻方贏（不管炸彈有沒有埋）
+    else if (!alive[A] && !planted) endRound(r, D, 'elim'); // 進攻方全滅而且炸彈還沒埋
+    return; // 炸彈埋了：進攻方全滅也要拆掉才算贏
+  }
   if (!alive[0] && !alive[1]) endRound(r, -1);
   else if (!alive[0]) endRound(r, 1);
   else if (!alive[1]) endRound(r, 0);
@@ -333,7 +501,7 @@ function checkTeams(r) {
 
 // ---------- 出生 ----------
 function pickSpawn(p) {
-  const list = mapOf(p.room).teamSpawns[p.team];
+  const list = mapOf(p.room).teamSpawns[sideOf(p.room, p.team)];
   let best = list[0];
   let bestScore = -1;
   for (const s of list) {
@@ -386,6 +554,7 @@ function resetKit(p) {
   p.weapon = 'primary';
   p.ammoBy = {};
   for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[p.loadout[slot]]; if (w.mag) p.ammoBy[slot] = w.mag; }
+  p.nadesLeft = { throw1: 1, throw2: 1 }; // 投擲物：每回合各一顆
   p.reloadUntil = 0;
   p.switchUntil = 0;
   p.heavyAt = 0;
@@ -418,7 +587,8 @@ function startReload(p) {
   toRoom(p.room, { t: 'reload', id: p.id, ms, n: w.mag - ammo, empty: ammo <= 0 }, p.id); // 讓其他人看到、聽到你在換彈
 }
 function switchWeapon(p, slot) {
-  if (!WPN.HAND_SLOTS.includes(slot) || p.weapon === slot) return;
+  if (!WPN.slotsFor(p.room?.mode).includes(slot) || p.weapon === slot) return;
+  if (slot.startsWith('throw') && !(p.nadesLeft && p.nadesLeft[slot] > 0)) return;
   p.weapon = slot;
   p.reloadUntil = 0; // 換武器會中斷換彈
   p.heavyAt = 0;
@@ -442,6 +612,120 @@ function handleLoadout(p, msg) {
     resetKit(p);
     send(p.ws, { t: 'kit', kit: p.loadout });
   }
+}
+
+// ---------- 投擲物 ----------
+let nadeSeq = 0;
+function handleThrow(p, msg) {
+  const r = p.room;
+  const now = Date.now();
+  if (!r || r.mode !== 'bomb' || r.state !== 'playing' || r.phase !== 'live' || !p.alive) return;
+  const slot = p.weapon;
+  if (!slot.startsWith('throw') || !(p.nadesLeft[slot] > 0) || now < p.switchUntil || now - p.lastShot < 400) return;
+  const d = aimDir(msg);
+  if (!d) return;
+  const kind = p.loadout[slot];
+  if (!NADE.NADES[kind]) return;
+  p.nadesLeft[slot] -= 1;
+  p.lastShot = now;
+  p.firedSince = true;
+  cancelAct(p);
+  const L = NADE.launch(eyeOrigin(p, msg), d, !!msg.far);
+  const sim = NADE.simulate(mapOf(r).boxes, L.o, L.v, kind);
+  const nid = ++nadeSeq;
+  r.nades.push({ nid, kind, owner: p.id, team: p.team, detAt: now + sim.t * 1000, pos: sim.pts[sim.pts.length - 1], end: sim.end });
+  toRoom(r, { t: 'nade', nid, id: p.id, kind, o: L.o.map((v) => +v.toFixed(3)), v: L.v.map((v) => +v.toFixed(3)) });
+  recEvent(r, { k: 'nade', id: p.id, kind });
+  for (const q of r.players.values()) if (q.bot && q.team !== p.team) BOT.hear(q, p, now);
+}
+function los(r, a, b) { return !segmentBlocked(a, b, mapOf(r).boxes); }
+function nadeDamage(r, owner, ownerId, q, dmg, weapon, now) {
+  if (owner && owner !== q && owner.team === q.team && weapon === 'frag') return; // 手榴彈不炸隊友
+  if (owner && owner !== q && owner.team !== q.team) return applyDamage(owner, q, dmg, false, weapon, now);
+  envDamage(r, q, dmg, weapon, ownerId, now); // 自己、或火焰彈燒到隊友
+}
+function detonate(r, n, now) {
+  const cfg = NADE.NADES[n.kind];
+  const [x, y, z] = n.pos;
+  const owner = r.players.get(n.owner);
+  const ev = { t: 'nadeBoom', nid: n.nid, kind: n.kind, pos: [+x.toFixed(2), +y.toFixed(2), +z.toFixed(2)] };
+  if (n.kind === 'frag') {
+    for (const q of r.players.values()) {
+      if (!q.alive) continue;
+      const d = Math.hypot(q.x - x, q.y + 1 - y, q.z - z);
+      if (d >= cfg.radius || !los(r, [x, y + 0.2, z], [q.x, q.y + 1, q.z])) continue;
+      nadeDamage(r, owner, n.owner, q, Math.round(cfg.dmg * (1 - d / cfg.radius)), 'frag', now);
+      if (r.phase !== 'live') break;
+    }
+    // 手榴彈把附近的煙暫時炸開
+    for (const sm of r.smokes) if (Math.hypot(sm.x - x, sm.z - z) < NADE.NADES.smoke.radius + 2) { sm.gapUntil = now + NADE.NADES.smoke.clearMs; ev.clear = (ev.clear || []).concat(sm.id); }
+  } else if (n.kind === 'flash') {
+    // 機器人：看著閃光就看不見（真人的白畫面由瀏覽器自己算）
+    for (const q of r.players.values()) {
+      if (!q.alive || !q.bot) continue;
+      const ms = flashMs(r, q, x, y, z);
+      if (ms > 0) q.bot.blindUntil = now + ms;
+    }
+  } else if (n.kind === 'smoke') {
+    const sm = { id: n.nid, x, y: Math.max(0, y - 0.1), z, at: now };
+    r.smokes.push(sm);
+    // 煙霧蓋掉火焰
+    for (const f of r.fires) if (Math.hypot(f.x - x, f.z - z) < cfg.radius + NADE.NADES.molotov.radius * 0.6) { f.until = now; ev.out = (ev.out || []).concat(f.id); }
+  } else if (n.kind === 'molotov') {
+    let fy = y;
+    if (n.end !== 'ground') fy = MAP.surfaceAt(mapOf(r).boxes, x, z);
+    if (fy > y + 0.2) fy = y;
+    ev.pos[1] = +fy.toFixed(2);
+    // 丟進煙裡：直接熄掉
+    const inSmoke = r.smokes.some((sm) => Math.hypot(sm.x - x, sm.z - z) < NADE.smokeRadius(sm, now));
+    if (inSmoke) ev.fizzle = true;
+    else r.fires.push({ id: n.nid, x, y: fy, z, at: now, until: now + cfg.life, owner: n.owner, next: now });
+  } else if (n.kind === 'stun') {
+    for (const q of r.players.values()) {
+      if (!q.alive) continue;
+      const d = Math.hypot(q.x - x, q.y + 1.4 - y, q.z - z);
+      if (d >= cfg.radius || !los(r, [x, y + 0.2, z], [q.x, q.y + 1.6, q.z])) continue;
+      const ms = Math.round(cfg.ms * (1 - (d / cfg.radius) * 0.5));
+      send(q.ws, { t: 'stunned', ms });
+      if (q.bot) q.bot.stunUntil = now + ms;
+    }
+  }
+  toRoom(r, ev);
+}
+// 閃光彈：正面看 3 秒、側面 1.5 秒、背對 0.4 秒；被牆擋住就沒事
+function flashMs(r, q, x, y, z) {
+  const cfg = NADE.NADES.flash;
+  const eye = [q.x, q.y + 1.6, q.z];
+  const dx = x - eye[0], dy = y - eye[1], dz = z - eye[2], d = Math.hypot(dx, dy, dz);
+  if (d > cfg.range || !los(r, [x, y + 0.1, z], eye)) return 0;
+  const cp = Math.cos(q.pitch);
+  const fx = -Math.sin(q.yaw) * cp, fy = Math.sin(q.pitch), fz = -Math.cos(q.yaw) * cp;
+  const ang = Math.acos(Math.max(-1, Math.min(1, (fx * dx + fy * dy + fz * dz) / (d || 1))));
+  const base = ang < 0.9 ? cfg.full : ang < 1.7 ? cfg.side : cfg.back;
+  return Math.round(base * (1 - (d / cfg.range) * 0.5));
+}
+function nadeTick(r, now) {
+  for (let i = r.nades.length - 1; i >= 0; i--) {
+    const n = r.nades[i];
+    if (now < n.detAt) continue;
+    r.nades.splice(i, 1);
+    detonate(r, n, now);
+    if (r.state !== 'playing') return;
+  }
+  const mc = NADE.NADES.molotov;
+  for (let i = r.fires.length - 1; i >= 0; i--) {
+    const f = r.fires[i];
+    if (now >= f.until) { r.fires.splice(i, 1); continue; }
+    if (now < f.next) continue;
+    f.next = now + mc.tickMs;
+    const owner = r.players.get(f.owner);
+    for (const q of r.players.values()) {
+      if (!q.alive || Math.hypot(q.x - f.x, q.z - f.z) > mc.radius || Math.abs(q.y - f.y) > 1.2) continue;
+      nadeDamage(r, owner, f.owner, q, mc.tickDmg, 'molotov', now);
+      if (r.phase !== 'live') return;
+    }
+  }
+  r.smokes = r.smokes.filter((sm) => now - sm.at < NADE.NADES.smoke.life);
 }
 
 // 開火前的共同檢查
@@ -499,6 +783,7 @@ function handleShoot(p, msg) {
   const now = Date.now();
   const w = readyToFire(p, now);
   if (!w || w.melee) return;
+  cancelAct(p);
   finishReload(p, now);
   if (p.reloadUntil && w.shells && p.ammoBy[p.weapon] > 0) p.reloadUntil = 0; // 霰彈槍裝到一半可以直接開槍
   if (p.reloadUntil || p.ammoBy[p.weapon] <= 0) return;
@@ -615,7 +900,7 @@ function handleState(p, msg) {
   }
   p.x = x; p.y = y; p.z = z;
   // 走出重生區就不能再換套裝（走回來也一樣）
-  if (!p.leftSpawn && r.phase === 'live' && !MAP.inSpawn(mapOf(r), p.team, x, z)) p.leftSpawn = true;
+  if (!p.leftSpawn && r.phase === 'live' && !MAP.inSpawn(mapOf(r), sideOf(r, p.team), x, z)) p.leftSpawn = true;
   p.yaw = num(msg.yaw, p.yaw);
   p.pitch = Math.max(-1.6, Math.min(1.6, num(msg.pitch, p.pitch)));
   // 瞄準：記住從什麼時候開始瞄（狙擊槍要瞄滿才準）
@@ -630,10 +915,17 @@ function isHost(p) { return p.room && p.room.hostId === p.id; }
 function setRules(p, msg) {
   const r = p.room;
   if (!isHost(p) || r.state !== 'lobby') return;
+  const was = r.mode;
   if (MODES.includes(msg.mode)) r.mode = msg.mode;
   for (const k of Object.keys(RULE_OPTIONS)) {
     if (RULE_OPTIONS[k].includes(msg[k])) r.rules[k] = msg[k];
   }
+  // 爆破模式只能用霓虹地鐵站；回合數 5 / 7 / 9；殲滅模式 3 / 5 / 7
+  if (r.mode === 'bomb') {
+    r.rules.map = BOMB.map;
+    if (![5, 7, 9].includes(r.rules.rounds)) r.rules.rounds = 7;
+  } else if (r.mode === 'elim' && r.rules.rounds === 9) r.rules.rounds = 7;
+  if (was === 'bomb' && r.mode !== 'bomb' && r.rules.map === BOMB.map) r.rules.map = MAP.defaultMap;
   syncRoom(r);
 }
 function switchTeam(p, msg) {
@@ -733,6 +1025,8 @@ wss.on('connection', (ws) => {
       case 'reload': finishReload(p, Date.now()); startReload(p); break;
       case 'weapon': if (p.alive) switchWeapon(p, msg.s); break;
       case 'loadout': handleLoadout(p, msg); break;
+      case 'act': handleAct(p, msg); break;
+      case 'throw': handleThrow(p, msg); break;
       case 'resultsDone': {
         // 玩家按「返回房間」：所有真人都回來了就不用等結算倒數
         const r = p.room;
@@ -771,7 +1065,7 @@ wss.on('connection', (ws) => {
 });
 
 // ---------- 主迴圈 ----------
-setInterval(() => {
+function tick() {
   const now = Date.now();
   for (const r of rooms.values()) {
     if (r.state === 'results') {
@@ -795,20 +1089,29 @@ setInterval(() => {
         continue;
       }
     } else if (now >= r.phaseUntil) {
-      if (r.phase === 'live') {
+      if (r.phase === 'live' && r.mode === 'bomb') {
+        // 炸彈埋了 → 爆炸；沒埋 → 時間到防守方贏
+        if (r.bomb && r.bomb.state === 'planted') explodeBomb(r, now);
+        else endRound(r, 1 - r.attackTeam, 'time');
+      } else if (r.phase === 'live') {
         // 時間到：存活人數多的一隊贏
         const alive = [0, 0];
         for (const p of r.players.values()) if (p.alive) alive[p.team]++;
-        endRound(r, alive[0] === alive[1] ? -1 : alive[0] > alive[1] ? 0 : 1);
+        endRound(r, alive[0] === alive[1] ? -1 : alive[0] > alive[1] ? 0 : 1, 'time');
       } else if (r.phase === 'post') {
         if (r.pendingEnd !== null) { endMatch(r, r.pendingEnd); continue; }
         startRound(r);
       }
     }
     if (r.state !== 'playing') continue;
+    if (r.mode === 'bomb') {
+      bombTick(r, now);
+      if (r.state === 'playing' && r.phase === 'live') nadeTick(r, now);
+      if (r.state !== 'playing') continue;
+    }
 
     // 機器人思考
-    const api = { shoot: handleShoot, melee: handleMelee, reload: startReload, switchTo: switchWeapon, finishReload };
+    const api = { shoot: handleShoot, melee: handleMelee, reload: startReload, switchTo: switchWeapon, finishReload, act: handleAct, throwNade: handleThrow };
     for (const p of r.players.values()) {
       if (p.bot && r.state === 'playing') BOT.think(p, r, now, TICK_MS / 1000, api);
     }
@@ -824,8 +1127,29 @@ setInterval(() => {
     pruneRec(r, now);
     if (r.pendingBest && now >= r.pendingBest.captureAt) captureBest(r, now);
   }
-}, TICK_MS);
+}
 
-server.listen(PORT, () => {
+// 模擬測試用：直接 require 這個檔案時不開伺服器，改由測試程式自己推時間、建只有機器人的房間
+if (require.main === module) {
+  setInterval(tick, TICK_MS);
+  server.listen(PORT, () => {
   console.log(`方塊戰場伺服器啟動：http://localhost:${PORT}`);
 });
+} else {
+  module.exports = {
+    tick, rooms, addBot, startMatch, BOMB, TICK_MS, setHook(fn) { simHook = fn; },
+    // 建一個只有機器人的房間（模擬用）
+    simRoom(mode, map, level0, level1, n = 5, rules = {}) {
+      const r = {
+        code: makeCode(), name: 'sim', password: '', mode, attackTeam: 1, bomb: null, roundLog: [],
+        rules: { scoreLimit: 50, timeLimit: 10, rounds: 7, map: mode === 'bomb' ? BOMB.map : map, ...rules },
+        hostId: 0, state: 'lobby', players: new Map(),
+        score: [0, 0], roundWins: [0, 0], round: 0, phase: null, phaseUntil: 0, endsAt: 0, resultsUntil: 0, pendingEnd: null,
+        rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null, nades: [], smokes: [], fires: [],
+      };
+      rooms.set(r.code, r);
+      for (let i = 0; i < n; i++) { addBot(r, 0, level0); addBot(r, 1, level1); }
+      return r;
+    },
+  };
+}

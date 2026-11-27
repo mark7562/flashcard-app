@@ -11,6 +11,7 @@ let editing = 0;
 
 function stats(w) {
   if (w.disabled) return w.desc;
+  if (w.nade) return `${w.desc}\n（爆破模式限定，每回合一顆）`;
   if (w.melee) return `傷害 ${w.body}（背刺 ${w.back}）· 距離 ${w.range} 公尺 · 移動 ${Math.round(w.speed * 100)}%`;
   const dmg = w.pellets ? `傷害 ${w.pellets}×${w.body}` : w.chest ? `傷害 胸口 ${w.chest} / 腹腿 ${w.body} / 爆頭 ${w.head}` : `傷害 ${w.body} / 爆頭 ${w.head}`;
   const rate = w.fireMs >= 300 ? `每發間隔 ${(w.fireMs / 1000).toFixed(2)} 秒` : `每秒 ${(1000 / w.fireMs).toFixed(1)} 發`;

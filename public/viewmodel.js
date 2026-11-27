@@ -730,6 +730,66 @@ function buildDeagle() {
   };
 }
 
+// ======================================================================
+// 投擲物（右手拿著；拔插銷 → 舉起來 → 丟出去）
+// ======================================================================
+function buildNade() {
+  const root = new THREE.Group();
+  const gun = new THREE.Group(); // 手上的那顆（丟出去後藏起來）
+  root.add(gun);
+  const mat = (c, r = 0.5, m = 0.3) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
+  const kinds = {};
+  // 手榴彈：圓圓的綠色＋保險握片
+  kinds.frag = new THREE.Group();
+  box(kinds.frag, 0.07, 0.085, 0.07, mat(0x3d5a2a), 0, 0, 0);
+  for (const y of [-0.02, 0.02]) box(kinds.frag, 0.074, 0.006, 0.074, mat(0x2a3f1c), 0, y, 0);
+  box(kinds.frag, 0.03, 0.03, 0.03, mat(0x8a8f98, 0.3, 0.8), 0, 0.055, 0);
+  box(kinds.frag, 0.012, 0.07, 0.014, mat(0x8a8f98, 0.3, 0.8), 0.03, 0.03, 0, 0, 0, -0.3);
+  // 閃光彈：灰色圓柱
+  kinds.flash = new THREE.Group();
+  cyl(kinds.flash, 0.03, 0.11, mat(0x9aa3ad, 0.4, 0.6), 0, 0, 0).rotation.x = 0;
+  box(kinds.flash, 0.062, 0.012, 0.062, mat(0x2a2e35), 0, 0.03, 0);
+  box(kinds.flash, 0.03, 0.025, 0.03, mat(0x8a8f98, 0.3, 0.8), 0, 0.065, 0);
+  // 煙霧彈：綠色帶子
+  kinds.smoke = new THREE.Group();
+  cyl(kinds.smoke, 0.032, 0.12, mat(0x5b6b5a), 0, 0, 0).rotation.x = 0;
+  box(kinds.smoke, 0.066, 0.02, 0.066, mat(0x9be29b, 0.6, 0), 0, 0.02, 0);
+  box(kinds.smoke, 0.03, 0.025, 0.03, mat(0x8a8f98, 0.3, 0.8), 0, 0.07, 0);
+  // 火焰彈：玻璃瓶＋布條
+  kinds.molotov = new THREE.Group();
+  cyl(kinds.molotov, 0.034, 0.1, new THREE.MeshStandardMaterial({ color: 0x8a5a2a, roughness: 0.15, transparent: true, opacity: 0.8 }), 0, -0.01, 0).rotation.x = 0;
+  cyl(kinds.molotov, 0.012, 0.06, new THREE.MeshStandardMaterial({ color: 0x8a5a2a, roughness: 0.15, transparent: true, opacity: 0.8 }), 0, 0.07, 0).rotation.x = 0;
+  box(kinds.molotov, 0.03, 0.05, 0.03, mat(0xe8dcc0, 0.9, 0), 0, 0.11, 0);
+  const flame = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffa040 }));
+  flame.position.y = 0.15;
+  kinds.molotov.add(flame);
+  // 震撼彈：藍色
+  kinds.stun = new THREE.Group();
+  cyl(kinds.stun, 0.032, 0.1, mat(0x2f6fd6, 0.4, 0.5), 0, 0, 0).rotation.x = 0;
+  for (const y of [-0.03, 0.03]) box(kinds.stun, 0.066, 0.008, 0.066, mat(0xffd23f), 0, y, 0);
+  box(kinds.stun, 0.03, 0.025, 0.03, mat(0x8a8f98, 0.3, 0.8), 0, 0.06, 0);
+  for (const k of Object.values(kinds)) { k.visible = false; k.scale.setScalar(0.85); gun.add(k); }
+  const rhand = arm(root, V(0.0, -0.05, 0.02), V(0.05, -0.2, 0.5), [0.06, 0.07, 0.09]);
+  rhand.rotation.x = -0.3;
+  const lhandRest = V(-0.12, -0.12, 0.05);
+  const lhand = arm(root, lhandRest, V(-0.35, -0.25, 0.45), [0.055, 0.065, 0.085]);
+  const PIN = { lx: 0.1, ly: 0.14, lz: -0.04 }; // 左手去拔插銷
+  const HOLD = { py: 0.05, pz: 0.03, rx: 0.35, px: 0.07 }; // 舉到肩膀旁邊準備丟
+  const obj = {
+    id: 'nade', root, gun, lhand, lhandRest, kinds, base: { p: V(0.2, -0.22, -0.36), r: [0, 0, 0] },
+    setKind(id) { for (const [k, m] of Object.entries(kinds)) m.visible = k === id; gun.visible = true; },
+    anims: {
+      draw: { keys: [[0, { py: -0.2, rx: -0.6 }], [0.3, {}]] },
+      // 按住：拔插銷然後舉起來（停在最後的姿勢）
+      ready: { keys: [[0, {}], [0.12, { ...PIN }], [0.22, { ...PIN, ly: 0.1, lx: 0.02 }], [0.38, { ...HOLD }]], hold: true, sounds: [[0.14, 'pin']] },
+      throw: { keys: [[0, { ...HOLD }], [0.1, { py: 0.02, pz: -0.25, rx: -0.9, px: -0.02 }], [0.3, { py: -0.25, pz: -0.1, rx: -1.2 }], [0.5, { py: -0.3, rx: -1.2 }]], sounds: [[0.04, 'toss']] },
+      toss: { keys: [[0, { ...HOLD }], [0.1, { py: -0.12, pz: -0.05, rx: 0.4 }], [0.22, { py: -0.02, pz: -0.25, rx: -0.6 }], [0.45, { py: -0.3, rx: -0.8 }]], sounds: [[0.06, 'toss']] },
+      inspect: { keys: [[0, {}], [0.4, { ry: 0.8, rz: 0.4, px: -0.06, py: 0.05 }], [1.1, { ry: 0.85, rz: 0.45, px: -0.06, py: 0.06 }], [1.5, {}]] },
+    },
+  };
+  return obj;
+}
+
 // ---------- 關鍵影格補間 ----------
 const smooth = (k) => k * k * (3 - 2 * k);
 function sample(keys, t, out) {
@@ -753,6 +813,8 @@ export function createViewModels(camera, playSound) {
     rifle: buildRifle(), smg: buildSmg(), shotgun: buildShotgun(), sniper: buildSniper(), dmr: buildDmr(),
     pistol: buildPistol(), deagle: buildDeagle(), knife: buildKnife(),
   };
+  const nadeVm = buildNade();
+  for (const k of ['frag', 'flash', 'smoke', 'molotov', 'stun']) W[k] = nadeVm;
   for (const w of Object.values(W)) { w.root.visible = false; vm.add(w.root); }
   const light = new THREE.PointLight(0xffc860, 0, 6);
   vm.add(light);
@@ -803,6 +865,7 @@ export function createViewModels(camera, playSound) {
     setWeapon(id, now) {
       cur = W[id] || null;
       for (const w of Object.values(W)) w.root.visible = w === cur;
+      if (cur?.setKind) cur.setKind(id);
       action = null;
       pending = null;
       if (cur) play('draw', now);
@@ -829,6 +892,9 @@ export function createViewModels(camera, playSound) {
       play(empty ? 'reloadEmpty' : 'reload', now, { dur: ms });
     },
     cancel() { action = null; },
+    // 投擲物：按住準備、放開丟出去（near = 丟近，低手拋）
+    nadeReady(now) { play('ready', now); },
+    nadeThrow(now, near) { play(near ? 'toss' : 'throw', now); if (cur?.gun) setTimeout(() => { if (cur?.id === 'nade') cur.gun.visible = false; }, 140); },
     get cycling() { return !!pending || (!!action && (action.name === 'cycle' || action.name === 'pump')); },
     get scoped() { return !!cur?.scope; },
     swing(now, v) { play('swing' + v, now); },

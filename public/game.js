@@ -9,6 +9,7 @@ import { initMenu, showTitle, hideTitle, setStatus, openSettings, updatePreview,
 import { initLobby, renderRooms, renderRoom, lobbyError, rulesText } from './lobby.js';
 import { createTitleScene } from './title.js';
 import { createWorld } from './world.js';
+import { createEffects } from './effects.js';
 
 const MAP = window.GAME_MAP;
 const $ = (id) => document.getElementById(id);
@@ -16,7 +17,7 @@ const $ = (id) => document.getElementById(id);
 // ---------- 常數 ----------
 const EYE = 1.6, PH = 1.8, PW = 0.35;
 const SPEED = 6.5, JUMP = 8, GRAVITY = 22;
-const WPN = window.GAME_WEAPONS, WEAPONS = WPN.WEAPONS;
+const WPN = window.GAME_WEAPONS, WEAPONS = WPN.WEAPONS, NADE = window.GAME_NADES;
 const DRAW_MS = 250; // 換武器的拔槍時間
 const KIT_MS = 10000; // 復活後幾秒內可以換套裝
 const SEND_MS = 50, INTERP_MS = 100;
@@ -29,11 +30,17 @@ const me = {
   kit: { ...WPN.DEFAULT_LOADOUT }, weapon: 'primary', ammoBy: {}, drawEnd: 0, kitUntil: 0, firedSince: false, swingAt: 0,
   combo: 0, heavyAt: 0, lastHeavy: false, lastDry: 0, meleeHitAt: 0,
   reloadStart: 0, reloadBase: 0, adsHeld: false, adsToggled: false, adsK: 0, adsOn: false,
+  nadesLeft: { throw1: 1, throw2: 1 }, prevWeapon: 'primary', nadeHold: null, nadeNear: false,
+  acting: null, flashUntil: 0, flashMs: 0, stunUntil: 0,
 };
+// 目前模式能拿的欄位（爆破模式多了兩個投擲物）
+const isRounds = () => !!room && room.mode !== 'tdm';
+function slotList() { return WPN.slotsFor(room?.mode); }
+function slotUsable(slot) { return !slot.startsWith('throw') || (me.nadesLeft[slot] > 0 && WEAPONS[me.kit[slot]]?.nade); }
 const roster = new Map(); // id -> { name, color, kills, deaths }
 const remotes = new Map(); // id -> { group, buf: [...], alive }
 const keys = {};
-const TOUCH_BTNS = ['btnFire', 'btnJump', 'btnReload', 'btnScore', 'btnMenu', 'btnSwap', 'btnAim']; // 可以調整位置的手機按鈕
+const TOUCH_BTNS = ['btnFire', 'btnJump', 'btnReload', 'btnScore', 'btnMenu', 'btnSwap', 'btnAim', 'btnAct']; // 可以調整位置的手機按鈕
 let ws = null, playing = false, firing = false, jumpQueued = false;
 let moveVec = { x: 0, y: 0 }; // 手機搖桿
 let rtt = 0, lastSend = 0, respawnAt = 0;
@@ -56,6 +63,8 @@ function setWorld(id, night) { curMap = world.use(id, night); }
 
 // ---------- 自己手上的武器（第一人稱模型與動畫在 viewmodel.js） ----------
 const views = createViewModels(camera, (name) => sfx(name, 0.45));
+// 投擲物、炸彈的畫面效果
+const effects = createEffects(scene, camera, (name, v, m) => sfx(name, v, m));
 
 // ---------- 其他玩家的模型 ----------
 function makeRemote(id) {
@@ -127,11 +136,12 @@ function physics(dt) {
   if (pressed('left')) fx -= 1;
   if (pressed('right')) fx += 1;
   fx += moveVec.x; fz += moveVec.y;
+  if (me.acting) { fx = fz = 0; jumpQueued = false; } // 埋彈、拆彈時不能動
   const len = Math.hypot(fx, fz);
   if (len > 1) { fx /= len; fz /= len; }
   const sin = Math.sin(me.yaw), cos = Math.cos(me.yaw);
   const w = curW();
-  const sp = SPEED * w.speed * (w.ads ? 1 + (w.ads.speed - 1) * me.adsK : 1); // 拿手槍、刀跑比較快；瞄準時走比較慢
+  const sp = SPEED * (w.speed || 1) * (w.ads ? 1 + (w.ads.speed - 1) * me.adsK : 1) * (performance.now() < me.stunUntil ? 0.5 : 1); // 拿手槍、刀跑比較快；瞄準時走比較慢；被震撼彈震到很慢
   const wx = (fx * cos + fz * sin) * sp;
   const wz = (-fx * sin + fz * cos) * sp;
   const accel = me.onGround ? 14 : 4;
@@ -189,6 +199,10 @@ function applyKit(kit) {
   me.ammoBy = {};
   for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[me.kit[slot]]; if (w.mag) me.ammoBy[slot] = w.mag; }
   me.weapon = 'primary';
+  me.prevWeapon = 'primary';
+  me.nadesLeft = { throw1: 1, throw2: 1 };
+  me.nadeHold = null;
+  effects.showArc(null);
   me.reloadEnd = 0;
   me.drawEnd = performance.now() + DRAW_MS;
   me.heavyAt = 0;
@@ -206,7 +220,10 @@ function showWeapon(owner, id) {
   views.setEmpty(false);
 }
 function switchWeapon(slot) {
-  if (!me.alive || !WPN.HAND_SLOTS.includes(slot) || slot === me.weapon) return;
+  if (!me.alive || !slotList().includes(slot) || slot === me.weapon || !slotUsable(slot)) return;
+  if (!me.weapon.startsWith('throw')) me.prevWeapon = me.weapon;
+  me.nadeHold = null;
+  effects.showArc(null);
   me.weapon = slot;
   me.reloadEnd = 0; // 換武器會中斷換彈
   me.drawEnd = performance.now() + DRAW_MS;
@@ -217,11 +234,110 @@ function switchWeapon(slot) {
   updateAmmo();
 }
 function cycleWeapon(dir) {
-  const list = WPN.HAND_SLOTS;
+  const list = slotList().filter((s) => s === me.weapon || slotUsable(s));
   switchWeapon(list[(list.indexOf(me.weapon) + dir + list.length) % list.length]);
+}
+// 按 4：切到投擲物（再按一次換另一顆）
+function cycleNade() {
+  if (room?.mode !== 'bomb') return;
+  const order = me.weapon === 'throw1' ? ['throw2', 'throw1'] : ['throw1', 'throw2'];
+  const s = order.find((x) => slotUsable(x) && x !== me.weapon);
+  if (s) switchWeapon(s);
+}
+
+// ---------- 投擲物：按住準備（出現拋物線），放開丟出去 ----------
+function startNadeHold(far) {
+  const now = performance.now();
+  const w = curW();
+  if (!w.nade || !me.alive || frozen(now) || now < me.drawEnd || me.nadeHold || !slotUsable(me.weapon) || me.acting) return;
+  me.nadeHold = { far, at: now, slot: me.weapon };
+  views.nadeReady(now);
+}
+function nadeLaunch(far) {
+  camera.getWorldDirection(camDir);
+  const o = [me.x, me.y + EYE, me.z];
+  return { o, d: camDir.toArray(), L: NADE.launch(o, camDir.toArray(), far) };
+}
+function releaseNade() {
+  const h = me.nadeHold;
+  if (!h) return;
+  const now = performance.now();
+  me.nadeHold = null;
+  effects.showArc(null);
+  if (!me.alive || me.weapon !== h.slot || !slotUsable(h.slot)) return;
+  const wait = h.at + 300 - now; // 至少要拔完插銷
+  const go2 = () => {
+    if (!me.alive || me.weapon !== h.slot) return;
+    const { o, d } = nadeLaunch(h.far);
+    send({ t: 'throw', far: h.far ? 1 : 0, d: d.map((v) => +v.toFixed(4)), o: o.map((v) => +v.toFixed(3)) });
+    views.nadeThrow(performance.now(), !h.far);
+    me.nadesLeft[h.slot] -= 1;
+    me.firedSince = true;
+    me.lastShot = performance.now();
+    updateAmmo();
+    // 丟完切回原本的武器
+    setTimeout(() => { if (me.alive && me.weapon === h.slot) switchWeapon(slotUsable(me.prevWeapon) ? me.prevWeapon : 'primary'); }, 450);
+  };
+  if (wait > 0) setTimeout(go2, wait); else go2();
+}
+let arcAt = 0;
+function updateNadeArc(now) {
+  if (!me.nadeHold || !me.alive) return;
+  if (now - arcAt < 60) return;
+  arcAt = now;
+  const { L } = nadeLaunch(me.nadeHold.far);
+  effects.showArc(NADE.simulate(curMap.boxes, L.o, L.v, me.kit[me.nadeHold.slot]));
+}
+
+// ---------- 閃光彈：自己有沒有被閃到（看視線、角度、距離） ----------
+let shake = 0;
+const actors = new Map(); // 誰正在埋彈／拆彈：id -> { kind, at, ms }
+function selfFlash(pos) {
+  const cfg = NADE.NADES.flash;
+  const eye = camera.position.clone();
+  const p = new THREE.Vector3().fromArray(pos);
+  const d = eye.distanceTo(p);
+  if (d > cfg.range || !(me.alive || specActive) || !lineClear(p.clone().add(new THREE.Vector3(0, 0.1, 0)), eye)) return;
+  camera.getWorldDirection(camDir);
+  const ang = camDir.angleTo(p.clone().sub(eye).normalize());
+  const base = ang < 0.9 ? cfg.full : ang < 1.7 ? cfg.side : cfg.back;
+  const ms = base * (1 - (d / cfg.range) * 0.5);
+  const now = performance.now();
+  if (now + ms > me.flashUntil) { me.flashUntil = now + ms; me.flashMs = ms; }
+  if (ms > 1000) sfx('ringing', 0.5);
+}
+// 炸彈狀態更新：地上的炸彈模型、倒數
+function syncBomb() {
+  const b = room?.bomb;
+  if (b && b.st === 'planted') { b.explodeAt = performance.now() + b.left; roomDeadline = b.explodeAt; }
+  effects.setBomb(b && room?.mode === 'bomb' ? b : null);
+}
+
+// ---------- 爆破模式：埋彈 / 拆彈（按住） ----------
+function siteHere(x, z) { return (curMap.sites || []).find((s) => x >= s.x1 && x <= s.x2 && z >= s.z1 && z <= s.z2) || null; }
+function canAct() {
+  const b = room?.bomb;
+  if (room?.mode !== 'bomb' || room.phase !== 'live' || !me.alive || !b || frozen()) return null;
+  if (me.team === room.attackTeam && b.st === 'carried' && b.carrier === me.id && siteHere(me.x, me.z)) return 'plant';
+  if (me.team !== room.attackTeam && b.st === 'planted' && Math.hypot(b.x - me.x, b.z - me.z) <= 1.7 && Math.abs(b.y - me.y) < 1.5) return 'defuse';
+  return null;
+}
+function startAct() {
+  const kind = canAct();
+  if (!kind || me.acting) return;
+  me.acting = { kind, at: performance.now(), ms: kind === 'plant' ? 3000 : 6000 };
+  me.vx = me.vz = 0;
+  firing = false;
+  send({ t: 'act', on: true });
+}
+function stopAct() {
+  if (!me.acting) return;
+  me.acting = null;
+  send({ t: 'act', on: false });
 }
 function shoot(now) {
   const w = curW();
+  if (w.nade || me.acting) return;
   if (!me.alive || frozen(now) || now < me.drawEnd || now - me.lastShot < cooldown(w)) return;
   if (me.reloadEnd) {
     // 霰彈槍一顆一顆裝：已經裝進去的可以直接開槍（會中斷換彈）
@@ -397,8 +513,97 @@ function updateAds(dt, now) {
 // 瞄準時的靈敏度：放大越多越慢（再乘上設定的「開鏡靈敏度」）
 function aimSens() {
   const w = curW();
-  if (!w.ads || !me.adsK) return 1;
-  return 1 + (settings.adsSens / w.ads.zoom - 1) * me.adsK;
+  const stun = performance.now() < me.stunUntil ? 0.45 : 1; // 震撼彈：轉身變慢
+  if (!w.ads || !me.adsK) return stun;
+  return (1 + (settings.adsSens / w.ads.zoom - 1) * me.adsK) * stun;
+}
+// 爆破模式：我這邊是進攻（1，用南邊出生區）還是防守（0）
+function mySide() { return room?.mode === 'bomb' ? (me.team === room.attackTeam ? 1 : 0) : me.team; }
+
+// ---------- 爆破模式的畫面：攻守身份、炸彈在哪、埋彈／拆彈進度 ----------
+let siteMarks = [], bombMark = null, actSoundAt = 0;
+function textSprite(text, color, size, xray = true) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.font = '900 96px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 8; g.strokeStyle = 'rgba(0,0,0,0.6)'; g.strokeText(text, 64, 68);
+  g.fillStyle = color; g.fillText(text, 64, 68);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: !xray, opacity: 0.75 }));
+  sp.scale.setScalar(size);
+  sp.renderOrder = 15;
+  return sp;
+}
+function setupBombMarks() {
+  for (const m of siteMarks) scene.remove(m);
+  siteMarks = [];
+  if (bombMark) { scene.remove(bombMark); bombMark = null; }
+  if (!curMap.sites || room?.mode !== 'bomb') return;
+  for (const st of curMap.sites) {
+    const sp = textSprite(st.id, '#ffbe0b', 2.2);
+    sp.position.set(st.c[0], 7.5, st.c[1]);
+    scene.add(sp);
+    siteMarks.push(sp);
+  }
+  bombMark = textSprite('💣', '#ffffff', 1.1);
+  bombMark.visible = false;
+  scene.add(bombMark);
+}
+function updateBombHud(now) {
+  const bomb = room?.mode === 'bomb';
+  $('bombInfo').classList.toggle('hidden', !bomb);
+  if (!bomb) { $('btnAct').classList.add('hidden'); $('actBar').classList.add('hidden'); return; }
+  const b = room.bomb, att = me.team === room.attackTeam;
+  const role = att ? '⚔ 進攻方' : '🛡 防守方';
+  let st = '';
+  const key = IS_TOUCH ? '' : ' E';
+  const act = canAct();
+  if (!b) st = '';
+  else if (b.st === 'carried' && b.carrier === me.id) st = act ? `💣 在包點裡了！按住${IS_TOUCH ? '「埋彈」' : key}埋彈` : '💣 你帶著炸彈：到 A 或 B 包點埋彈';
+  else if (b.st === 'carried') st = att ? `💣 炸彈在 ${nameOf(b.carrier)} 身上` : '找出炸彈在誰身上，守住包點';
+  else if (b.st === 'dropped') st = att ? '⚠ 炸彈掉在地上，快去撿！' : '炸彈掉了：別讓他們撿回去';
+  else if (b.st === 'planted') {
+    const left = Math.max(0, Math.ceil((b.explodeAt - now) / 1000));
+    st = `💣 炸彈在 ${b.site} 包點 · ${left} 秒` + (act ? ` · 按住${IS_TOUCH ? '「拆彈」' : key}拆彈` : att ? ' · 守住它' : ' · 快去拆彈');
+  }
+  const txt = `${role}${st ? '　' + st : ''}`;
+  if ($('bombInfo').textContent !== txt) $('bombInfo').textContent = txt;
+  $('bombInfo').classList.toggle('att', att);
+  // 手機：埋彈／拆彈按鈕
+  const showBtn = IS_TOUCH && (!!act || !!me.acting);
+  $('btnAct').classList.toggle('hidden', !showBtn);
+  if (showBtn) { const lb = (me.acting?.kind || act) === 'defuse' ? '✂<small>拆彈</small>' : '💣<small>埋彈</small>'; if ($('btnAct').innerHTML !== lb) $('btnAct').innerHTML = lb; }
+  // 自己離開了範圍（被推走）就停止
+  if (me.acting && !canAct() && now - me.acting.at > 200) stopAct();
+  // 進度條：自己的，或觀戰對象的
+  const a = me.acting || (specActive && actors.get(specActive));
+  $('actBar').classList.toggle('hidden', !a);
+  if (a) {
+    const k = Math.min(1, (now - a.at) / a.ms);
+    $('actBar').querySelector('i').style.width = (k * 100).toFixed(1) + '%';
+    $('actBar').querySelector('.ab-label').textContent = (a.kind === 'plant' ? '💣 埋彈中…' : '✂ 拆彈中…') + ` ${((1 - k) * a.ms / 1000).toFixed(1)} 秒`;
+    if (now - actSoundAt > (a.kind === 'plant' ? 320 : 520)) { actSoundAt = now; sfx(a.kind === 'plant' ? 'keypad' : 'defuse', 0.35); }
+  }
+  // 別人在附近埋／拆：聽得到
+  for (const [id, x] of actors) {
+    if (id === me.id || id === specActive) continue;
+    const r = remotes.get(id);
+    if (!r) continue;
+    const d = Math.hypot(r.group.position.x - me.x, r.group.position.z - me.z);
+    if (d < 20 && Math.random() < 0.04) sfx(x.kind === 'plant' ? 'keypad' : 'defuse', 0.3 / (1 + d * 0.15));
+  }
+  // 炸彈標記：進攻方看得到炸彈在誰身上／掉在哪；埋下後所有人都看得到
+  if (bombMark) {
+    let pos = null;
+    if (b && b.st === 'planted') pos = [b.x, b.y + 1.2, b.z];
+    else if (b && b.st === 'dropped' && att) pos = [b.x, b.y + 1.2, b.z];
+    else if (b && b.st === 'carried' && att && b.carrier !== me.id) { const r = remotes.get(b.carrier); if (r?.alive) pos = [r.group.position.x, r.group.position.y + 2.7, r.group.position.z]; }
+    bombMark.visible = !!pos;
+    if (pos) bombMark.position.set(...pos);
+  }
+  $('mbTime').classList.toggle('bombtime', b?.st === 'planted');
 }
 
 // ---------- HUD ----------
@@ -406,7 +611,11 @@ function updateAmmo() {
   const w = curW();
   views.setEmpty(!!w.lockBack && me.ammoBy[me.weapon] === 0 && !me.reloadEnd); // 手槍打光：套筒停在後面
   $('wname').textContent = `${w.icon} ${w.name}`;
-  if (w.melee) {
+  if (w.nade) {
+    $('ammonow').textContent = `×${me.nadesLeft[me.weapon] ?? 0}`;
+    $('ammomax').textContent = '';
+    $('reloadtext').textContent = IS_TOUCH ? (me.nadeNear ? '◎ 丟近' : '◎ 丟遠') : '左鍵丟遠 · 右鍵丟近';
+  } else if (w.melee) {
     $('ammonow').textContent = '';
     $('ammomax').textContent = '';
     $('reloadtext').textContent = '';
@@ -420,10 +629,11 @@ function updateAmmo() {
   // 電腦版：右下角的武器欄
   const box = $('wslots');
   box.replaceChildren();
-  WPN.HAND_SLOTS.forEach((slot, i) => {
+  slotList().forEach((slot, i) => {
     const d = document.createElement('div');
-    d.className = 'ws' + (slot === me.weapon ? ' on' : '');
-    d.textContent = `${i + 1} ${WEAPONS[me.kit[slot]].short}`;
+    const nade = slot.startsWith('throw');
+    d.className = 'ws' + (slot === me.weapon ? ' on' : '') + (nade && !slotUsable(slot) ? ' used' : '');
+    d.textContent = nade ? `${slot === 'throw1' ? 4 : ''} ${WEAPONS[me.kit[slot]].icon}${WEAPONS[me.kit[slot]].short}` : `${i + 1} ${WEAPONS[me.kit[slot]].short}`;
     box.append(d);
   });
   updateSwapButton();
@@ -467,11 +677,12 @@ function feed(killer, victim, head, weapon) {
   const a = document.createElement('span'); a.textContent = nameOf(killer); a.style.color = teamCss(killer);
   const b = document.createElement('span'); b.textContent = nameOf(victim); b.style.color = teamCss(victim);
   // 中間：武器圖示＋名稱，爆頭再加一個骷髏頭
-  const w = WEAPONS[weapon];
+  const w = WEAPONS[weapon] || (weapon === 'bomb' ? { icon: '💥', short: '炸彈' } : null);
   const mid = document.createElement('span');
   mid.className = 'kfw' + (head ? ' head' : '');
   mid.textContent = `${w ? w.icon + w.short : '🔫'}${head ? ' 💀' : ''}`;
-  div.append(a, mid, b);
+  if (!killer || killer === victim) div.append(mid, b); // 被炸彈炸死、自己炸到自己
+  else div.append(a, mid, b);
   $('killfeed').prepend(div);
   while ($('killfeed').children.length > 5) $('killfeed').lastChild.remove();
   setTimeout(() => div.remove(), 6000);
@@ -491,7 +702,7 @@ function teamTable(team, players) {
     if (p.id === me.id) tr.className = 'me';
     const alive = p.id === me.id ? me.alive : remotes.get(p.id)?.alive ?? p.alive;
     const td1 = document.createElement('td');
-    if (playing && room?.mode === 'elim' && !alive) td1.className = 'dead';
+    if (playing && isRounds() && !alive) td1.className = 'dead';
     const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = colorOf(p.id);
     td1.append(dot, document.createTextNode(p.name + (p.id === me.id ? '（你）' : '')));
     const td2 = document.createElement('td'); td2.textContent = p.kills;
@@ -594,6 +805,7 @@ function onRoom(r) {
   views.setTeamColor(MAP.teams[me.team].color); // 袖子是隊伍色
   roomDeadline = performance.now() + r.timeLeft;
   if (r.state === 'results') resultsEnd = roomDeadline;
+  if (r.state === 'playing') syncBomb();
   $('count').textContent = `房號 ${r.code}`;
 
   if (r.state === 'playing') {
@@ -614,6 +826,8 @@ function enterMatch() {
   hideTitle();
   setWorld(room?.rules?.map, false);
   title.visible = false;
+  setupBombMarks();
+  effects.clear();
   uiStart();
   for (const id of [...remotes.keys()]) removeRemote(id);
   for (const id of roster.keys()) if (id !== me.id) makeRemote(id);
@@ -633,7 +847,7 @@ function enterMatch() {
   toast(rulesText(room));
   if (!me.alive) {
     $('death').classList.add('hidden');
-    if (room.mode === 'elim') showSpectate('這回合進行中，等下一回合加入戰鬥');
+    if (isRounds()) showSpectate('這回合進行中，等下一回合加入戰鬥');
   }
   if (!IS_TOUCH) {
     // 開戰不一定是自己按的，瀏覽器可能不讓我們直接鎖定滑鼠，所以先顯示「繼續」按鈕
@@ -645,6 +859,12 @@ function enterMatch() {
 
 function exitMatch() {
   if (replay) { replay.done = null; endReplay(); }
+  effects.clear();
+  for (const m of siteMarks) scene.remove(m);
+  siteMarks = [];
+  if (bombMark) { scene.remove(bombMark); bombMark = null; }
+  actors.clear();
+  me.acting = null;
   playing = false;
   me.alive = false;
   firing = false;
@@ -847,8 +1067,9 @@ function updateMatchbar(now) {
     const alive = [0, 0];
     if (me.alive) alive[me.team]++;
     for (const r of remotes.values()) if (r.alive) alive[r.team]++;
-    $('mbSub').textContent = room.phase === 'freeze' ? `第 ${room.round} 回合 · 準備`
-      : room.phase === 'post' ? `第 ${room.round} 回合結束` : `存活 ${alive[0]} vs ${alive[1]}`;
+    const pre = room.mode === 'bomb' ? (me.team === room.attackTeam ? '進攻 · ' : '防守 · ') : '';
+    $('mbSub').textContent = pre + (room.phase === 'freeze' ? `第 ${room.round} 回合 · 準備`
+      : room.phase === 'post' ? `第 ${room.round} 回合結束` : `存活 ${alive[0]} vs ${alive[1]}`);
   }
 }
 
@@ -896,6 +1117,51 @@ function handle(m) {
     case 'kit':
       applyKit(m.kit);
       break;
+    // ---------- 投擲物 ----------
+    case 'nade': {
+      if (!playing) break;
+      effects.addNade(m.nid, m.kind, m.o, m.v, curMap.boxes, performance.now());
+      if (m.id === specActive) views.nadeThrow(performance.now(), false);
+      break;
+    }
+    case 'nadeBoom': {
+      if (!playing) break;
+      const res = effects.boom(m, performance.now());
+      if (res.shake) shake = Math.max(shake, res.shake);
+      if (m.kind === 'flash') selfFlash(m.pos);
+      break;
+    }
+    case 'stunned':
+      me.stunUntil = performance.now() + m.ms;
+      shake = Math.max(shake, 0.5);
+      break;
+    // ---------- 爆破模式：炸彈 ----------
+    case 'bomb':
+      if (room) room.bomb = m.b;
+      syncBomb();
+      break;
+    case 'act': {
+      if (m.on) actors.set(m.id, { kind: m.kind, at: performance.now(), ms: m.ms });
+      else actors.delete(m.id);
+      if (m.id === me.id && !m.on) me.acting = null;
+      break;
+    }
+    case 'planted': {
+      const att = room && me.team === room.attackTeam;
+      banner(`💣 炸彈已埋在 ${m.site} 包點`, att ? '守住炸彈，別讓他們拆掉！' : '快去拆彈！（靠近炸彈按住' + (IS_TOUCH ? '「✂ 拆彈」）' : ' E）'), 'bomb', 2600);
+      sfx('keypad', 0.5);
+      if (room) roomDeadline = performance.now() + m.fuse;
+      break;
+    }
+    case 'defused':
+      banner('✂ 炸彈被拆除了', nameOf(m.id), 'defuse', 2200);
+      sfx('defuse', 0.6);
+      break;
+    case 'boom': {
+      const res = effects.bombBoom(m.x, m.y, m.z);
+      shake = Math.max(shake, res.shake);
+      break;
+    }
     case 'correct':
       if (m.seq === me.seq) { me.x = m.x; me.y = m.y; me.z = m.z; me.vx = me.vz = 0; }
       break;
@@ -991,7 +1257,7 @@ function handle(m) {
       if (v) v.deaths = m.vd;
       if (room && m.score) room.score = m.score;
       feed(m.killer, m.victim, m.head, m.w);
-      if (m.killer === me.id) toast(m.head ? `🎯 爆頭擊殺 ${nameOf(m.victim)}` : `擊殺 ${nameOf(m.victim)}`);
+      if (m.killer === me.id && m.victim !== me.id) toast(m.head ? `🎯 爆頭擊殺 ${nameOf(m.victim)}` : `擊殺 ${nameOf(m.victim)}`);
       if (m.victim === me.id) {
         me.alive = false;
         me.hp = 0;
@@ -1004,8 +1270,10 @@ function handle(m) {
         const kw = WEAPONS[m.w];
         $('deathby').replaceChildren();
         const kn = document.createElement('span'); kn.textContent = nameOf(m.killer); kn.style.color = teamCss(m.killer);
-        $('deathby').append('擊倒你的是：', kn, kw ? `（${kw.icon} ${kw.name}${m.head ? ' · 爆頭' : ''}）` : '');
-        if (m.khp !== undefined) {
+        me.acting = null; me.nadeHold = null; effects.showArc(null);
+        if (!m.killer || m.killer === me.id) $('deathby').append(m.w === 'bomb' ? '你被炸彈炸死了 💥' : `你被自己的${kw ? kw.name : '攻擊'}打倒了`);
+        else $('deathby').append('擊倒你的是：', kn, kw ? `（${kw.icon} ${kw.name}${m.head ? ' · 爆頭' : ''}）` : '');
+        if (m.khp !== undefined && m.killer && m.killer !== me.id) {
           const hp = document.createElement('div');
           hp.className = 'khp' + (m.khp <= 30 ? ' low' : '');
           hp.innerHTML = '<span class="khp-bar"><i></i></span><b></b>';
@@ -1013,7 +1281,7 @@ function handle(m) {
           hp.querySelector('b').textContent = `剩 ${m.khp} 血`;
           $('deathby').append(hp);
         }
-        const elim = room?.mode === 'elim';
+        const elim = isRounds();
         $('death').classList.toggle('spec', elim);
         if (elim) {
           $('respawn').textContent = '等待下一回合…';
@@ -1034,6 +1302,11 @@ function handle(m) {
       break;
     }
     case 'round':
+      effects.clear();
+      actors.clear();
+      me.acting = null;
+      if (room && m.attack !== undefined) room.attackTeam = m.attack;
+      if (m.swap) setTimeout(() => banner('🔄 交換攻守', me.team === room?.attackTeam ? '這半場你們是進攻方' : '這半場你們是防守方', '', 2600), 100);
       freezeEnd = performance.now() + m.freeze;
       lastCount = 0;
       for (const r of remotes.values()) clearCorpse(r); // 新回合：屍體清掉
@@ -1046,7 +1319,11 @@ function handle(m) {
       const cls = m.winner === 0 ? 'blue' : m.winner === 1 ? 'red' : '';
       const big = m.winner < 0 ? '這回合平手' : `${MAP.teams[m.winner].name}拿下這回合`;
       $('death').classList.add('hidden');
-      banner(big, m.last ? '比賽結束！' : `藍隊 ${m.wins[0]} : ${m.wins[1]} 紅隊`, cls, 3500);
+      const why = { bomb: '💥 炸彈爆炸', defuse: '✂ 炸彈被拆除', time: '⏱ 時間到', elim: '☠ 全部擊倒' }[m.reason];
+      const tail = m.last ? '比賽結束！' : `藍隊 ${m.wins[0]} : ${m.wins[1]} 紅隊`;
+      banner(big, room?.mode === 'bomb' && why ? `${why} · ${tail}` : tail, cls, 3500);
+      actors.clear();
+      me.acting = null;
       if (m.winner >= 0) beep(m.winner === me.team ? 880 : 330, 0.3, 0.1, 'triangle');
       break;
     }
@@ -1073,7 +1350,12 @@ function onInput(code, down) {
   if (!playing && down) return false;
   const a = actionOf(code);
   if (!a) return false;
-  if (a === 'fire') firing = down;
+  if (a === 'fire') {
+    if (curW().nade) { if (down) startNadeHold(true); else releaseNade(); firing = false; }
+    else firing = down;
+  }
+  if (a === 'use') { if (down) startAct(); else stopAct(); }
+  if (a === 'w4' && down) cycleNade();
   if (a === 'jump' && down) jumpQueued = true;
   if (a === 'reload' && down) startReload();
   if (down && (a === 'w1' || a === 'w2' || a === 'w3')) {
@@ -1084,7 +1366,8 @@ function onInput(code, down) {
   if (a === 'kit' && down) toggleKitPick();
   // 右鍵：拿刀＝重擊，拿槍＝瞄準
   if (a === 'heavy') {
-    if (curW().melee) { if (down) startHeavy(); else releaseHeavy(); }
+    if (curW().nade) { if (down) startNadeHold(false); else releaseNade(); }
+    else if (curW().melee) { if (down) startHeavy(); else releaseHeavy(); }
     else { if (!down) releaseHeavy(); aimPress(down); }
   }
   if (a === 'inspect' && down) doInspect();
@@ -1117,7 +1400,7 @@ document.addEventListener('mousemove', (e) => {
 canvas.addEventListener('mousedown', (e) => {
   if (IS_TOUCH || !playing) return;
   if (document.pointerLockElement !== canvas) { lockPointer(); return; }
-  if (!me.alive && room?.mode === 'elim') { spectateNext(); return; }
+  if (!me.alive && isRounds()) { spectateNext(); return; }
   onInput('Mouse' + e.button, true);
 });
 document.addEventListener('mouseup', (e) => onInput('Mouse' + e.button, false));
@@ -1191,7 +1474,20 @@ function onTouchStart(e) {
     if (btn) {
       e.preventDefault();
       btn.classList.add('on');
-      if (btn.id === 'btnFire' && curW().melee) {
+      if (btn.id === 'btnFire' && curW().nade) {
+        // 拿投擲物：按住出現拋物線，放開丟出去
+        startNadeHold(!me.nadeNear);
+        touches.set(t.identifier, { role: 'nade', x: t.clientX, y: t.clientY, btn });
+      } else if (btn.id === 'btnAct') {
+        startAct();
+        touches.set(t.identifier, { role: 'act', btn });
+      } else if (btn.id === 'btnAim' && curW().nade) {
+        // 拿投擲物時，瞄準鈕＝切換丟遠／丟近
+        me.nadeNear = !me.nadeNear;
+        if (me.nadeHold) me.nadeHold.far = !me.nadeNear;
+        updateAmmo();
+        touches.set(t.identifier, { role: 'btn', btn });
+      } else if (btn.id === 'btnFire' && curW().melee) {
         // 拿刀：點一下＝輕擊；按住＝舉刀蓄力，放開＝重擊
         const s = { role: 'knife', x: t.clientX, y: t.clientY, btn, heavy: false };
         s.timer = setTimeout(() => { s.heavy = startHeavy(); }, 250);
@@ -1226,7 +1522,7 @@ function onTouchStart(e) {
       s.classList.add('on');
       $('knob').style.transform = '';
     } else {
-      if (!me.alive && room?.mode === 'elim') spectateNext();
+      if (!me.alive && isRounds()) spectateNext();
       touches.set(t.identifier, { role: 'look', x: t.clientX, y: t.clientY });
     }
   }
@@ -1252,7 +1548,7 @@ function onTouchMove(e) {
       });
       s.hover = el?.dataset.slot || null;
       for (const o of document.querySelectorAll('#swapPop .swopt')) o.classList.toggle('on', o === el);
-    } else if (s.role === 'look' || s.role === 'fire' || s.role === 'knife' || s.role === 'aim') {
+    } else if (s.role === 'look' || s.role === 'fire' || s.role === 'knife' || s.role === 'aim' || s.role === 'nade') {
       const k = LOOK_SENS * settings.touch * aaSlow * aimSens();
       const dy = -(t.clientX - s.x) * k, dp = -(t.clientY - s.y) * k * settings.vert * (settings.invertY ? -1 : 1);
       me.yaw += dy; me.pitch += dp;
@@ -1269,6 +1565,8 @@ function onTouchEnd(e) {
     if (s.role === 'move') { moveVec = { x: 0, y: 0 }; $('stick').classList.remove('on'); }
     if (s.role === 'fire') firing = false;
     if (s.role === 'aim') aimPress(false);
+    if (s.role === 'nade') releaseNade();
+    if (s.role === 'act') stopAct();
     if (s.role === 'knife') {
       clearTimeout(s.timer);
       if (s.heavy) releaseHeavy(); else shoot(performance.now());
@@ -1482,7 +1780,9 @@ document.querySelector('#kitPick .kp-title').addEventListener('click', (e) => { 
 // ---------- 手機切換武器鈕 ----------
 function swapTarget() {
   const [a, b] = settings.swapPair || ['primary', 'secondary'];
-  return me.weapon === a ? b : a;
+  const t = me.weapon === a ? b : a;
+  if (slotList().includes(t) && slotUsable(t)) return t;
+  return me.weapon === 'primary' ? 'secondary' : 'primary'; // 投擲物用完了、或這個模式沒有投擲物
 }
 function swapTap() { switchWeapon(swapTarget()); }
 function updateSwapButton() {
@@ -1493,8 +1793,8 @@ function updateSwapButton() {
 function openSwapPop() {
   const pop = $('swapPop');
   pop.replaceChildren();
-  for (const slot of WPN.HAND_SLOTS) {
-    if (slot === me.weapon) continue;
+  for (const slot of slotList()) {
+    if (slot === me.weapon || !slotUsable(slot)) continue;
     const w = WEAPONS[me.kit[slot]];
     const o = document.createElement('div');
     o.className = 'swopt';
@@ -1641,6 +1941,13 @@ function frame() {
       } else { freezeEnd = 0; banner('開戰！', '', '', 900); beep(1200, 0.2, 0.1, 'sawtooth'); }
     }
     updateKitUI(now);
+    effects.update(dt, now);
+    updateNadeArc(now);
+    updateBombHud(now);
+    shake = Math.max(0, shake - dt * 2.5);
+    // 閃光彈：白畫面，最後一秒慢慢退掉
+    const fl = now < me.flashUntil ? Math.min(1, (me.flashUntil - now) / 900) : 0;
+    $('flashOverlay').style.opacity = fl.toFixed(3);
     updateCorpses(now);
     updateMatchbar(now);
     if (!$('results').classList.contains('hidden')) {
@@ -1660,7 +1967,7 @@ function frame() {
   }
   // 殲滅模式死掉後：從隊友的視角觀戰
   let spec = null;
-  if (playing && !me.alive && room?.mode === 'elim' && $('results').classList.contains('hidden')) {
+  if (playing && !me.alive && isRounds() && $('results').classList.contains('hidden')) {
     const list = spectateTargets();
     spec = list.find(([id]) => id === spectateId) || list[0] || null;
     if (spec) {
@@ -1680,9 +1987,16 @@ function frame() {
   me.recoil = Math.max(0, me.recoil - dt * 3);
   const speed = Math.hypot(me.vx, me.vz);
   if (me.onGround && speed > 0.5) bob += dt * speed * 1.6;
-  if (playing && !(room?.mode === 'elim' && !me.alive)) {
+  if (playing && !(isRounds() && !me.alive)) {
     camera.position.set(me.x, me.y + EYE + (me.alive ? Math.sin(bob * 2) * 0.03 : -1.2), me.z);
     camera.rotation.set(me.pitch, me.yaw, 0);
+    // 爆炸震動、震撼彈搖晃
+    if (shake > 0) { camera.rotation.x += (Math.random() - 0.5) * 0.04 * shake; camera.rotation.y += (Math.random() - 0.5) * 0.04 * shake; }
+    if (now < me.stunUntil && me.alive) {
+      const k = Math.min(1, (me.stunUntil - now) / 1500);
+      camera.rotation.z += Math.sin(now * 0.006) * 0.09 * k;
+      camera.rotation.x += Math.sin(now * 0.0045) * 0.035 * k;
+    }
   }
   // 觀戰：手上顯示被觀戰的人拿的武器
   specActive = spec ? spec[0] : 0;
@@ -1714,12 +2028,12 @@ function frame() {
   // 準心：走路、跳、連射時往外張開（站著不動跟原本一樣）
   if (playing && me.alive && !spec) {
     const w = curW();
-    const px = w.melee ? 4 : (currentSpread(w) / 2) / Math.tan(camera.fov * Math.PI / 360) * (innerHeight / 2);
+    const px = !w.spread ? 4 : (currentSpread(w) / 2) / Math.tan(camera.fov * Math.PI / 360) * (innerHeight / 2);
     xhGap += (Math.max(4, Math.min(60, 3 + px)) - xhGap) * Math.min(1, dt * 18);
     $('crosshair').style.setProperty('--gap', xhGap.toFixed(1) + 'px');
   }
   // 走出重生區：這條命就不能再換套裝
-  if (me.alive && room?.phase === 'live' && !me.leftSpawn && !MAP.inSpawn(curMap, me.team, me.x, me.z)) me.leftSpawn = true;
+  if (me.alive && room?.phase === 'live' && !me.leftSpawn && !MAP.inSpawn(curMap, mySide(), me.x, me.z)) me.leftSpawn = true;
   // 瞄準：畫面放大；狙擊槍瞄好時換成狙擊鏡畫面（觀戰時跟著被觀戰的人）
   let zw = null, zk = 0;
   if (spec) {

@@ -3,6 +3,7 @@
 const MAP = require('./public/map.js');
 const { segmentBlocked } = require('./geom.js');
 const WPN = require('./public/weapons.js');
+const NADE = require('./public/nades.js');
 const { WEAPONS } = WPN;
 
 // ---------- 難度設定 ----------
@@ -47,7 +48,8 @@ function weighted(table) {
 }
 function pickLoadout(level) {
   const t = KIT_WEIGHTS[level] || KIT_WEIGHTS.normal;
-  return WPN.clean({ primary: weighted(t.primary), secondary: weighted(t.secondary), melee: 'knife', throw1: 'frag', throw2: 'flash' });
+  const nades = { flash: 3, smoke: 3, frag: 2.5, molotov: 2, stun: 1.5 };
+  return WPN.clean({ primary: weighted(t.primary), secondary: weighted(t.secondary), melee: 'knife', throw1: weighted(nades), throw2: weighted(nades) });
 }
 
 const NAMES = [
@@ -350,8 +352,9 @@ function setGoal(p, b, nav, x, z) {
 }
 
 // 看不看得到：檢查胸口、頭、左右肩膀、腳，露出一部分就算看得到（不會在掩體邊緣一閃一閃）
-function canSee(p, q, boxes) {
+function canSee(p, q, boxes, smokes = null, now = 0) {
   const eye = [p.x, p.y + 1.6, p.z];
+  if (smokes && smokes.length && NADE.segSmoke(eye, [q.x, q.y + 1.2, q.z], smokes, now)) return false; // 煙霧看不穿
   const dx = q.x - p.x, dz = q.z - p.z, l = Math.hypot(dx, dz) || 1;
   const sx = -dz / l * 0.3, sz = dx / l * 0.3; // 往對方左右兩邊各 0.3 公尺
   const pts = [[0, 1.05, 0], [0, 1.6, 0], [sx, 1.2, sz], [-sx, 1.2, -sz], [0, 0.4, 0]];
@@ -417,6 +420,12 @@ function hear(p, shooter, now) {
   if (!c.hear || !p.alive || b.state === 'engage' || b.state === 'retreat') return;
   if (b.state === 'investigate' && now - b.heardAt < 1500) return; // 不要每一發槍聲都重新找路
   const d = Math.hypot(shooter.x - p.x, shooter.z - p.z);
+  if (p.room.mode === 'bomb') {
+    // 爆破模式：不離開崗位去找人；聽到包點附近有槍聲就通知隊友轉點，很近的話轉頭看
+    if (shooter.team !== p.team) bombAlert(p.room, p, shooter, now);
+    if (d < Math.min(c.hear || 15, 18)) { b.alert = [shooter.x, shooter.z]; b.heardAt = now; }
+    return;
+  }
   if (d > c.hear) return;
   const nav = navFor(MAP.get(p.room.rules.map));
   let gx = shooter.x, gz = shooter.z;
@@ -516,12 +525,14 @@ function think(p, r, now, dt, api) {
   // ---- 視覺：找看得到的最近敵人 ----
   let seen = null, bestD = Infinity;
   const longGun = !!WEAPONS[p.loadout.primary].ads?.scope; // 拿狙擊槍看得比較遠
+  const blind = (b.blindUntil || 0) > now; // 被閃光彈閃到：什麼都看不到
   for (const q of r.players.values()) {
+    if (blind) break;
     if (q.team === p.team || !q.alive) continue;
     const dx = q.x - p.x, dz = q.z - p.z, dist = Math.hypot(dx, dz);
     if (dist > c.range * (longGun ? 1.5 : 1)) continue;
     const inView = Math.abs(angleDiff(yawTo(dx, dz), p.yaw)) < c.fov || dist < 4 || q.id === b.target;
-    if (!inView || !canSee(p, q, map.boxes)) continue;
+    if (!inView || !canSee(p, q, map.boxes, r.smokes, now)) continue;
     if (dist < bestD) { bestD = dist; seen = q; }
   }
 
@@ -531,12 +542,25 @@ function think(p, r, now, dt, api) {
     const q = r.players.get(b.target);
     if (q && q.alive) mem = { id: q.id, x: b.lastSeen[0], z: b.lastSeen[1], y: b.lastSeen[2] };
   }
+  // 聽腳步聲：附近（15 公尺內）有敵人在跑，就轉頭看那邊（爆破模式守點用）
+  if (!seen && r.mode === 'bomb' && b.state !== 'engage' && now - b.heardAt > 1200) {
+    for (const q of r.players.values()) {
+      if (q.team === p.team || !q.alive) continue;
+      const d = Math.hypot(q.x - p.x, q.z - p.z);
+      if (d > 15) continue;
+      const h = q.history, n = h.length;
+      const sp = n >= 3 ? Math.hypot(h[n - 1].x - h[n - 3].x, h[n - 1].z - h[n - 3].z) / Math.max(0.05, (h[n - 1].t - h[n - 3].t) / 1000) : 0;
+      if (sp > 3.5) { b.alert = [q.x, q.z]; b.heardAt = now; break; }
+    }
+  }
   if (seen) {
     if (b.target !== seen.id) {
       // 同一個人剛剛才看到過：反應快很多，瞄準也不用從頭來
       const again = seen.id === b.lastTarget && now - b.lastSeenAt < 2500;
       b.target = seen.id;
-      b.reactAt = now + (again ? rand(c.react[0], c.react[1]) * 0.25 : rand(c.react[0], c.react[1]) + bestD * c.reactPerM);
+      // 本來就瞄著那個方向（守點預瞄）：反應快一倍
+      const preAim = Math.abs(angleDiff(yawTo(seen.x - p.x, seen.z - p.z), p.yaw)) < 0.35 && (b.moveK || 0) < 0.2 ? 0.5 : 1;
+      b.reactAt = now + (again ? rand(c.react[0], c.react[1]) * 0.25 : (rand(c.react[0], c.react[1]) + bestD * c.reactPerM) * preAim);
       if (!again) b.aimOff = [randn() * c.error * 3.5, randn() * c.error * 2];
       b.sprayN = 0;
       b.head = Math.random() < c.head;
@@ -544,6 +568,7 @@ function think(p, r, now, dt, api) {
       if (!again) b.knife = Math.random() < c.knife;
     }
     b.lastTarget = seen.id;
+    if (r.mode === 'bomb') bombAlert(r, p, seen, now);
     b.lastSeen = [seen.x, seen.z, seen.y];
     b.lastSeenAt = now;
     if (b.state !== 'retreat') b.state = 'engage';
@@ -551,9 +576,9 @@ function think(p, r, now, dt, api) {
     // 記憶中：維持交戰
   } else if (b.state === 'engage') {
     b.target = 0;
-    b.state = 'search';
     b.guard = null;
-    setGoal(p, b, nav, b.lastSeen[0], b.lastSeen[1]);
+    if (r.mode === 'bomb') { b.state = 'obj'; b.path = null; b.alert = b.lastSeen; b.heardAt = now; } // 爆破模式：回到自己的任務，不追出去
+    else { b.state = 'search'; setGoal(p, b, nav, b.lastSeen[0], b.lastSeen[1]); }
   }
 
   // ---- 血量低：找掩護 ----
@@ -584,6 +609,7 @@ function think(p, r, now, dt, api) {
     else if (p.weapon === 'primary' && p.ammoBy.primary <= 0 && c.pistol && p.ammoBy.secondary > 0) want = 'secondary';
     else if (p.weapon === 'secondary' && p.ammoBy.secondary <= 0) want = 'primary';
   } else if (b.state !== 'engage') want = 'primary';
+  if (b.throwing) want = p.weapon; // 正在準備丟投擲物
   if (want !== p.weapon) api.switchTo(p, want);
   const W = WEAPONS[p.loadout[p.weapon]];
   const ammo = W.mag ? p.ammoBy[p.weapon] : 0;
@@ -639,7 +665,8 @@ function think(p, r, now, dt, api) {
       let err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray) * (b.ground ? 1 : 2.2);
       if (scopeGun) err = c.error * (0.5 + dist / (c.rangeFalloff * 2.5)); // 開鏡比較準
       // 邊走邊開槍比較不準（跟玩家一樣：看這把槍移動時的散布、走得多快）
-      err = Math.hypot(err, W.spread[1] * 0.3 * (b.moveK || 0));
+      err = Math.hypot(err, W.spread[1] * 0.3 * (b.moveK || 0)) * (1 + 0.8 * (b.moveK || 0));
+      if ((b.stunUntil || 0) > now) err *= 2.5; // 被震撼彈震到：很難瞄
       const jy = p.yaw + randn() * err;
       const jp = p.pitch + randn() * err;
       b.sprayN += 1;
@@ -660,7 +687,9 @@ function think(p, r, now, dt, api) {
       }
     }
     if (c.strafe > 0 && now >= b.strafeUntil) {
-      b.strafeDir = Math.random() < c.strafe ? (Math.random() < 0.5 ? -1 : 1) : 0;
+      // 爆破模式守點的人：站穩守住角度，比較少左右閃
+      const holding = r.mode === 'bomb' && p.team !== r.attackTeam && (!r.bomb || r.bomb.state !== 'planted');
+      b.strafeDir = Math.random() < c.strafe * (holding ? 0.3 : 1) ? (Math.random() < 0.5 ? -1 : 1) : 0;
       b.strafeUntil = now + rand(500, 1300);
       if (b.strafeDir && Math.random() < c.jumpy) wantJump = true; // 偶爾邊閃邊跳
     }
@@ -695,6 +724,34 @@ function think(p, r, now, dt, api) {
         }
       }
       if (b.lastSeen) lookYaw = yawTo(b.lastSeen[0] - p.x, b.lastSeen[1] - p.z);
+    } else if (r.mode === 'bomb' && r.bomb !== undefined && (b.state === 'patrol' || b.state === 'guard' || b.state === 'obj')) {
+      // ---- 爆破模式的任務：集合、衝點、埋彈、守包、回防、拆彈 ----
+      b.state = 'obj';
+      const o = bombObjective(p, b, r, nav, now);
+      if (o.act) {
+        if (!p.actKind) api.act(p, { on: true });
+        lookYaw = yawTo(o.look[0] - p.x, o.look[1] - p.z);
+        b.objMove = null;
+      } else {
+        if (p.actKind) api.act(p, { on: false });
+        const dGoal = Math.hypot(o.goal[0] - p.x, o.goal[1] - p.z);
+        if (dGoal > 1.2) {
+          if (!b.goal || Math.hypot(b.goal[0] - o.goal[0], b.goal[1] - o.goal[1]) > 1 || !b.path || b.pathIdx >= b.path.length) setGoal(p, b, nav, o.goal[0], o.goal[1]);
+          b.objMove = followPath(p, b);
+          if (!b.objMove && dGoal < 4) b.objMove = { mx: (o.goal[0] - p.x) / dGoal, mz: (o.goal[1] - p.z) / dGoal, jump: false };
+        } else b.objMove = null;
+        if (b.objMove) {
+          mx = b.objMove.mx; mz = b.objMove.mz;
+          if (b.objMove.jump) wantJump = true;
+          lookYaw = dGoal < 8 ? yawTo(o.look[0] - p.x, o.look[1] - p.z) : yawTo(mx, mz);
+        } else {
+          // 到位：看著敵人會來的方向左右掃
+          b.lookSweep += dt * 0.7;
+          lookYaw = yawTo(o.look[0] - p.x, o.look[1] - p.z) + Math.sin(b.lookSweep) * 0.6;
+          if (b.alert && now - b.heardAt < 4000) lookYaw = yawTo(b.alert[0] - p.x, b.alert[1] - p.z);
+          if (W.mag && !p.reloadUntil && ammo < W.mag) api.reload(p);
+        }
+      }
     } else if (b.state === 'guard') {
       // 守在戰術位置：朝敵方那邊左右掃視
       const enemyDir = p.team === 0 ? 1 : -1;
@@ -717,7 +774,7 @@ function think(p, r, now, dt, api) {
         }
       }
     }
-    const f = b.state !== 'guard' ? followPath(p, b) : null;
+    const f = b.state !== 'guard' && b.state !== 'obj' ? followPath(p, b) : null;
     if (f) {
       mx = f.mx; mz = f.mz;
       if (f.jump) wantJump = true; // 下一個點比較高：靠近了就跳
@@ -729,13 +786,25 @@ function think(p, r, now, dt, api) {
   }
 
   // ---- 轉身 ----
-  p.yaw = approach(p.yaw, lookYaw, c.turn * dt);
+  // ---- 投擲物 ----
+  if (r.mode === 'bomb') {
+    const t = nadeBrain(p, b, r, now, api, tgt || null);
+    if (t) { lookYaw = t.yaw; lookPitch = t.pitch; }
+    // 站在火裡：往外走
+    for (const f of r.fires || []) {
+      const fd = Math.hypot(p.x - f.x, p.z - f.z);
+      if (fd < NADE.NADES.molotov.radius + 0.6 && Math.abs(p.y - f.y) < 1.2) { mx = (p.x - f.x) / (fd || 1); mz = (p.z - f.z) / (fd || 1); if (p.actKind) api.act(p, { on: false }); }
+    }
+  }
+
+  const stunK = (b.stunUntil || 0) > now ? 0.4 : 1; // 震撼彈：轉身、移動都變慢
+  p.yaw = approach(p.yaw, lookYaw, c.turn * stunK * dt);
   p.yaw = Math.atan2(Math.sin(p.yaw), Math.cos(p.yaw));
-  p.pitch += Math.max(-c.turn * dt, Math.min(c.turn * dt, lookPitch - p.pitch));
+  p.pitch += Math.max(-c.turn * stunK * dt, Math.min(c.turn * stunK * dt, lookPitch - p.pitch));
 
   // ---- 移動與物理 ----
   if (wantJump) jump(b, now);
-  const speed = (b.state === 'engage' && !W.melee ? c.speed * (b.pushing ? 0.9 : 0.6) : b.state === 'guard' ? 0 : c.speed) * W.speed * (p.adsSince ? W.ads.speed : 1);
+  const speed = (b.state === 'engage' && !W.melee ? c.speed * (b.pushing ? 0.9 : 0.6) : b.state === 'guard' ? 0 : c.speed) * (W.speed || 1) * (p.adsSince ? W.ads.speed : 1) * ((b.stunUntil || 0) > now ? 0.5 : 1);
   const ox = p.x, oz = p.z;
   const blocked = move(p, b, nav, mx, mz, speed, dt);
   b.moveK = Math.min(1, Math.hypot(p.x - ox, p.z - oz) / (6.5 * W.speed * dt)); // 這一格走多快（0 = 站著，1 = 全速）
@@ -758,6 +827,206 @@ function think(p, r, now, dt, api) {
     b.stuckCheckAt = now + 2000;
   }
   record(p, now);
+}
+
+// ======================================================================
+// 爆破模式：整隊的計畫（進攻打哪個包點、什麼時候衝）＋每個機器人的任務
+// ======================================================================
+function inRect(s, x, z) { return x >= s.x1 && x <= s.x2 && z >= s.z1 && z <= s.z2; }
+function pointIn(nav, s) {
+  for (let i = 0; i < 30; i++) {
+    const x = rand(s.x1 + 1, s.x2 - 1), z = rand(s.z1 + 1, s.z2 - 1);
+    const k = nav.cellOf(x, z);
+    if (nav.ok[k] && nav.reach[k] && !nav.edge[k] && nav.h[k] < 0.3) return [x, z];
+  }
+  return s.c;
+}
+function nearPt(nav, x, z, r) {
+  for (let i = 0; i < 20; i++) {
+    const a = Math.random() * Math.PI * 2, d = Math.random() * r;
+    const k = nav.cellOf(x + Math.cos(a) * d, z + Math.sin(a) * d);
+    if (nav.ok[k] && nav.reach[k] && !nav.edge[k]) return [x + Math.cos(a) * d, z + Math.sin(a) * d];
+  }
+  return [x, z];
+}
+function teamPlan(r, now) {
+  if (!r.botPlan || r.botPlan.round !== r.round) {
+    r.botPlan = { round: r.round, site: Math.random() < 0.5 ? 'A' : 'B', execAt: now + rand(5000, 20000), alert: null, alertAt: 0, start: now };
+  }
+  const plan = r.botPlan;
+  if (r.phaseUntil - now < 45000 && (!r.bomb || r.bomb.state !== 'planted')) plan.execAt = Math.min(plan.execAt, now); // 時間不多了：直接衝
+  return plan;
+}
+// 回傳 { goal: [x, z], look: [x, z], act: 'plant' | 'defuse' | null }
+function bombObjective(p, b, r, nav, now) {
+  const map = nav.map, plan = teamPlan(r, now), bomb = r.bomb;
+  const attack = p.team === r.attackTeam;
+  const site = (id) => map.sites.find((s) => s.id === id);
+  if (b.objRound !== r.round) {
+    // 每回合分配一次任務
+    b.objRound = r.round;
+    const mates = [...r.players.values()].filter((q) => q.team === p.team && q.bot).map((q) => q.id).sort((a, c) => a - c);
+    const idx = mates.indexOf(p.id);
+    const st = map.stage[plan.site];
+    b.stagePt = nearPt(nav, ...st[idx % st.length], 3);
+    b.sitePt = pointIn(nav, site(plan.site));
+    b.role = ['A', 'B', 'mid', 'A', 'B'][idx % 5];
+    const h = map.holds[b.role];
+    b.holdPt = h[(idx + Math.floor(Math.random() * h.length)) % h.length];
+    b.postPt = null;
+    b.rotate = b.role === 'mid' || Math.random() < 0.75;
+  }
+  if (bomb && bomb.state === 'planted') {
+    const s = site(bomb.site);
+    if (attack) {
+      // 埋好了：分散躲在包點周圍的掩體，盯著防守方回防會進來的入口
+      if (!b.postPt) {
+        const list = map.post[bomb.site];
+        b.postPt = list[Math.floor(Math.random() * list.length)];
+        b.postLook = map.retakeFrom[bomb.site][Math.floor(Math.random() * map.retakeFrom[bomb.site].length)];
+      }
+      // 快爆炸了：跑遠一點，不要被自己的炸彈炸到
+      const left0 = (bomb.explodeAt || r.phaseUntil) - now;
+      if (left0 < 6500) return { goal: map.stage[bomb.site][0], look: [bomb.x, bomb.z] };
+      return { goal: b.postPt, look: b.postLook };
+    }
+    // 防守方：先在集合點等隊友（最多等 8 秒、炸彈剩 22 秒就不等了），再一起回防拆彈
+    const left = (bomb.explodeAt || r.phaseUntil) - now;
+    const defs = [...r.players.values()].filter((q) => q.alive && q.team === p.team);
+    if (!b.rallyPt || b.rallyRound !== r.round) {
+      b.rallyRound = r.round;
+      const list = map.rally[bomb.site];
+      b.rallyPt = list[Math.floor(Math.random() * list.length)];
+    }
+    const atts = [...r.players.values()].filter((q) => q.alive && q.team !== p.team).length;
+    // 來不及拆了（拆彈要 6 秒）：逃命
+    if (left < 6500 && !p.actKind) return { goal: map.teamSpawns[0][p.id % map.teamSpawns[0].length], look: [s.c[0], s.c[1]] };
+    // 人數差太多（少 2 個以上）就不回防了：保命，讓炸彈爆
+    if (defs.length + 1 < atts && left > 5000) return { goal: map.teamSpawns[0][p.id % map.teamSpawns[0].length], look: [s.c[0], s.c[1]] };
+    const ready = defs.filter((q) => Math.hypot(q.x - b.rallyPt[0], q.z - b.rallyPt[1]) < 8).length;
+    const wait = left > 22000 && now - (r.botPlan.plantedAt || (r.botPlan.plantedAt = now)) < 8000 && ready < Math.min(2, defs.length);
+    if (wait) return { goal: b.rallyPt, look: [s.c[0], s.c[1]] };
+    const d = Math.hypot(bomb.x - p.x, bomb.z - p.z);
+    return { goal: [bomb.x, bomb.z], look: [s.c[0], s.c[1] + 15], act: d < 1.3 ? 'defuse' : null };
+  }
+  if (attack) {
+    if (bomb && bomb.state === 'dropped') {
+      // 炸彈掉了：離最近的機器人去撿
+      let best = null, bd = Infinity;
+      for (const q of r.players.values()) {
+        if (!q.alive || !q.bot || q.team !== p.team) continue;
+        const d = Math.hypot(q.x - bomb.x, q.z - bomb.z);
+        if (d < bd) { bd = d; best = q; }
+      }
+      if (best === p) return { goal: [bomb.x, bomb.z], look: [bomb.x, bomb.z] };
+    }
+    const carrier = bomb && bomb.state === 'carried' && bomb.carrier === p.id;
+    const target = site(plan.site);
+    if (now < plan.execAt) return { goal: b.stagePt, look: target.c }; // 集合，等一下一起衝
+    if (carrier) {
+      const inSite = inRect(target, p.x, p.z) || map.sites.some((s) => inRect(s, p.x, p.z));
+      return { goal: b.sitePt, look: [target.c[0], target.c[1] - 15], act: inSite && Math.hypot(b.sitePt[0] - p.x, b.sitePt[1] - p.z) < 6 ? 'plant' : null };
+    }
+    return { goal: b.sitePt, look: [target.c[0], target.c[1] - 15] };
+  }
+  // 防守方：守點；隊友在某個包點發現敵人 → 一部分人轉過去支援
+  let role = b.role;
+  if (plan.alert && now - plan.alertAt < 20000 && b.rotate && plan.alert !== role) role = plan.alert;
+  const hp = role === b.role ? b.holdPt : (b.rotPt && b.rotRole === role ? b.rotPt : (b.rotRole = role, b.rotPt = map.holds[role][Math.floor(Math.random() * map.holds[role].length)]));
+  // 盯著這個區域的某個入口（每個人盯不同的入口）
+  const ent = map.entries[role];
+  const look = ent[(b.entryIdx ?? (b.entryIdx = Math.floor(Math.random() * ent.length))) % ent.length];
+  return { goal: hp, look };
+}
+// ---------- 機器人丟投擲物 ----------
+const NADE_USE = { easy: 0.25, normal: 0.65, hard: 0.95 };
+// 找一個丟法（角度、遠近）讓投擲物落在目標附近
+function solveThrow(boxes, eye, target, kind) {
+  const dx = target[0] - eye[0], dz = target[2] - eye[2];
+  const yaw = Math.atan2(-dx, -dz);
+  let best = null;
+  for (const far of [false, true]) {
+    for (let pitch = -0.35; pitch <= 1.05; pitch += 0.07) {
+      const cp = Math.cos(pitch);
+      const d = [-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp];
+      const L = NADE.launch(eye, d, far);
+      const sim = NADE.simulate(boxes, L.o, L.v, kind);
+      const e = sim.pts[sim.pts.length - 1];
+      // 閃光彈：在目標上方爆開最好
+      const ty = kind === 'flash' ? target[1] + 1.5 : target[1];
+      const err = Math.hypot(e[0] - target[0], (e[1] - ty) * 0.5, e[2] - target[2]);
+      if (!best || err < best.err) best = { d, far, err, yaw, pitch };
+    }
+  }
+  return best;
+}
+// 每一格：要不要丟、丟到哪裡；正在丟的話回傳要看的方向
+function nadeBrain(p, b, r, now, api, enemy) {
+  const map = MAP.get(r.rules.map);
+  if (b.throwing) {
+    const t = b.throwing;
+    if (p.weapon !== t.slot) { if (now - t.at > 1500) b.throwing = null; return t; }
+    if (now >= p.switchUntil + 120 && Math.abs(angleDiff(p.yaw, t.yaw)) < 0.08) {
+      api.throwNade(p, { d: t.d, far: t.far, o: [p.x, p.y + 1.6, p.z] });
+      b.throwing = null;
+      b.nadeCd = now + 1500;
+      api.switchTo(p, 'primary');
+      return null;
+    }
+    return t;
+  }
+  if (now < (b.nadeCd || 0) || p.reloadUntil || p.actKind) return null;
+  const want = (kinds) => ['throw1', 'throw2'].find((s) => p.nadesLeft[s] > 0 && kinds.includes(p.loadout[s]));
+  if (b.nadeRound !== r.round) { b.nadeRound = r.round; b.nadeSkill = Math.random() < (NADE_USE[b.level] ?? 0.6); }
+  if (!b.nadeSkill) return null;
+  const plan = r.botPlan, bomb = r.bomb;
+  const eye = [p.x, p.y + 1.6, p.z];
+  let pick = null;
+  const attack = p.team === r.attackTeam;
+  if (attack && plan && bomb && bomb.state !== 'planted' && now >= plan.execAt && now - plan.execAt < 6000 && b.stagePt && Math.hypot(b.stagePt[0] - p.x, b.stagePt[1] - p.z) < 8) {
+    // 進攻：衝點前對包點丟煙（擋住守點的人）和閃光
+    const site = map.sites.find((s) => s.id === plan.site);
+    const slot = want(['smoke']) || want(['flash', 'stun']);
+    if (slot) {
+      const kind = p.loadout[slot];
+      const h = map.holds[plan.site][p.id % map.holds[plan.site].length];
+      pick = { slot, target: kind === 'smoke' ? [h[0], h[2] || 0, h[1]] : [site.c[0], 0, site.c[1]] };
+    }
+  } else if (bomb && bomb.state === 'planted') {
+    const defusing = [...r.players.values()].some((q) => q.alive && q.actKind === 'defuse');
+    if (attack && defusing && Math.hypot(bomb.x - p.x, bomb.z - p.z) < 28) {
+      // 有人在拆彈：丟火或手雷到炸彈上
+      const slot = want(['molotov', 'frag']);
+      if (slot) pick = { slot, target: [bomb.x, bomb.y, bomb.z] };
+    } else if (!attack && b.rallyPt && Math.hypot(b.rallyPt[0] - p.x, b.rallyPt[1] - p.z) < 6) {
+      // 回防前：對炸彈附近丟煙、閃光
+      const slot = want(['smoke', 'flash', 'stun']);
+      if (slot) pick = { slot, target: [bomb.x, bomb.y, bomb.z] };
+    }
+  }
+  if (!pick && enemy && b.state === 'engage') {
+    // 交戰中：敵人躲在掩體後面、距離 8～25 公尺 → 丟手雷、火焰彈、震撼彈
+    const d = Math.hypot(enemy.x - p.x, enemy.z - p.z);
+    if (d > 8 && d < 25 && now - (b.hitAt || now) > 1500) {
+      const slot = want(['frag', 'molotov', 'stun']);
+      if (slot) pick = { slot, target: [enemy.x, enemy.y || 0, enemy.z] };
+    }
+  }
+  if (!pick) return null;
+  const sol = solveThrow(map.boxes, eye, pick.target, p.loadout[pick.slot]);
+  b.nadeCd = now + 2500;
+  if (!sol || sol.err > 6) return null;
+  api.switchTo(p, pick.slot);
+  b.throwing = { slot: pick.slot, d: sol.d, far: sol.far, yaw: sol.yaw, pitch: sol.pitch, at: now };
+  return b.throwing;
+}
+
+// 防守方看到敵人出現在包點附近 → 通知隊友
+function bombAlert(r, p, q, now) {
+  if (r.mode !== 'bomb' || p.team === r.attackTeam || !r.botPlan) return;
+  for (const s of p.room ? MAP.get(r.rules.map).sites : []) {
+    if (Math.hypot(q.x - s.c[0], q.z - s.c[1]) < 30) { r.botPlan.alert = s.id; r.botPlan.alertAt = now; }
+  }
 }
 
 // 記錄位置歷史（延遲補償用）

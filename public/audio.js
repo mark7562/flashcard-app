@@ -141,6 +141,37 @@ const SFX = {
   boltBack(t, v) { noise(t, 0.09, v * 0.45, 'bandpass', 1800, 900, 2); },
   boltFwd(t, v) { noise(t, 0.08, v * 0.45, 'bandpass', 1100, 2000, 2); tone(t + 0.07, 0.04, v * 0.3, 'square', 520, 360); },
   scopeIn(t, v) { noise(t, 0.05, v * 0.15, 'bandpass', 3200, 2600, 4); },
+  // ---------- 投擲物、炸彈 ----------
+  boom(t, v, m) {
+    noise(t, 0.5, v * 1.2, 'lowpass', 2400 * (1 - m * 0.7), 120);
+    tone(t, 0.45, v * 1.1, 'sine', 90, 28);
+    noise(t + 0.05, 0.9, v * 0.3, 'bandpass', 500, 150, 0.6);
+  },
+  bigBoom(t, v, m) {
+    noise(t, 1.4, v * 1.4, 'lowpass', 1800 * (1 - m * 0.6), 60);
+    tone(t, 1.2, v * 1.3, 'sine', 70, 20);
+    noise(t + 0.1, 2.2, v * 0.4, 'bandpass', 380, 90, 0.5);
+  },
+  flashbang(t, v, m) {
+    noise(t, 0.08, v * 1.1, 'highpass', 2500, 2500);
+    noise(t, 0.35, v * 0.8, 'lowpass', 6000 * (1 - m * 0.7), 400);
+    tone(t, 0.2, v * 0.6, 'sine', 160, 50);
+  },
+  ringing(t, v) { tone(t, 2.6, v * 0.18, 'sine', 3800, 3700); tone(t, 2.6, v * 0.1, 'sine', 4100, 4000); },
+  stunBoom(t, v, m) {
+    tone(t, 0.6, v * 1.0, 'sine', 55, 30);
+    noise(t, 0.3, v * 0.8, 'lowpass', 900 * (1 - m * 0.6), 120);
+    tone(t + 0.02, 0.5, v * 0.25, 'triangle', 220, 120);
+  },
+  hiss(t, v) { noise(t, 1.6, v * 0.5, 'highpass', 3500, 2200); },
+  glass(t, v) { noise(t, 0.12, v * 0.6, 'highpass', 4000, 3000); tone(t, 0.15, v * 0.3, 'triangle', 2600, 1800); noise(t + 0.03, 0.4, v * 0.35, 'bandpass', 700, 300, 0.7); },
+  fire(t, v) { noise(t, 0.12, v * 0.6, 'bandpass', 900 + Math.random() * 800, 500, 1.2); },
+  clink(t, v) { tone(t, 0.05, v * 0.5, 'triangle', 1800 + Math.random() * 600, 1200); noise(t, 0.03, v * 0.4, 'bandpass', 3000, 2000, 3); },
+  pin(t, v) { noise(t, 0.04, v * 0.4, 'bandpass', 3200, 2600, 4); tone(t + 0.05, 0.06, v * 0.25, 'triangle', 2200, 1800); },
+  toss(t, v) { noise(t, 0.16, v * 0.4, 'bandpass', 800, 2000, 1.5); },
+  bombBeep(t, v) { tone(t, 0.07, v * 0.6, 'square', 2200, 2200); },
+  keypad(t, v) { tone(t, 0.05, v * 0.4, 'square', 1200 + Math.random() * 900, 1200); },
+  defuse(t, v) { noise(t, 0.05, v * 0.4, 'bandpass', 2500, 2000, 4); tone(t + 0.04, 0.04, v * 0.2, 'square', 700, 500); },
   dry(t, v) { tone(t, 0.02, v * 0.3, 'square', 2600, 2000); },
   magOut(t, v) { noise(t, 0.04, v * 0.4, 'bandpass', 1600, 1200, 3); tone(t + 0.01, 0.05, v * 0.15, 'triangle', 900, 700); },
   magIn(t, v) {
