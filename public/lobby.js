@@ -21,10 +21,11 @@ let pickTeam = 0; // 機器人要加到哪一隊（-1 = 自動補滿兩隊）
 const LEVEL_NAMES = { easy: '新手', normal: '普通', hard: '老手' };
 
 export function modeName(m) { return MODE_NAMES[m] || m; }
+export function mapName(id) { return window.GAME_MAP.get(id).name; }
 export function rulesText(r) {
-  return r.mode === 'tdm'
+  return `${mapName(r.rules.map)} · ` + (r.mode === 'tdm'
     ? `${MODE_NAMES.tdm} · 目標 ${r.rules.scoreLimit} 殺 · ${r.rules.timeLimit} 分鐘`
-    : `${MODE_NAMES.elim} · 先贏 ${r.rules.rounds} 回合`;
+    : `${MODE_NAMES.elim} · 先贏 ${r.rules.rounds} 回合`);
 }
 
 // ---------- 大廳 ----------
@@ -48,7 +49,7 @@ export function renderRooms(list) {
     name.textContent = (r.locked ? '🔒 ' : '') + r.name;
     const sub = document.createElement('div');
     sub.className = 'rs';
-    sub.textContent = `${modeName(r.mode)} · 房主 ${r.host} · #${r.code}`;
+    sub.textContent = `${r.map ? r.map + ' · ' : ''}${modeName(r.mode)} · 房主 ${r.host} · #${r.code}`;
     info.append(name, sub);
     const count = document.createElement('div');
     count.className = 'rc';
@@ -160,6 +161,7 @@ export function renderRoom(r) {
   hr.classList.toggle('tdm', r.mode === 'tdm');
   hr.classList.toggle('elim', r.mode === 'elim');
   const mark = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === String(v)); };
+  mark('ruleMap', r.rules.map);
   mark('ruleMode', r.mode);
   mark('ruleScore', r.rules.scoreLimit);
   mark('ruleTime', r.rules.timeLimit);
@@ -237,6 +239,7 @@ export function initLobby(opts) {
       b.addEventListener('click', () => { uiClick(); send({ t: 'rules', [key]: parse(b.dataset.v) }); });
     }
   };
+  rule('ruleMap', 'map', String);
   rule('ruleMode', 'mode', String);
   rule('ruleScore', 'scoreLimit', Number);
   rule('ruleTime', 'timeLimit', Number);

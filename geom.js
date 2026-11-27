@@ -1,6 +1,4 @@
 // 幾何計算：伺服器命中判定和機器人視線判斷共用
-const MAP = require('./public/map.js');
-
 // 射線 vs 軸對齊方塊，回傳距離或 Infinity
 function rayBox(o, d, min, max) {
   let tmin = 0;
@@ -31,12 +29,12 @@ function raySphere(o, d, c, r) {
 }
 
 // 兩點之間有沒有被地圖方塊擋住
-function segmentBlocked(a, b) {
+function segmentBlocked(a, b, boxes) {
   const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
   const len = Math.hypot(d[0], d[1], d[2]);
   if (len < 1e-6) return false;
   d[0] /= len; d[1] /= len; d[2] /= len;
-  for (const box of MAP.boxes) {
+  for (const box of boxes) {
     if (rayBox(a, d, box.min, box.max) < len - 0.05) return true;
   }
   return false;

@@ -28,7 +28,7 @@ const ROUND_POST_MS = 4000; // 回合結束後等多久開下一回合
 const RESULTS_MS = 12000; // 結算畫面顯示多久
 const COLORS = MAP.colors;
 const MODES = ['tdm', 'elim'];
-const RULE_OPTIONS = { scoreLimit: [25, 50, 75, 100], timeLimit: [5, 10, 15], rounds: [3, 5, 7] };
+const RULE_OPTIONS = { scoreLimit: [25, 50, 75, 100], timeLimit: [5, 10, 15], rounds: [3, 5, 7], map: MAP.order };
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 const app = express();
@@ -72,6 +72,7 @@ function makeCode() {
   } while (rooms.has(code));
   return code;
 }
+function mapOf(r) { return MAP.get(r.rules.map); }
 function humanCount(r) {
   let n = 0;
   for (const p of r.players.values()) if (!p.bot) n++;
@@ -87,7 +88,7 @@ function teamCount(r, team) {
 function roomSummary(r) {
   return {
     code: r.code, name: r.name, count: r.players.size, max: ROOM_MAX, state: r.state,
-    mode: r.mode, locked: !!r.password, host: r.players.get(r.hostId)?.name ?? '',
+    mode: r.mode, map: mapOf(r).name, locked: !!r.password, host: r.players.get(r.hostId)?.name ?? '',
   };
 }
 function roomState(r) {
@@ -127,7 +128,7 @@ function createRoom(p, msg) {
     name: cleanText(msg.name, 20) || `${p.name}的房間`,
     password: cleanText(msg.password, 12),
     mode: MODES.includes(msg.mode) ? msg.mode : 'tdm',
-    rules: { scoreLimit: 50, timeLimit: 10, rounds: 5 },
+    rules: { scoreLimit: 50, timeLimit: 10, rounds: 5, map: MAP.order.includes(msg.map) ? msg.map : MAP.defaultMap },
     hostId: p.id, state: 'lobby', players: new Map(),
     score: [0, 0], roundWins: [0, 0], round: 0, phase: null, phaseUntil: 0, endsAt: 0, resultsUntil: 0, pendingEnd: null,
   };
@@ -213,7 +214,7 @@ function startRound(r) {
   r.phaseUntil = Date.now() + FREEZE_MS;
   const idx = [0, 0];
   for (const p of r.players.values()) {
-    const list = MAP.teamSpawns[p.team];
+    const list = mapOf(r).teamSpawns[p.team];
     spawnAt(p, list[idx[p.team]++ % list.length], 0);
   }
   toRoom(r, { t: 'round', n: r.round, freeze: FREEZE_MS });
@@ -258,7 +259,7 @@ function checkTeams(r) {
 
 // ---------- 出生 ----------
 function pickSpawn(p) {
-  const list = MAP.teamSpawns[p.team];
+  const list = mapOf(p.room).teamSpawns[p.team];
   let best = list[0];
   let bestScore = -1;
   for (const s of list) {
@@ -331,7 +332,7 @@ function handleShoot(p, msg) {
   }
 
   let best = 200;
-  for (const b of MAP.boxes) best = Math.min(best, rayBox(o, d, b.min, b.max));
+  for (const b of mapOf(r).boxes) best = Math.min(best, rayBox(o, d, b.min, b.max));
   if (d[1] < 0) best = Math.min(best, -o[1] / d[1]); // 地面
 
   const rewind = p.bot ? 0 : Math.min(250, p.rtt / 2 + 100);
@@ -378,7 +379,7 @@ function handleState(p, msg) {
   const x = num(msg.x, p.x), y = num(msg.y, p.y), z = num(msg.z, p.z);
   const dt = Math.max(0.05, (now - p.lastStateAt) / 1000);
   const horiz = Math.hypot(x - p.x, z - p.z);
-  if (horiz > MAX_SPEED * dt * 1.6 + 0.6 || Math.abs(x) > MAP.half || Math.abs(z) > MAP.half || y < -1 || y > 20) {
+  if (horiz > MAX_SPEED * dt * 1.6 + 0.6 || Math.abs(x) > mapOf(r).half || Math.abs(z) > mapOf(r).half || y < -1 || y > 20) {
     send(p.ws, { t: 'correct', x: p.x, y: p.y, z: p.z, seq: p.seq });
     return;
   }

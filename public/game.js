@@ -6,6 +6,7 @@ import { initAudio, setVolumes, playShot, beep, uiStart, uiClick } from './audio
 import { initMenu, showTitle, hideTitle, setStatus, openSettings, updatePreview, go, currentScreen } from './menu.js';
 import { initLobby, renderRooms, renderRoom, lobbyError, rulesText } from './lobby.js';
 import { createTitleScene } from './title.js';
+import { createWorld } from './world.js';
 
 const MAP = window.GAME_MAP;
 const $ = (id) => document.getElementById(id);
@@ -37,98 +38,14 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 $('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9fc9ef);
-scene.fog = new THREE.Fog(0x9fc9ef, 30, 85);
-
-const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 200);
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 900);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
 
-const hemi = new THREE.HemisphereLight(0xdfefff, 0x5a5040, 1.1);
-scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-sun.position.set(18, 30, 12);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 80 });
-sun.shadow.camera.updateProjectionMatrix();
-scene.add(sun);
-
-// 地板：用 canvas 畫格子材質
-function gridTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const g = c.getContext('2d');
-  g.fillStyle = '#5b6b55'; g.fillRect(0, 0, 128, 128);
-  g.fillStyle = '#56664f'; g.fillRect(0, 0, 64, 64); g.fillRect(64, 64, 64, 64);
-  g.strokeStyle = 'rgba(0,0,0,0.18)'; g.lineWidth = 2; g.strokeRect(0, 0, 128, 128);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(25, 25);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  return t;
-}
-// 夜晚霓虹版的地板：深色底加發光格線
-function neonTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const g = c.getContext('2d');
-  g.fillStyle = '#0b0820'; g.fillRect(0, 0, 128, 128);
-  g.strokeStyle = 'rgba(0, 229, 255, 0.85)'; g.lineWidth = 3; g.strokeRect(0, 0, 128, 128);
-  g.strokeStyle = 'rgba(123, 43, 255, 0.45)'; g.lineWidth = 1;
-  g.beginPath(); g.moveTo(64, 0); g.lineTo(64, 128); g.moveTo(0, 64); g.lineTo(128, 64); g.stroke();
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(13, 13);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  return t;
-}
-const dayFloor = gridTexture(), nightFloor = neonTexture();
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(52, 52), new THREE.MeshStandardMaterial({ map: dayFloor, roughness: 1 }));
-floor.rotation.x = -Math.PI / 2;
-floor.receiveShadow = true;
-scene.add(floor);
-
-// 方塊加上淡淡的邊線，比較好看出輪廓
-const edgeMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 });
-for (const b of MAP.boxes) {
-  const w = b.max[0] - b.min[0], h = b.max[1] - b.min[1], d = b.max[2] - b.min[2];
-  const geo = new THREE.BoxGeometry(w, h, d);
-  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: b.c, roughness: 0.85 }));
-  mesh.position.set(b.min[0] + w / 2, b.min[1] + h / 2, b.min[2] + d / 2);
-  mesh.castShadow = mesh.receiveShadow = true;
-  scene.add(mesh);
-  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), edgeMat);
-  edges.position.copy(mesh.position);
-  scene.add(edges);
-}
-
-// 標題畫面用夜晚霓虹風格，進入對戰換回白天（比較看得清楚敵人）
-const neonLights = [
-  new THREE.PointLight(0x00e5ff, 0, 40), new THREE.PointLight(0xff2bd6, 0, 40), new THREE.PointLight(0x7b2bff, 0, 40),
-];
-neonLights[0].position.set(-14, 6, -10);
-neonLights[1].position.set(14, 6, 10);
-neonLights[2].position.set(0, 8, 0);
-for (const l of neonLights) scene.add(l);
-function setNight(night) {
-  scene.background.set(night ? 0x070418 : 0x9fc9ef);
-  scene.fog.color.set(night ? 0x1a0b3d : 0x9fc9ef);
-  scene.fog.near = night ? 20 : 30;
-  scene.fog.far = night ? 75 : 85;
-  hemi.intensity = night ? 0.35 : 1.1;
-  hemi.color.set(night ? 0x8a7dff : 0xdfefff);
-  sun.intensity = night ? 0.25 : 1.6;
-  edgeMat.color.set(night ? 0x00e5ff : 0x000000);
-  edgeMat.opacity = night ? 0.9 : 0.25;
-  edgeMat.blending = night ? THREE.AdditiveBlending : THREE.NormalBlending;
-  edgeMat.needsUpdate = true;
-  floor.material.map = night ? nightFloor : dayFloor;
-  floor.material.needsUpdate = true;
-  for (const l of neonLights) l.intensity = night ? 60 : 0;
-}
+// 地圖、燈光、天空都在 world.js；curMap 是目前這場用的地圖
+const world = createWorld(scene);
+let curMap = MAP.get('arena');
+function setWorld(id, night) { curMap = world.use(id, night); }
 
 // ---------- 自己的槍（第一人稱視角模型） ----------
 const gun = new THREE.Group();
@@ -197,7 +114,7 @@ function addSpark(p, color = 0xffd27a) {
 
 // ---------- 碰撞 ----------
 function hitBox(x, y, z) {
-  for (const b of MAP.boxes) {
+  for (const b of curMap.boxes) {
     if (x + PW > b.min[0] && x - PW < b.max[0] && y + PH > b.min[1] && y < b.max[1] && z + PW > b.min[2] && z - PW < b.max[2]) return b;
   }
   return null;
@@ -260,7 +177,7 @@ const hitPoint = new THREE.Vector3();
 function traceEnd(origin, dir) {
   ray.set(origin, dir);
   let best = 200;
-  for (const b of MAP.boxes) {
+  for (const b of curMap.boxes) {
     tmpBox.min.fromArray(b.min); tmpBox.max.fromArray(b.max);
     if (ray.intersectBox(tmpBox, hitPoint)) best = Math.min(best, hitPoint.distanceTo(origin));
   }
@@ -469,7 +386,7 @@ function onRoom(r) {
 function enterMatch() {
   playing = true;
   hideTitle();
-  setNight(false);
+  setWorld(room?.rules?.map, false);
   title.visible = false;
   uiStart();
   for (const id of [...remotes.keys()]) removeRemote(id);
@@ -504,7 +421,7 @@ function exitMatch() {
   for (const id of [...remotes.keys()]) removeRemote(id);
   for (const id of ['hud', 'touch', 'paused', 'settings', 'results', 'rotate', 'death', 'scoreboard', 'spectate']) $(id).classList.add('hidden');
   if (document.pointerLockElement) document.exitPointerLock();
-  setNight(true);
+  setWorld('arena', true);
   title.visible = true;
   showTitle('', room ? 'scrRoom' : 'scrLobby');
   if (room) renderRoom(room);
@@ -932,7 +849,7 @@ function lineClear(from, to) {
   const len = aaDir.length();
   aaDir.normalize();
   ray.set(from, aaDir);
-  for (const b of MAP.boxes) {
+  for (const b of curMap.boxes) {
     tmpBox.min.fromArray(b.min); tmpBox.max.fromArray(b.max);
     if (ray.intersectBox(tmpBox, hitPoint) && hitPoint.distanceTo(from) < len - 0.1) return false;
   }
@@ -1134,7 +1051,7 @@ function frame() {
   renderer.render(scene, camera);
 }
 const title = createTitleScene(scene);
-setNight(true);
+setWorld('arena', true);
 initMenu({ onPlay: openLobby, onEditLayout: startLayoutEdit });
 initLobby({ send, myId: () => me.id });
 frame();
