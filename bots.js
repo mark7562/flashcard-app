@@ -446,7 +446,15 @@ function hear(p, shooter, now) {
 // 被打到：轉頭看攻擊者
 function damaged(p, attacker, now) {
   const b = p.bot;
-  if (!p.alive || b.state === 'engage') return;
+  if (!p.alive) return;
+  b.hurtAt = now;
+  b.hurtFrom = [attacker.x, attacker.z];
+  if (p.room?.mode === 'bomb') {
+    teamSaw(p.room, p.team, attacker, now); // 隊友也知道那邊有人
+    if (b.state !== 'engage') { b.alert = [attacker.x, attacker.z]; b.heardAt = now; }
+    return;
+  }
+  if (b.state === 'engage') return;
   b.alert = [attacker.x, attacker.z];
   b.lastSeen = [attacker.x, attacker.z, attacker.y];
   b.lastSeenAt = now;
@@ -619,6 +627,15 @@ function think(p, r, now, dt, api) {
   // 沒子彈就換彈；沒在打的時候，彈匣剩一半也先補滿
   if (W.mag && !p.reloadUntil && (ammo <= 0 || (!seen && b.state === 'patrol' && ammo < W.mag * 0.5))) api.reload(p);
 
+  // 爆破模式：埋彈／拆彈到一半看到敵人或被打 → 停下來先打（快完成了、或不做就輸了才硬撐）
+  if (r.mode === 'bomb' && p.actKind && (b.state === 'engage' || now - (b.hurtAt || 0) < 400)) {
+    const total = p.actKind === 'plant' ? 3000 : 6000; // 跟伺服器的埋彈、拆彈時間一樣
+    const remain = total - (now - (p.actAt || now));
+    const bombLeft = r.bomb?.explodeAt ? r.bomb.explodeAt - now : Infinity;
+    const commit = p.actKind === 'plant' ? remain < 700 || r.phaseUntil - now < 15000 : remain < 1500 || bombLeft < remain + 2500;
+    if (!commit) api.act(p, { on: false });
+  }
+
   let mx = 0, mz = 0; // 這一格要移動的方向
   let lookYaw = p.yaw, lookPitch = 0;
   const eyeY = p.y + 1.6;
@@ -731,6 +748,19 @@ function think(p, r, now, dt, api) {
       // ---- 爆破模式的任務：集合、衝點、埋彈、守包、回防、拆彈 ----
       b.state = 'obj';
       const o = bombObjective(p, b, r, nav, now);
+      // 剛被打但看不到人：先躲到掩體後面、轉頭看打過來的方向，不要繼續傻傻做任務
+      const hurt = now - (b.hurtAt || 0) < 2500 && b.hurtFrom && !p.actKind;
+      if (hurt || o.hold) {
+        o.act = null;
+        if (hurt) {
+          if (!b.coverPt || now - b.coverAt > 2500) {
+            b.coverPt = findCover(p, { x: b.hurtFrom[0], y: p.y, z: b.hurtFrom[1] }, nav) || [p.x, p.z];
+            b.coverAt = now;
+          }
+          o.goal = b.coverPt;
+          o.look = b.hurtFrom;
+        }
+      }
       if (o.act) {
         if (!p.actKind) api.act(p, { on: true });
         lookYaw = yawTo(o.look[0] - p.x, o.look[1] - p.z);
@@ -746,11 +776,11 @@ function think(p, r, now, dt, api) {
         if (b.objMove) {
           mx = b.objMove.mx; mz = b.objMove.mz;
           if (b.objMove.jump) wantJump = true;
-          lookYaw = dGoal < 8 ? yawTo(o.look[0] - p.x, o.look[1] - p.z) : yawTo(mx, mz);
+          lookYaw = dGoal < 8 || hurt ? yawTo(o.look[0] - p.x, o.look[1] - p.z) : yawTo(mx, mz);
         } else {
           // 到位：看著敵人會來的方向左右掃
-          b.lookSweep += dt * 0.7;
-          lookYaw = yawTo(o.look[0] - p.x, o.look[1] - p.z) + Math.sin(b.lookSweep) * 0.6;
+          b.lookSweep += dt * 0.45;
+          lookYaw = yawTo(o.look[0] - p.x, o.look[1] - p.z) + Math.sin(b.lookSweep) * 0.28;
           if (b.alert && now - b.heardAt < 4000) lookYaw = yawTo(b.alert[0] - p.x, b.alert[1] - p.z);
           if (W.mag && !p.reloadUntil && ammo < W.mag) api.reload(p);
         }
@@ -854,10 +884,16 @@ function nearPt(nav, x, z, r) {
 }
 function teamPlan(r, now) {
   if (!r.botPlan || r.botPlan.round !== r.round) {
-    r.botPlan = { round: r.round, site: Math.random() < 0.5 ? 'A' : 'B', execAt: now + rand(5000, 20000), alert: null, alertAt: 0, start: now };
+    r.botPlan = { round: r.round, site: Math.random() < 0.5 ? 'A' : 'B', execAt: now + rand(5000, 16000), alert: null, alertAt: 0, start: now, stageIdx: Math.floor(Math.random() * 2), go: false };
   }
   const plan = r.botPlan;
-  if (r.phaseUntil - now < 45000 && (!r.bomb || r.bomb.state !== 'planted')) plan.execAt = Math.min(plan.execAt, now); // 時間不多了：直接衝
+  const hurry = r.phaseUntil - now < 45000 && (!r.bomb || r.bomb.state !== 'planted'); // 時間不多了：直接衝
+  if (!plan.go && (hurry || now >= plan.execAt)) {
+    // 等隊友到齊再一起衝（最多多等 10 秒）
+    const mates = [...r.players.values()].filter((q) => q.alive && q.bot && q.team === r.attackTeam);
+    const ready = mates.filter((q) => q.bot.stagePt && Math.hypot(q.x - q.bot.stagePt[0], q.z - q.bot.stagePt[1]) < 7).length;
+    if (hurry || ready >= mates.length - 1 || now > plan.execAt + 10000) { plan.go = true; plan.execAt = now; }
+  }
   return plan;
 }
 // 回傳 { goal: [x, z], look: [x, z], act: 'plant' | 'defuse' | null }
@@ -871,8 +907,13 @@ function bombObjective(p, b, r, nav, now) {
     const mates = [...r.players.values()].filter((q) => q.team === p.team && q.bot).map((q) => q.id).sort((a, c) => a - c);
     const idx = mates.indexOf(p.id);
     const st = map.stage[plan.site];
-    b.stagePt = nearPt(nav, ...st[idx % st.length], 3);
+    b.stagePt = nearPt(nav, ...st[plan.stageIdx % st.length], 3); // 全隊同一個集合點，一起走同一條路
     b.sitePt = pointIn(nav, site(plan.site));
+    // 沒拿炸彈的人：進包點後各自找掩體、盯著防守方會進來的地方
+    const posts = map.post[plan.site];
+    b.prePost = posts[(idx + 1) % posts.length];
+    const rf = map.retakeFrom[plan.site];
+    b.preLook = rf[idx % rf.length];
     b.role = ['A', 'B', 'mid', 'A', 'B'][idx % 5];
     const h = map.holds[b.role];
     b.holdPt = h[(idx + Math.floor(Math.random() * h.length)) % h.length];
@@ -912,6 +953,9 @@ function bombObjective(p, b, r, nav, now) {
     const wait = left > 22000 && now - (r.botPlan.plantedAt || (r.botPlan.plantedAt = now)) < 8000 && ready < Math.min(2, defs.length);
     if (wait) return { goal: b.rallyPt, look: [s.c[0], s.c[1]] };
     const d = Math.hypot(bomb.x - p.x, bomb.z - p.z);
+    const lastChance = left < 9000; // 拆彈要 6 秒：快爆了就不管了，硬拆
+    if (d < 1.3 && !lastChance && !p.actKind && now - (b.hurtAt || 0) < 2000) // 自己正在被打才停（隊友在旁邊交火不影響）
+      return { goal: [p.x, p.z], look: b.hurtFrom || [s.c[0], s.c[1] + 15], hold: true };
     return { goal: [bomb.x, bomb.z], look: [s.c[0], s.c[1] + 15], act: d < 1.3 ? 'defuse' : null };
   }
   if (attack) {
@@ -923,16 +967,26 @@ function bombObjective(p, b, r, nav, now) {
         const d = Math.hypot(q.x - bomb.x, q.z - bomb.z);
         if (d < bd) { bd = d; best = q; }
       }
-      if (best === p) return { goal: [bomb.x, bomb.z], look: [bomb.x, bomb.z] };
+      if (best === p) {
+        // 炸彈附近剛有敵人（拿炸彈的人才剛被打死）：先躲著等一下，時間快不夠才冒險去撿
+        const hurry = r.phaseUntil - now < 25000;
+        if (!hurry && (threatened(p, b, r, now) || dangerNear(r, p.team, bomb.x, bomb.z, 16, 3500, now))) return { goal: [p.x, p.z], look: [bomb.x, bomb.z], hold: true };
+        return { goal: [bomb.x, bomb.z], look: [bomb.x, bomb.z] };
+      }
     }
     const carrier = bomb && bomb.state === 'carried' && bomb.carrier === p.id;
     const target = site(plan.site);
-    if (now < plan.execAt) return { goal: b.stagePt, look: target.c }; // 集合，等一下一起衝
+    if (!plan.go) return { goal: b.stagePt, look: target.c }; // 集合，等到齊一起衝
     if (carrier) {
       const inSite = inRect(target, p.x, p.z) || map.sites.some((s) => inRect(s, p.x, p.z));
-      return { goal: b.sitePt, look: [target.c[0], target.c[1] - 15], act: inSite && Math.hypot(b.sitePt[0] - p.x, b.sitePt[1] - p.z) < 6 ? 'plant' : null };
+      const canPlant = inSite && Math.hypot(b.sitePt[0] - p.x, b.sitePt[1] - p.z) < 6;
+      // 正在被打、附近有敵人：先處理敵人再埋（時間快不夠才硬埋）
+      if (canPlant && threatened(p, b, r, now) && r.phaseUntil - now > 15000) return { goal: [p.x, p.z], look: b.hurtFrom || [target.c[0], target.c[1] - 15], hold: true };
+      return { goal: b.sitePt, look: [target.c[0], target.c[1] - 15], act: canPlant ? 'plant' : null };
     }
-    return { goal: b.sitePt, look: [target.c[0], target.c[1] - 15] };
+    // 進到包點：找掩體守著入口，等拿炸彈的人來埋
+    const nearSite = Math.hypot(p.x - target.c[0], p.z - target.c[1]) < 16;
+    return nearSite ? { goal: b.prePost, look: b.preLook } : { goal: b.sitePt, look: [target.c[0], target.c[1] - 15] };
   }
   // 防守方：守點；隊友在某個包點發現敵人 → 一部分人轉過去支援
   let role = b.role;
@@ -1027,7 +1081,22 @@ function nadeBrain(p, b, r, now, api, enemy) {
 }
 
 // 防守方看到敵人出現在包點附近 → 通知隊友
+// 隊伍共享：最近在哪裡看到（或被）敵人打
+function teamSaw(r, team, q, now) {
+  if (!r.botPlan) return;
+  const list = (r.botPlan.seen ||= []);
+  list.push({ x: q.x, z: q.z, t: now, team });
+  while (list.length && now - list[0].t > 5000) list.shift();
+}
+function dangerNear(r, team, x, z, rad, ms, now) {
+  return (r.botPlan?.seen || []).some((s) => s.team === team && now - s.t < ms && Math.hypot(s.x - x, s.z - z) < rad);
+}
+// 自己現在有沒有危險（剛被打、或附近剛看到敵人）
+function threatened(p, b, r, now) {
+  return now - (b.hurtAt || 0) < 2500 || dangerNear(r, p.team, p.x, p.z, 18, 2500, now);
+}
 function bombAlert(r, p, q, now) {
+  if (r.mode === 'bomb') teamSaw(r, p.team, q, now);
   if (r.mode !== 'bomb' || p.team === r.attackTeam || !r.botPlan) return;
   for (const s of p.room ? MAP.get(r.rules.map).sites : []) {
     if (Math.hypot(q.x - s.c[0], q.z - s.c[1]) < 30) { r.botPlan.alert = s.id; r.botPlan.alertAt = now; }

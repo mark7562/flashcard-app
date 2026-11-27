@@ -116,6 +116,17 @@ export function makeFigure(color, name = null, opts = {}) {
       for (const [k, m] of Object.entries(weapons)) m.visible = k === key;
     },
     setColor(c) { mat.color.setHex(c); headMat.color.setHex(c); },
+    // 埋彈／拆彈：蹲下、手伸到地上（kneel = 0 站著 ~ 1 蹲好）
+    kneel: 0,
+    setKneel(k) {
+      if (Math.abs(k - fig.kneel) < 0.001) return;
+      fig.kneel = k;
+      const d = 0.45 * k;
+      body.scale.y = 1 - 0.3 * k; body.position.y = 0.7 - d * 0.6;
+      head.position.y = 1.6 - d; visor.position.y = 1.63 - d;
+      arm.position.y = 1.3 - d - 0.35 * k;
+      if (fig.label) fig.label.position.y = 2.25 - d;
+    },
     setName(text, c = mat.color.getHex()) {
       if (fig.label) {
         group.remove(fig.label);

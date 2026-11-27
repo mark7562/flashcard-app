@@ -790,6 +790,102 @@ function buildNade() {
   return obj;
 }
 
+// ---------- 埋彈：雙手捧著炸彈，按密碼，放到地上 ----------
+function buildC4() {
+  const root = new THREE.Group();
+  const gun = new THREE.Group();
+  gun.rotation.x = 0.75; // 上面（鍵盤）朝向鏡頭
+  gun.scale.setScalar(1.25);
+  root.add(gun);
+  const olive = new THREE.MeshStandardMaterial({ color: 0x4a4a32, roughness: 0.75 });
+  const tape = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.6 });
+  const tube = new THREE.MeshStandardMaterial({ color: 0xa0522d, roughness: 0.6 });
+  box(gun, 0.2, 0.05, 0.12, olive, 0, 0, 0);
+  for (let i = 0; i < 3; i++) { const t = cyl(gun, 0.018, 0.2, tube, 0, -0.035, -0.035 + i * 0.035); t.rotation.set(0, 0, Math.PI / 2); }
+  for (const x of [-0.07, 0.07]) box(gun, 0.022, 0.09, 0.13, tape, x, -0.015, 0);
+  box(gun, 0.08, 0.008, 0.035, M.dark, 0.035, 0.029, -0.03); // 螢幕框
+  box(gun, 0.07, 0.006, 0.026, new THREE.MeshBasicMaterial({ color: 0x1aff6a }), 0.035, 0.032, -0.03);
+  const keyMat = new THREE.MeshStandardMaterial({ color: 0xcfd4da, roughness: 0.5 });
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) box(gun, 0.016, 0.008, 0.014, keyMat, 0.012 + c * 0.022, 0.029, 0.012 + r * 0.018);
+  const led = box(gun, 0.012, 0.012, 0.012, new THREE.MeshBasicMaterial({ color: 0xff2020 }), -0.07, 0.033, -0.04);
+  const wireMat = [0xff3030, 0x3080ff, 0xffd23f].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 }));
+  wireMat.forEach((m, i) => box(gun, 0.006, 0.006, 0.07, m, -0.04 + i * 0.012, 0.03, 0.02, 0, 0.3, 0));
+  // 右手托著右下角、左手食指按鍵盤
+  const rhand = arm(root, V(0.1, -0.05, 0.02), V(0.2, -0.25, 0.5), [0.06, 0.07, 0.09]);
+  rhand.rotation.x = 0.4;
+  // 左手平常扶在炸彈左邊，按鍵時從左邊伸過去（不會整個擋住鍵盤）
+  const lhandRest = V(-0.15, 0.0, 0.03);
+  const lhand = arm(root, lhandRest, V(-0.4, -0.2, 0.45), [0.05, 0.06, 0.08]);
+  // 按七個鍵（每 0.22 秒一下）：手停在鍵盤左上方，往下點
+  const keys = [[0, { py: -0.28, rx: -0.6 }], [0.35, {}]];
+  const sounds = [];
+  const press = [[0.0, 0.0], [0.03, 0.02], [0.055, 0.0], [0.0, 0.035], [0.055, 0.035], [0.03, 0.01], [0.03, 0.03]];
+  press.forEach(([x, z], i) => {
+    const t = 0.55 + i * 0.22;
+    const at = { lx: 0.12 + x, lz: z };
+    keys.push([t - 0.08, { ...at, ly: 0.045 }], [t, { ...at, ly: 0.025, py: -0.004 }], [t + 0.07, { ...at, ly: 0.045 }]);
+    sounds.push([t, 'keypad']);
+  });
+  keys.push([2.3, {}], [2.85, { py: -0.26, pz: -0.14, rx: 0.25 }], [3.0, { py: -0.3, pz: -0.14, rx: 0.25 }]);
+  return {
+    id: 'c4', root, gun, lhand, lhandRest, led, base: { p: V(0.03, -0.13, -0.36), r: [0, 0, 0] },
+    anims: {
+      draw: { keys: [[0, { py: -0.28, rx: -0.6 }], [0.35, {}]] },
+      plant: { keys, sounds, hold: true },
+    },
+  };
+}
+// ---------- 拆彈：右手拿剪線鉗、左手把電線拉出來，一條一條剪 ----------
+function buildKit() {
+  const root = new THREE.Group();
+  const gun = new THREE.Group(); // 剪線鉗
+  gun.rotation.set(0.2, 0.3, -0.4);
+  gun.scale.setScalar(1.6);
+  root.add(gun);
+  const red = new THREE.MeshStandardMaterial({ color: 0xd63a3a, roughness: 0.6 });
+  box(gun, 0.018, 0.02, 0.1, red, -0.012, 0, 0.05, 0, 0.08, 0); // 握柄
+  box(gun, 0.018, 0.02, 0.1, red, 0.012, 0, 0.05, 0, -0.08, 0);
+  box(gun, 0.016, 0.016, 0.03, M.metal, 0, 0, -0.008); // 轉軸
+  const jaw = new THREE.Group(); // 會開合的鉗口
+  jaw.position.z = -0.02;
+  gun.add(jaw);
+  box(jaw, 0.008, 0.014, 0.05, M.steel, 0.006, 0, -0.022);
+  const jaw2 = box(gun, 0.008, 0.014, 0.05, M.steel, -0.006, 0, -0.042);
+  const rhand = arm(root, V(0.0, -0.02, 0.09), V(0.12, -0.22, 0.55), [0.055, 0.065, 0.085]);
+  rhand.rotation.x = 0.3;
+  // 左手抓著一小段電線
+  const lhandRest = V(-0.2, 0.0, -0.05);
+  const lhand = arm(root, lhandRest, V(-0.4, -0.25, 0.4), [0.05, 0.06, 0.08]);
+  const wire = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.16), new THREE.MeshStandardMaterial({ color: 0xff3030, roughness: 0.5 }));
+  wire.position.set(0.07, -0.01, -0.06);
+  wire.rotation.y = 0.6;
+  lhand.add(wire);
+  // 剪三條線：拉出來（左手往前）、鉗子伸過去張開、喀嚓
+  const keys = [[0, { py: -0.25, rx: -0.5, cut: 1 }], [0.45, { cut: 1 }]];
+  const sounds = [[0.2, 'clink']];
+  const colors = [0xff3030, 0x3080ff, 0xffd23f];
+  for (let i = 0; i < 3; i++) {
+    const t = 0.9 + i * 1.55;
+    const off = (i - 1) * 0.035;
+    keys.push(
+      [t, { lx: 0.05 + off, ly: -0.05, lz: -0.1, cut: 1, px: off * 0.5 }],
+      [t + 0.45, { lx: 0.08 + off, ly: -0.02, lz: -0.08, pz: -0.07, py: -0.04, px: -0.03 + off, cut: 1 }],
+      [t + 0.7, { lx: 0.08 + off, ly: -0.02, lz: -0.08, pz: -0.09, py: -0.05, px: -0.03 + off, cut: 1 }],
+      [t + 0.82, { lx: 0.08 + off, ly: -0.02, lz: -0.08, pz: -0.09, py: -0.05, px: -0.03 + off, cut: 0, rz: 0.08 }],
+      [t + 1.2, { lx: 0.02 + off, ly: -0.06, lz: -0.06, cut: 0.6 }],
+    );
+    sounds.push([t + 0.8, 'snip' + i]);
+  }
+  keys.push([5.6, { cut: 0.3 }], [6.0, { py: -0.05, cut: 0.3 }]);
+  return {
+    id: 'kit', root, gun, jaw, lhand, lhandRest, wire, wireColors: colors, base: { p: V(0.15, -0.13, -0.36), r: [0, 0, 0] },
+    anims: {
+      draw: { keys: [[0, { py: -0.25, rx: -0.5 }], [0.4, {}]] },
+      defuse: { keys, sounds, hold: true },
+    },
+  };
+}
+
 // ---------- 關鍵影格補間 ----------
 const smooth = (k) => k * k * (3 - 2 * k);
 function sample(keys, t, out) {
@@ -813,6 +909,8 @@ export function createViewModels(camera, playSound) {
     rifle: buildRifle(), smg: buildSmg(), shotgun: buildShotgun(), sniper: buildSniper(), dmr: buildDmr(),
     pistol: buildPistol(), deagle: buildDeagle(), knife: buildKnife(),
   };
+  W.c4 = buildC4();
+  W.kit = buildKit();
   const nadeVm = buildNade();
   for (const k of ['frag', 'flash', 'smoke', 'molotov', 'stun']) W[k] = nadeVm;
   for (const w of Object.values(W)) { w.root.visible = false; vm.add(w.root); }
@@ -892,6 +990,12 @@ export function createViewModels(camera, playSound) {
       play(empty ? 'reloadEmpty' : 'reload', now, { dur: ms });
     },
     cancel() { action = null; },
+    // 埋彈／拆彈：從 at 開始、總共 ms 毫秒（動畫照實際時間播，最後停住）
+    act(kind, at, ms) {
+      if (!cur || !cur.anims[kind]) return;
+      if (cur.wire) cur.wire.material.color.setHex(cur.wireColors[0]);
+      play(kind, at, { dur: ms });
+    },
     // 投擲物：按住準備、放開丟出去（near = 丟近，低手拋）
     nadeReady(now) { play('ready', now); },
     nadeThrow(now, near) { play(near ? 'toss' : 'throw', now); if (cur?.gun) setTimeout(() => { if (cur?.id === 'nade') cur.gun.visible = false; }, 140); },
@@ -931,7 +1035,16 @@ export function createViewModels(camera, playSound) {
         const end = lastKeyTime(action.a.keys);
         if (action.a.hold) t = Math.min(t, end);
         for (const [st2, snd] of action.a.sounds || []) {
-          if (t >= st2 && !action.played.has(st2)) { action.played.add(st2); if (snd === '!shell') ejectShell(); else playSound(snd); }
+          if (t >= st2 && !action.played.has(st2)) {
+            action.played.add(st2);
+            if (snd === '!shell') ejectShell();
+            else if (snd.startsWith('snip')) {
+              // 剪斷一條：換成下一條顏色的線
+              const i = +snd.slice(4);
+              playSound('clink');
+              if (cur.wire) cur.wire.material.color.setHex(cur.wireColors[Math.min(2, i + 1)]);
+            } else playSound(snd);
+          }
         }
         sample(action.a.keys, t, pose);
         if (!action.a.hold && t >= end) action = null;
@@ -974,7 +1087,9 @@ export function createViewModels(camera, playSound) {
         cur.slide.position.z = cur.slideRest.z + travel * (cur.slideTravel || 0.04);
       }
       if (cur.knife) cur.knife.rotation.x = p('kr');
-      if (cur.gun) cur.gun.rotation.x = p('gx'); // 只有槍轉（手不動）
+      if (cur.gun && cur.id !== 'c4' && cur.id !== 'kit') cur.gun.rotation.x = p('gx'); // 只有槍轉（手不動）
+      if (cur.jaw) cur.jaw.rotation.y = -p('cut') * 0.45; // 剪線鉗張開／合起來
+      if (cur.led) cur.led.visible = Math.floor(now / 250) % 2 === 0;
       // 槍口火光
       const fl = now < flashUntil && !!cur.flash;
       if (cur.flash) cur.flash.visible = fl;

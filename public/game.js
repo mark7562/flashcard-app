@@ -589,7 +589,6 @@ function updateBombHud(now) {
     const k = Math.min(1, (now - a.at) / a.ms);
     $('actBar').querySelector('i').style.width = (k * 100).toFixed(1) + '%';
     $('actBar').querySelector('.ab-label').textContent = (a.kind === 'plant' ? '💣 埋彈中…' : '✂ 拆彈中…') + ` ${((1 - k) * a.ms / 1000).toFixed(1)} 秒`;
-    if (now - actSoundAt > (a.kind === 'plant' ? 320 : 520)) { actSoundAt = now; sfx(a.kind === 'plant' ? 'keypad' : 'defuse', 0.35); }
   }
   // 別人在附近埋／拆：聽得到
   for (const [id, x] of actors) {
@@ -1969,9 +1968,17 @@ function frame() {
       lastAdsSent = me.adsOn;
       send({ t: 'state', seq: me.seq, x: +me.x.toFixed(3), y: +me.y.toFixed(3), z: +me.z.toFixed(3), yaw: +me.yaw.toFixed(3), pitch: +me.pitch.toFixed(3), ads: me.adsOn ? 1 : 0 });
     }
-    for (const r of remotes.values()) {
+    for (const [id, r] of remotes) {
       r.group.visible = r.alive || !!r.corpse;
       if (r.alive) interpolate(r, now - INTERP_MS);
+      // 埋彈／拆彈的人蹲下去
+      const want = r.alive && actors.has(id) ? 1 : 0;
+      r.fig.setKneel(r.fig.kneel + Math.max(-dt * 5, Math.min(dt * 5, want - r.fig.kneel)));
+      // 敵人的名字：隔著煙霧看不到
+      if (r.fig.label && r.team !== me.team && !r.corpse) {
+        const g = r.group.position;
+        r.fig.label.visible = !NADE.segSmoke([camera.position.x, camera.position.y, camera.position.z], [g.x, g.y + 1.6, g.z], effects.smokeList(), now);
+      }
     }
   }
   // 殲滅模式死掉後：從隊友的視角觀戰
@@ -2018,9 +2025,12 @@ function frame() {
   document.body.classList.toggle('spectating', !!spec);
   if (spec) {
     const wid = spec[1].wid || 'rifle';
-    if (viewOwner !== spec[0] || viewWeapon !== wid) {
+    const sAct = actors.get(spec[0]); // 正在埋彈／拆彈：手上換成炸彈或剪線鉗
+    const vid = sAct ? (sAct.kind === 'plant' ? 'c4' : 'kit') : wid;
+    if (viewOwner !== spec[0] || viewWeapon !== vid) {
       if (viewOwner !== spec[0]) specShown.hp = specShown.ammo = null; // 換人了：血量、子彈要重新顯示
-      showWeapon(spec[0], wid);
+      showWeapon(spec[0], vid);
+      if (sAct) views.act(sAct.kind, sAct.at, sAct.ms);
       $('wname').textContent = `${WEAPONS[wid].icon} ${WEAPONS[wid].name}`;
     }
     views.setTeamColor(MAP.teams[spec[1].team]?.color ?? MAP.teams[me.team].color); // 袖子是被觀戰的人那隊的顏色（房間更新也不會被蓋掉）
@@ -2040,6 +2050,16 @@ function frame() {
     specShown.hp = specShown.ammo = null;
     updateAmmo();
     updateHp();
+  }
+  // 自己埋彈／拆彈：手上換成炸彈或剪線鉗，放開（或做完）再把武器拿回來
+  if (!spec && playing && viewOwner === me.id) {
+    const mAct = me.acting && me.alive ? me.acting : null;
+    const vid = mAct ? (mAct.kind === 'plant' ? 'c4' : 'kit') : me.kit[me.weapon];
+    if (viewWeapon !== vid && (mAct || viewWeapon === 'c4' || viewWeapon === 'kit')) {
+      showWeapon(me.id, vid);
+      if (mAct) views.act(mAct.kind, mAct.at, mAct.ms);
+      else me.drawEnd = Math.max(me.drawEnd, now + DRAW_MS);
+    }
   }
   // 準心：走路、跳、連射時往外張開（站著不動跟原本一樣）
   if (playing && me.alive && !spec) {
