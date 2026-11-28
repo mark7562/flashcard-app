@@ -44,7 +44,7 @@ const BOMB = {
 };
 // 爆破競賽（comp）：跟爆破模式一樣的規則，加上經濟系統；先贏 13 回合（12:12 之後要領先 2 回合才算贏）
 const ECON = WPN.ECON;
-const COMP = { freezeMs: 12000, roundMs: 90000, win: 13, half: 12, otSwap: 3, pickR: 2.0, dropLife: 0 };
+const COMP = { freezeMs: 12000, roundMs: 90000, postMs: 8000, win: 13, half: 12, otSwap: 3, pickR: 2.0, dropLife: 0 };
 const isB = (r) => WPN.isBombMode(r.mode); // 爆破模式或爆破競賽
 const isComp = (r) => r.mode === 'comp';
 const isRounds = (r) => r.mode !== 'tdm'; // 回合制（殲滅、爆破、生化）
@@ -360,7 +360,7 @@ function goLive(r) {
 function endRound(r, winner, reason = 'elim') {
   if (r.phase !== 'live') return;
   r.phase = 'post';
-  r.phaseUntil = Date.now() + (isB(r) ? BOMB.postMs : ROUND_POST_MS);
+  r.phaseUntil = Date.now() + (isComp(r) ? COMP.postMs : isB(r) ? BOMB.postMs : ROUND_POST_MS); // 爆破競賽：回合結束後多幾秒讓活著的人撿槍
   if (winner >= 0) r.roundWins[winner] += 1;
   if (isZ(r)) {
     // 生化模式：固定打 N 回合，贏比較多回合的一方獲勝；活到最後的人類加分
@@ -652,7 +652,7 @@ function compDeath(r, p) {
 // 手上的槍丟出去（往前 1.6 公尺；前面是牆就丟在腳邊）
 function handleDrop(p) {
   const r = p.room;
-  if (!r || !isComp(r) || r.state !== 'playing' || !p.alive || r.phase === 'post') return;
+  if (!r || !isComp(r) || r.state !== 'playing' || !p.alive) return;
   const slot = p.weapon;
   const w = p.loadout[slot];
   if (!w || slot === 'melee' || p.actKind) return;
@@ -818,7 +818,7 @@ function nearDrop(p, d, rad) { return Math.hypot(p.x - d.x, p.z - d.z) <= rad &&
 // 按「撿起」：可以跟身上同一格的槍交換
 function handlePick(p, msg) {
   const r = p.room;
-  if (!r || !isComp(r) || r.state !== 'playing' || !p.alive || r.phase === 'post') return;
+  if (!r || !isComp(r) || r.state !== 'playing' || !p.alive) return;
   const d = r.drops.find((x) => x.id === msg.id);
   if (!d || !nearDrop(p, d, COMP.pickR + 0.4)) return;
   const err = takeDrop(r, p, d);
@@ -826,10 +826,10 @@ function handlePick(p, msg) {
 }
 // 每一格：空的欄位走過去自動撿；再生護甲回復；購買時間結束就取消請求
 function compTick(r, now) {
-  if (r.phase === 'live' || r.phase === 'freeze') {
+  if (r.phase === 'live' || r.phase === 'freeze' || r.phase === 'post') {
     for (const p of r.players.values()) {
       if (!p.alive) continue;
-      for (const d of r.drops) {
+      for (const d of p.autoPick === false ? [] : r.drops) { // 玩家可以在設定關掉自動撿
         if (!nearDrop(p, d, COMP.pickR) || (d.by === p.id && now - d.at < 1500) || now < d.at) continue;
         const s = slotFor(p, d.w, false);
         if (s.err || s.slot === 'armor') continue;
@@ -1877,6 +1877,7 @@ wss.on('connection', (ws) => {
       case 'act': handleAct(p, msg); break;
       case 'throw': handleThrow(p, msg); break;
       case 'buy': handleBuy(p, msg); break;
+      case 'autopick': p.autoPick = msg.on !== false; break;
       case 'drop': handleDrop(p); break;
       case 'pick': handlePick(p, msg); break;
       case 'req': handleReq(p, msg); break;
@@ -1966,6 +1967,22 @@ function tick() {
     if (r.state !== 'playing') continue;
     if (isZ(r) && r.phase === 'live') { zTick(r, now); if (r.state !== 'playing') continue; }
     if (isComp(r) && r.econ) { compTick(r, now); if (r.state !== 'playing') continue; }
+    // 爆破：真人防守方看到的敵人也告訴機器人隊友（像真人報點），每 0.5 秒檢查一次
+    if (isB(r) && r.phase === 'live' && now - (r.spotAt || 0) > 500) {
+      r.spotAt = now;
+      for (const h of r.players.values()) {
+        if (h.bot || !h.alive || h.team === r.attackTeam) continue;
+        for (const q of r.players.values()) {
+          if (!q.alive || q.team !== r.attackTeam) continue;
+          const dx = q.x - h.x, dz = q.z - h.z, d = Math.hypot(dx, dz);
+          const ang = Math.atan2(Math.sin(Math.atan2(-dx, -dz) - h.yaw), Math.cos(Math.atan2(-dx, -dz) - h.yaw));
+          if (d > 120 || Math.abs(ang) > 1.0) continue;
+          const eye = [h.x, h.y + EYE, h.z], tgt = [q.x, q.y + 1.2, q.z];
+          if (!los(r, eye, tgt) || (r.smokes?.length && NADE.segSmoke(eye, tgt, r.smokes, now))) continue;
+          BOT.spot(r, q, now);
+        }
+      }
+    }
     if (isB(r)) {
       bombTick(r, now);
       if (r.state === 'playing' && r.phase === 'live') nadeTick(r, now);

@@ -939,3 +939,17 @@ body.buying #econ { display: none; }
 }
 /* 倒數的大數字放低一點，不要蓋到上面的炸彈提示 */
 #banner.count { top: max(30%, 118px); }
+/* 爆破競賽的計分板：多了錢和裝備欄，加寬、名字不換行 */
+#scoreboard.comp { width: min(760px, 96vw); padding: 10px 14px; }
+#scoreboard.comp #scores { grid-template-columns: 1.35fr 1fr; }
+#scoreboard.comp .sb-team table { font-size: 13px; table-layout: fixed; }
+#scoreboard.comp .sb-team td, #scoreboard.comp .sb-team th { padding: 3px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#scoreboard.comp .sb-team th:first-child, #scoreboard.comp .sb-team td:first-child { width: auto; }
+#scoreboard.comp .sb-team th:not(:first-child), #scoreboard.comp .sb-team td:not(:first-child) { width: 38px; }
+#scoreboard.comp .sb-team td.money, #scoreboard.comp .sb-team th:nth-child(4) { width: 62px; color: #7dffa8; }
+#scoreboard.comp .sb-team td.gear, #scoreboard.comp .sb-team th:nth-child(5) { width: 78px; font-size: 12px; }
+#scoreboard.comp h3 { margin-bottom: 4px; font-size: 16px; }
+/* 回放：擊殺紀錄放在上面黑邊的下面 */
+body.replaying #killfeed { top: calc(9vh + 8px); }
+/* 觀戰標籤：手機上小一點、放高一點，不要跟右下角的子彈數字擠在一起 */
+@media (max-height: 520px) { #spectate { bottom: max(62px, calc(env(safe-area-inset-bottom) + 54px)); font-size: 12px; padding: 3px 10px; } }

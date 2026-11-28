@@ -908,8 +908,8 @@ function teamTable(team, players) {
     if (money) {
       const e = teamEcon.get(p.id);
       const td4 = document.createElement('td'); td4.textContent = e ? fmt$(e.m) : '';
-      const td5 = document.createElement('td'); td5.textContent = e ? [WEAPONS[e.p]?.short || WEAPONS[e.s]?.short || '—', e.a ? ECON.armor[e.a].icon : '', e.k ? '✂' : ''].join(' ') : '';
-      td4.className = 'money';
+      const td5 = document.createElement('td'); td5.textContent = e ? [WEAPONS[e.p]?.short || WEAPONS[e.s]?.short || '—', e.a ? ECON.armor[e.a].icon : '', e.k ? '✂' : ''].join(' ').trim() : '';
+      td4.className = 'money'; td5.className = 'gear';
       tr.append(td4, td5);
     }
     table.append(tr);
@@ -948,7 +948,7 @@ function renderScores() {
   if (isZ()) { $('scores').replaceChildren(zTable(all)); return; }
   $('scores').replaceChildren(teamTable(0, all.filter((p) => p.team === 0)), teamTable(1, all.filter((p) => p.team === 1)));
 }
-function setScoreboard(show) { $('scoreboard').classList.toggle('hidden', !show); if (show) renderScores(); }
+function setScoreboard(show) { $('scoreboard').classList.toggle('hidden', !show); $('scoreboard').classList.toggle('comp', isComp()); if (show) renderScores(); }
 
 // ---------- 版本檢查：網頁比伺服器舊（瀏覽器用了快取、或 App 從背景叫回來）就自動重新載入 ----------
 const MY_VERSION = document.querySelector('.ver')?.textContent.trim() || '';
@@ -1075,6 +1075,7 @@ function enterMatch() {
   kitOpen = false;
   applyKit(isComp() ? { secondary: 'pistol', melee: activeKit().melee } : activeKit()); // 爆破競賽：一開始只有手槍和刀
   send({ t: 'loadout', l: activeKit() });
+  send({ t: 'autopick', on: settings.autoPick !== false });
   // 地圖畫好之後告訴伺服器「我載入完成了」
   requestAnimationFrame(() => requestAnimationFrame(() => send({ t: 'ready' })));
   checkOrientation();
@@ -1422,8 +1423,9 @@ function dropLabel(id) {
   g.fillStyle = dropColor(id); g.fillText(text, 128, 34);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false }));
-  sp.scale.set(0.9, 0.225, 1);
+  // 名字固定大小（不會因為走到旁邊就變得超大、蓋住按鈕）
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false, sizeAttenuation: false }));
+  sp.scale.set(0.1, 0.025, 1);
   sp.renderOrder = 14;
   return sp;
 }
@@ -1483,7 +1485,7 @@ function pickCheck(w) {
 function updatePickPrompt() {
   pickTarget = null;
   const el = $('pickPrompt');
-  if (!isComp() || !me.alive || !playing || room?.phase === 'post' || buyOpen) { el.classList.add('hidden'); $('btnPick').classList.add('hidden'); return; }
+  if (!isComp() || !me.alive || !playing || buyOpen || replay) { el.classList.add('hidden'); $('btnPick').classList.add('hidden'); return; }
   camera.getWorldDirection(camDir);
   let best = null, bs = Infinity;
   for (const [id, d] of drops) {
@@ -1529,7 +1531,7 @@ function updateCompHud(now) {
   renderTeamEcon(now);
   if (now - (updateCompHud.rq || 0) > 300) { updateCompHud.rq = now; renderReqs(); updateArmor(); }
   updatePickPrompt();
-  const canDrop = IS_TOUCH && me.alive && me.weapon !== 'melee' && !!me.kit[me.weapon] && room.phase !== 'post';
+  const canDrop = IS_TOUCH && me.alive && me.weapon !== 'melee' && !!me.kit[me.weapon];
   $('btnDrop').classList.toggle('hidden', !canDrop);
 }
 
@@ -1608,6 +1610,9 @@ function startReplay(best, done) {
   for (const r of remotes.values()) { clearCorpse(r); r.group.visible = false; }
   for (const id of ids) if (!remotes.has(id) && roster.has(id)) makeRemote(id); // 自己也要有模型（被擊倒的可能是你）
   replay = { best, done, t: 0, ev: 0, ended: false, adsK: 0, owner: 0 };
+  // 回放：最後一回合留在地上的東西（掉落物、炸彈）跟回放的時間點對不起來，先收掉
+  setDrops([]); effects.setBomb(null); if (bombMark) bombMark.visible = false; for (const m of siteMarks) m.visible = false;
+  $('pickPrompt').classList.add('hidden');
   $('paused').classList.add('hidden');
   document.body.classList.add('replaying');
   const kname = nameOf(best.killer), w = WEAPONS[best.w];
@@ -2437,8 +2442,11 @@ function checkOrientation() {
 
 // ---------- 設定套用 ----------
 let lastQuality = null;
+let lastAutoPick = null;
 onSettingsChange((s) => {
   setVolumes(s.sfx, s.music);
+  if (playing && s.autoPick !== lastAutoPick) send({ t: 'autopick', on: s.autoPick !== false });
+  lastAutoPick = s.autoPick;
   applyLayout();
   camera.fov = s.fov;
   camera.updateProjectionMatrix();

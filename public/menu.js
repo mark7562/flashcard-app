@@ -218,6 +218,7 @@ function syncSettingsUI() {
   for (const b of document.querySelectorAll('#setInvert button')) b.classList.toggle('on', b.dataset.v === (settings.invertY ? '1' : '0'));
   for (const b of document.querySelectorAll('#setAssist button')) b.classList.toggle('on', b.dataset.v === settings.aimAssist);
   for (const b of document.querySelectorAll('#setAdsMode button')) b.classList.toggle('on', b.dataset.v === settings.adsMode);
+  for (const b of document.querySelectorAll('#setAutoPick button')) b.classList.toggle('on', b.dataset.v === (settings.autoPick ? '1' : '0'));
   renderKeys();
   syncXh();
   $('muteBtn').classList.toggle('off', !settings.musicOn);
@@ -340,6 +341,9 @@ export function initMenu(handlers) {
   }
   for (const b of document.querySelectorAll('#setAssist button')) {
     b.addEventListener('click', () => { setSetting('aimAssist', b.dataset.v); syncSettingsUI(); uiClick(); });
+  }
+  for (const b of document.querySelectorAll('#setAutoPick button')) {
+    b.addEventListener('click', () => { setSetting('autoPick', b.dataset.v === '1'); syncSettingsUI(); uiClick(); });
   }
   for (const b of document.querySelectorAll('#setAdsMode button')) {
     b.addEventListener('click', () => { setSetting('adsMode', b.dataset.v); syncSettingsUI(); uiClick(); });
