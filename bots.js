@@ -1341,7 +1341,7 @@ function bombObjective(p, b, r, nav, now) {
     const lastChance = left < (p.dkit ? WPN.ECON.kit.ms : 6000) + 3000; // 快爆了就不管了，硬拆
     if (d < 1.3 && !lastChance && !p.actKind && now - (b.hurtAt || 0) < 2000) // 自己正在被打才停（隊友在旁邊交火不影響）
       return { goal: [p.x, p.z], look: b.hurtFrom || [s.c[0], s.c[1] + 15], hold: true };
-    return { goal: [bomb.x, bomb.z], look: [s.c[0], s.c[1] + 15], act: d < 1.3 ? 'defuse' : null };
+    return { goal: [bomb.x, bomb.z], look: [s.c[0], s.c[1] + 15], act: d < 1.3 ? 'defuse' : null, pick: true }; // 一定要走到炸彈旁邊
   }
   if (attack) {
     if (bomb && bomb.state === 'dropped') {
@@ -1384,6 +1384,8 @@ function bombObjective(p, b, r, nav, now) {
     if (carrier) {
       const inSite = inRect(target, p.x, p.z) || map.sites.some((s) => inRect(s, p.x, p.z));
       const canPlant = inSite && Math.hypot(b.sitePt[0] - p.x, b.sitePt[1] - p.z) < 6;
+      // 要去的埋彈點走不到（被箱子擋住、停在包點外面）：換一個點，不要站在包點邊上發呆
+      if (!canPlant && b.stallDone && b.stallKey === b.sitePt[0] + ',' + b.sitePt[1]) b.sitePt = pointIn(nav, target);
       // 正在被打、附近有敵人：先處理敵人再埋（時間快不夠才硬埋）
       if (canPlant && threatened(p, b, r, now) && r.phaseUntil - now > 15000) return { goal: [p.x, p.z], look: b.hurtFrom || [target.c[0], target.c[1] - 15], hold: true };
       return { goal: b.sitePt, look: [target.c[0], target.c[1] - 15], act: canPlant ? 'plant' : null };
