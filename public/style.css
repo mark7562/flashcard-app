@@ -337,11 +337,13 @@ input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border: 0; bo
 #ammo small { font-size: 18px; color: #b9c4da; }
 #reloadtext { font-size: 15px; color: var(--cyan); min-height: 18px; }
 #death {
-  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  position: absolute; inset: 0; z-index: 6; /* 在閃光彈的白畫面（5）和煙霧上面：死掉時一定看得到 */ display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: rgba(60, 0, 0, 0.45); text-shadow: 0 2px 6px #000; gap: 8px;
 }
 #death .big { font-size: 34px; font-weight: 900; color: #ff6b6b; }
 #deathby { font-size: 18px; }
+/* 文字墊深色底：被煙霧或閃光蓋成淺色畫面時也看得清楚 */
+#death .big, #deathby:not(:empty), #respawn:not(:empty) { background: rgba(0, 0, 0, 0.45); padding: 2px 14px; border-radius: 8px; }
 #respawn { font-size: 16px; color: #dfe7f7; }
 #scoreboard {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(440px, 92vw);
