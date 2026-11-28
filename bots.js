@@ -959,7 +959,8 @@ function think(p, r, now, dt, api) {
         const gk = o.goal[0] + ',' + o.goal[1];
         if (b.stallKey !== gk) { b.stallKey = gk; b.stallBest = dGoal; b.stallAt = now; b.stallDone = false; }
         else if (dGoal < b.stallBest - 0.3) { b.stallBest = dGoal; b.stallAt = now; }
-        else if (dGoal < 4 && now - b.stallAt > 1000) b.stallDone = true;
+        else if (now - (b.fireWaitAt || 0) < 300) b.stallAt = now; // 被火擋住在等火熄：不算卡住
+        else if (dGoal < 4 && now - b.stallAt > 1000 && !o.pick) b.stallDone = true; // 撿炸彈一定要走到，不能當作到了
         if (b.stallDone) dGoal = 0;
         if (dGoal > 1.2) {
           if (!b.goal || Math.hypot(b.goal[0] - o.goal[0], b.goal[1] - o.goal[1]) > 1 || !b.path || b.pathIdx >= b.path.length) setGoal(p, b, nav, o.goal[0], o.goal[1]);
@@ -1041,7 +1042,7 @@ function think(p, r, now, dt, api) {
       const fd = Math.hypot(p.x - f.x, p.z - f.z);
       if (fd < R - 0.15) { mx = (p.x - f.x) / (fd || 1); mz = (p.z - f.z) / (fd || 1); if (p.actKind) api.act(p, { on: false }); break; }
       const ml = Math.hypot(mx, mz);
-      if (!urgent && ml > 0.01 && Math.hypot(p.x + mx / ml * 0.8 - f.x, p.z + mz / ml * 0.8 - f.z) < R) { mx = 0; mz = 0; }
+      if (!urgent && ml > 0.01 && Math.hypot(p.x + mx / ml * 0.8 - f.x, p.z + mz / ml * 0.8 - f.z) < R) { mx = 0; mz = 0; b.fireWaitAt = now; }
     }
   }
 
@@ -1355,7 +1356,7 @@ function bombObjective(p, b, r, nav, now) {
         // 炸彈附近剛有敵人（拿炸彈的人才剛被打死）：先躲著等一下，時間快不夠才冒險去撿
         const hurry = r.phaseUntil - now < 25000;
         if (!hurry && (threatened(p, b, r, now) || dangerNear(r, p.team, bomb.x, bomb.z, 16, 3500, now))) return { goal: [p.x, p.z], look: [bomb.x, bomb.z], hold: true };
-        return { goal: [bomb.x, bomb.z], look: [bomb.x, bomb.z] };
+        return { goal: [bomb.x, bomb.z], look: [bomb.x, bomb.z], pick: true };
       }
     }
     const carrier = !!(bomb && bomb.state === 'carried' && bomb.carrier === p.id);
