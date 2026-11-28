@@ -17,6 +17,8 @@ const $ = (id) => document.getElementById(id);
 // ---------- 常數 ----------
 const EYE = 1.6, PH = 1.8, PW = 0.35;
 const SPEED = 6.5, JUMP = 8, GRAVITY = 22;
+// 腳步聲：跑步（水平速度超過 STEP_V）才有聲音；慢走（按 Shift、手機搖桿推一點點）最快只有 6.5 × 1.12 × 0.5 ≈ 3.6，不會出聲
+const WALK_K = 0.5, STEP_V = 3.8, STEP_RANGE = 22;
 const WPN = window.GAME_WEAPONS, WEAPONS = WPN.WEAPONS, NADE = window.GAME_NADES;
 const DRAW_MS = 250; // 換武器的拔槍時間
 const KIT_MS = 10000; // 復活後幾秒內可以換套裝
@@ -159,7 +161,7 @@ function physics(dt) {
   if (len > 1) { fx /= len; fz /= len; }
   const sin = Math.sin(me.yaw), cos = Math.cos(me.yaw);
   const w = curW();
-  const sp = SPEED * (w.speed || 1) * (w.ads ? 1 + (w.ads.speed - 1) * me.adsK : 1) * (performance.now() < me.stunUntil ? 0.5 : 1); // 拿手槍、刀跑比較快；瞄準時走比較慢；被震撼彈震到很慢
+  const sp = SPEED * (w.speed || 1) * (w.ads ? 1 + (w.ads.speed - 1) * me.adsK : 1) * (performance.now() < me.stunUntil ? 0.5 : 1) * (pressed('walk') ? WALK_K : 1); // 拿手槍、刀跑比較快；瞄準時走比較慢；被震撼彈震到很慢；按住慢走
   const wx = (fx * cos + fz * sin) * sp;
   const wz = (-fx * sin + fz * cos) * sp;
   const accel = me.onGround ? 14 : 4;
@@ -1213,7 +1215,7 @@ function itemLine(id) {
   else if (info.desc) parts.push(info.desc);
   return parts.join(' · ');
 }
-const BUY_HINT = () => `點一下購買 · 錢不夠可以按「🙏」請隊友幫買${IS_TOUCH ? '' : ` · ${keyLabel('kit')} 關閉`}`;
+const BUY_HINT = () => `點一下購買 · 這回合買的可以按「↩ 賣回」原價退 · 錢不夠可以按「🙏」請隊友幫買${IS_TOUCH ? '' : ` · ${keyLabel('kit')} 關閉`}`;
 function renderBuy() {
   if (!buyOpen) return;
   $('bmMoney').textContent = fmt$(me.money);
@@ -1233,6 +1235,14 @@ function renderBuy() {
       el.querySelector('.n').textContent = `${info.icon} ${info.short && info.short.length < info.name.length && info.name.length > 5 ? info.short : info.name}`;
       el.querySelector('.p').textContent = price ? fmt$(price) : '免費';
       if (ECON.armor[id]) el.querySelector('.p').insertAdjacentHTML('beforeend', `<small>${ECON.armor[id].max} 點</small>`);
+      if (st.own && me.sb?.includes(id)) {
+        const sell = document.createElement('button');
+        sell.className = 'ask sell';
+        sell.textContent = '↩ 賣回';
+        sell.title = '原價退回（別人幫你買的會退給他）';
+        sell.addEventListener('click', (e) => { e.stopPropagation(); send({ t: 'sell', w: id }); uiClick(); });
+        el.append(sell);
+      }
       if (st.poor && !st.own && !st.no) {
         const ask = document.createElement('button');
         ask.className = 'ask' + (myReq === id ? ' on' : '');
@@ -1244,6 +1254,7 @@ function renderBuy() {
       el.addEventListener('pointerenter', () => { $('bmInfo').innerHTML = st.why ? `<b>${info.name}</b> · ${st.why}` : itemLine(id); });
       el.addEventListener('pointerleave', () => { $('bmInfo').textContent = BUY_HINT(); });
       el.addEventListener('click', () => {
+        if (st.own && me.sb?.includes(id)) { toast('不想要的話按「↩ 賣回」可以原價退'); return; }
         if (st.own || st.no) { if (st.why) toast(st.why); return; }
         if (st.poor) { toast('錢不夠，可以按 🙏 請隊友幫忙買'); return; }
         sendBuy(id);
@@ -1326,11 +1337,13 @@ function applyInv(m) {
   }
   for (const s of ['throw1', 'throw2']) me.nadesLeft[s] = kit[s] ? Math.max(old[s] === kit[s] ? me.nadesLeft[s] : 1, 0) : 0;
   me.money = m.money;
+  me.sb = m.sb || []; // 這回合買的、現在還能原價賣回的東西
   me.armor = m.armor;
   me.dk = !!m.dk;
   // 手上那格被換掉、空了，或伺服器幫你換到新買的槍：跟著伺服器
   const got = m.got && (WEAPONS[m.got]?.slot || null);
   if (m.w && m.w !== me.weapon && (!kit[me.weapon] || (got && got === m.w))) {
+    if (kit[me.weapon] && !me.weapon.startsWith('throw')) me.prevWeapon = me.weapon; // 快捷切換可以換回原本那把
     me.weapon = m.w;
     me.reloadEnd = 0; me.heavyAt = 0; me.adsToggled = false;
     me.drawEnd = performance.now() + DRAW_MS;
@@ -1355,6 +1368,10 @@ function renderTeamEcon(now, force = false) {
   if (!buyOpen || (!force && now - (renderTeamEcon.at || 0) < 250)) return;
   renderTeamEcon.at = now;
   const box = $('bmTeam');
+  // 沒變就不重建（不然按鈕按下去的瞬間被換掉，會按不到）
+  const key = JSON.stringify([...teamEcon].map(([id, e]) => [id, e, reqs.get(id), id === me.id ? me.alive : remotes.get(id)?.alive])) + me.money + me.alive;
+  if (!force && key === box.dataset.key) return;
+  box.dataset.key = key;
   box.replaceChildren();
   const h = document.createElement('h5'); h.textContent = '隊伍經濟'; box.append(h);
   for (const [id, e] of teamEcon) {
@@ -1390,10 +1407,16 @@ function renderTeamEcon(now, force = false) {
 // 隊友的請求：畫面上方跳出卡片，可以按「幫他買」（電腦按 Y）
 function renderReqs() {
   const box = $('reqList');
+  const list = buyWindow() && me.alive ? [...reqs].filter(([id]) => id !== me.id) : [];
+  // 內容沒變就不要重建（每 0.3 秒會呼叫一次，重建會一直重播跳出動畫、按鈕也可能按不到）：只更新錢夠不夠
+  const key = list.map(([id, w]) => `${id}:${w}`).join(',');
+  if (key === box.dataset.key) {
+    for (const b of box.querySelectorAll('button')) b.disabled = me.money < +b.dataset.price;
+    return;
+  }
+  box.dataset.key = key;
   box.replaceChildren();
-  if (!buyWindow() || !me.alive) return;
-  for (const [id, w] of reqs) {
-    if (id === me.id) continue;
+  for (const [id, w] of list) {
     const info = itemInfo(w), price = WPN.priceOf(w);
     const d = document.createElement('div');
     d.className = 'rq';
@@ -1401,6 +1424,7 @@ function renderReqs() {
     d.querySelector('span').textContent = `🙏 ${nameOf(id)} 想要 ${info.icon} ${info.name}`;
     const b = d.querySelector('button');
     b.textContent = `${IS_TOUCH ? '' : '[Y] '}幫他買 ${fmt$(price)}`;
+    b.dataset.price = price;
     b.disabled = me.money < price;
     b.addEventListener('click', (e) => { e.stopPropagation(); fund(id); });
     box.append(d);
@@ -1861,6 +1885,18 @@ function handle(m) {
       renderReqs(); renderBuy();
       break;
     }
+    case 'sold': {
+      // 賣回：錢退給付錢的人（自己買的退給自己）
+      const info = itemInfo(m.w);
+      const i = roundBuys.lastIndexOf(m.w); if (i >= 0) roundBuys.splice(i, 1);
+      if (m.by === me.id) cashLine(`+${fmt$(m.v)} 賣回 ${info.name}`);
+      else toast(`↩ 賣回 ${info.name}，${fmt$(m.v)} 退給 ${nameOf(m.by)}`);
+      uiClick();
+      break;
+    }
+    case 'refund':
+      cashLine(`+${fmt$(m.v)} ${nameOf(m.id)} 退回 ${itemInfo(m.w).name}`);
+      break;
     case 'buyErr':
       toast(m.msg);
       pendingBuy.clear();
@@ -2714,9 +2750,12 @@ document.querySelector('#kitPick .kp-title').addEventListener('click', (e) => { 
 // ---------- 手機切換武器鈕 ----------
 function swapTarget() {
   const [a, b] = settings.swapPair || ['primary', 'secondary'];
-  const t = me.weapon === a ? b : a;
-  if (slotList().includes(t) && slotUsable(t)) return t;
-  return me.weapon === 'primary' ? 'secondary' : 'primary'; // 投擲物用完了、或這個模式沒有投擲物
+  const ok = (s) => s && s !== me.weapon && slotList().includes(s) && slotUsable(s);
+  // 手上拿的在記住的那一對裡：換到另一把
+  if (me.weapon === a || me.weapon === b) { const t = me.weapon === a ? b : a; if (ok(t)) return t; }
+  // 不在（例如剛買的新槍被自動拿出來）、或另一把不能用（爆破競賽一開始沒有主武器、投擲物用完）：換回上一把，再不行就挑身上最好的
+  if (ok(me.prevWeapon) && !me.prevWeapon.startsWith('throw')) return me.prevWeapon;
+  return ['primary', 'secondary', 'melee'].find(ok) || me.weapon;
 }
 function swapTap() { switchWeapon(swapTarget()); }
 function updateSwapButton() {
@@ -2838,6 +2877,38 @@ function interpolate(r, renderTime) {
   r.pitch = s.pitch;
 }
 
+// 腳步聲：別人跑步時每跑大約 2.2 公尺響一聲，聽得出方向（左右聲道）和遠近；隊友的比較小聲
+const camFwd = new THREE.Vector3();
+function footstep(o, g, dt) {
+  const last = o.stepAt;
+  o.stepAt = { x: g.x, y: g.y, z: g.z };
+  if (!last || dt <= 0) return;
+  const dx = g.x - last.x, dz = g.z - last.z, d = Math.hypot(dx, dz);
+  const v = d / dt;
+  if (v < STEP_V || v > 14 || Math.abs(g.y - last.y) > dt * 3) return; // 走路／站著、瞬移（重生）、跳躍中都沒聲音
+  o.stepAcc = (o.stepAcc || 0) + d;
+  if (o.stepAcc < 2.2) return;
+  o.stepAcc = 0;
+  const lp = camera.position;
+  const rx = g.x - lp.x, rz = g.z - lp.z, dist = Math.hypot(rx, rz, (g.y - lp.y) * 0.7);
+  if (dist > STEP_RANGE) return;
+  camera.getWorldDirection(camFwd);
+  // 聲音在右邊還是左邊：鏡頭的右方向 = (-fz, fx)
+  const fl = Math.hypot(camFwd.x, camFwd.z) || 1;
+  const pan = dist < 0.5 ? 0 : ((rx * -camFwd.z + rz * camFwd.x) / fl / Math.max(0.5, Math.hypot(rx, rz))) * 0.85;
+  const mate = o.team === me.team;
+  sfx('step', (mate ? 0.16 : 0.32) * Math.max(0, 1 - dist / STEP_RANGE) ** 1.3, dist / STEP_RANGE, 0, pan);
+}
+function myStep(dt) {
+  // 自己跑步也聽得到（小聲），知道自己正在發出聲音
+  if (!me.onGround) return;
+  const v = Math.hypot(me.vx, me.vz);
+  if (v < STEP_V) { me.stepAcc = Math.min(me.stepAcc || 0, 1.2); return; }
+  me.stepAcc = (me.stepAcc || 0) + v * dt;
+  if (me.stepAcc < 2.2) return;
+  me.stepAcc = 0;
+  sfx('step', 0.07, 0.3);
+}
 function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, clock.getDelta());
@@ -2858,7 +2929,7 @@ function frame() {
     updateAimAssist(dt, now);
     me.pitch = Math.max(-1.5, Math.min(1.5, me.pitch));
     if (me.alive) {
-      if (frozen(now)) { me.vx = me.vz = 0; jumpQueued = false; } else physics(dt);
+      if (frozen(now)) { me.vx = me.vz = 0; jumpQueued = false; } else { physics(dt); myStep(dt); }
       const bw = curW();
       if (firing || (bw.burst && me.burstN > 0 && me.burstN < bw.burst.n)) shoot(now);
       updateReload(now);
@@ -2912,7 +2983,7 @@ function frame() {
     }
     for (const [id, r] of remotes) {
       r.group.visible = r.alive || !!r.corpse;
-      if (r.alive) interpolate(r, now - INTERP_MS);
+      if (r.alive) { interpolate(r, now - INTERP_MS); footstep(r, r.group.position, dt); } else r.stepAt = null;
       // 埋彈／拆彈的人蹲下去
       const want = r.alive && actors.has(id) ? 1 : 0;
       r.fig.setKneel(r.fig.kneel + Math.max(-dt * 5, Math.min(dt * 5, want - r.fig.kneel)));

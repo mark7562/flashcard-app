@@ -1,5 +1,6 @@
 // 音效與背景音樂：全部用 Web Audio 即時合成，不需要音檔
 let ctx = null, sfxBus = null, musicBus = null, noiseBuf = null;
+let out = null; // 有方向的音效：暫時接到左右聲道的 panner，再接到 sfxBus
 let sfxVol = 0.8, musicVol = 0.5, musicWanted = false;
 
 export function initAudio() {
@@ -48,7 +49,7 @@ export function playShot(volume = 0.5) {
 }
 // ---------- 武器音效（每把武器、每個動作都不一樣） ----------
 // muffle：0 = 就在旁邊，1 = 很遠（聲音變悶、變小）
-function noise(t, dur, vol, type, f0, f1, q = 1, dest = sfxBus) {
+function noise(t, dur, vol, type, f0, f1, q = 1, dest = out || sfxBus) {
   const src = ctx.createBufferSource();
   src.buffer = noiseBuf;
   const filt = ctx.createBiquadFilter();
@@ -63,7 +64,7 @@ function noise(t, dur, vol, type, f0, f1, q = 1, dest = sfxBus) {
   src.start(t, Math.random() * 0.2);
   src.stop(t + dur + 0.02);
 }
-function tone(t, dur, vol, type, f0, f1, dest = sfxBus) {
+function tone(t, dur, vol, type, f0, f1, dest = out || sfxBus) {
   const o = ctx.createOscillator();
   o.type = type;
   o.frequency.setValueAtTime(f0, t);
@@ -294,9 +295,25 @@ const SFX = {
   shing(t, v) { tone(t, 0.4, v * 0.18, 'triangle', 3600, 3300); tone(t, 0.3, v * 0.12, 'triangle', 5200, 5000); noise(t, 0.15, v * 0.25, 'highpass', 5000, 3000); },
   whoosh(t, v) { noise(t, 0.3, v * 0.5, 'bandpass', 500, 1400, 1.5); },
   click(t, v) { noise(t, 0.02, v * 0.4, 'bandpass', 3800, 3800, 6); },
+  // 腳步聲：鞋底踩地的悶響＋一點摩擦聲；越遠越悶
+  step(t, v, m) {
+    noise(t, 0.06, v, 'lowpass', 1100 * (1 - m * 0.6), 260);
+    tone(t, 0.05, v * 0.45, 'sine', 120, 70);
+    noise(t + 0.01, 0.04, v * 0.3 * (1 - m), 'highpass', 3200, 2400);
+  },
 };
-export function sfx(name, volume = 0.5, muffle = 0, when = 0) {
+export function sfx(name, volume = 0.5, muffle = 0, when = 0, pan = 0) {
   if (!ctx || volume < 0.02 || !SFX[name]) return;
+  if (pan && ctx.createStereoPanner) {
+    // 左右聲道：-1 = 左邊、1 = 右邊（這次播的聲音全部接到這個 panner）
+    const pn = ctx.createStereoPanner();
+    pn.pan.value = Math.max(-1, Math.min(1, pan));
+    pn.connect(sfxBus);
+    out = pn;
+    try { SFX[name](ctx.currentTime + when, volume, Math.max(0, Math.min(1, muffle))); } finally { out = null; }
+    setTimeout(() => pn.disconnect(), 1500);
+    return;
+  }
   SFX[name](ctx.currentTime + when, volume, Math.max(0, Math.min(1, muffle)));
 }
 export function beep(freq, dur = 0.07, vol = 0.15, type = 'square', when = 0) {

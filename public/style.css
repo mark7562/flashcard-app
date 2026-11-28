@@ -911,6 +911,7 @@ body.buying #reqList { display: none; } /* 商店開著：請求改顯示在左�
 .bm-card.no { opacity: 0.35; cursor: default; }
 .bm-card .ask { position: absolute; right: 4px; bottom: 4px; font: 800 11px var(--zh); padding: 2px 6px; border-radius: 3px; border: 0; background: #ffbe0b; color: #1a1030; cursor: pointer; }
 .bm-card .ask.on { background: #7a6a30; color: #fff; }
+.bm-card .ask.sell { background: #7dffa8; }
 .bm-info { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 12px; color: #9aa7bf; min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bm-info b { color: #fff; }
 @media (max-height: 520px) {

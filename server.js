@@ -550,6 +550,7 @@ function compInit(r) {
 function compRoundStart(r, swap) {
   r.drops = []; sendDrops(r);
   r.reqs.clear();
+  for (const p of r.players.values()) p.buys = null;
   if (r.round === COMP.half + 1) {
     // 下半場：大家的錢和裝備重新來過（手槍局）
     r.econ.loss = [0, 0];
@@ -568,7 +569,7 @@ function compRoundStart(r, swap) {
 function sendInv(p, got) {
   if (!p.room || !isComp(p.room)) return;
   const a = p.armor;
-  send(p.ws, { t: 'inv', kit: p.loadout, ammo: p.ammoBy, w: p.weapon, money: p.money, armor: a ? { k: a.kind, v: Math.round(a.v), max: ECON.armor[a.kind].max } : null, dk: !!p.dkit, got });
+  send(p.ws, { t: 'inv', kit: p.loadout, ammo: p.ammoBy, w: p.weapon, money: p.money, armor: a ? { k: a.kind, v: Math.round(a.v), max: ECON.armor[a.kind].max } : null, dk: !!p.dkit, got, sb: sellable(p) });
 }
 // 隊友看得到彼此的錢和裝備（對手看不到）
 function sendEcon(r) {
@@ -669,6 +670,7 @@ function handleDrop(p) {
   const ammo = WEAPONS[w].mag ? p.ammoBy[slot] ?? WEAPONS[w].mag : 0;
   const d = addDrop(r, p, w, x, floorAtPt(r, x, z, p.y), z, ammo);
   p.loadout[slot] = null;
+  p.buys?.delete(slot);
   if (slot.startsWith('throw')) p.nadesLeft[slot] = 0;
   p.reloadUntil = 0;
   p.weapon = p.loadout.primary ? 'primary' : p.loadout.secondary ? 'secondary' : 'melee';
@@ -703,6 +705,8 @@ function giveItem(p, w, ammo, at) {
   const r = p.room;
   const s = slotFor(p, w, true);
   if (s.err) return s.err;
+  p.buys?.delete(s.slot); // 這格換了東西：原本買的就不能賣回了
+  giveItem.last = { slot: s.slot, drop: null, armor: p.armor };
   if (s.slot === 'kit') { p.dkit = true; return null; }
   if (s.slot === 'armor') {
     const A = ECON.armor[w];
@@ -714,6 +718,7 @@ function giveItem(p, w, ammo, at) {
     const pos = at || p;
     const d = addDrop(r, p, old, pos.x, floorAtPt(r, pos.x, pos.z, pos.y ?? p.y), pos.z, WEAPONS[old].mag ? p.ammoBy[s.slot] ?? WEAPONS[old].mag : 0);
     d.at = Date.now() + 500; // 剛換下來的：自己不會馬上又自動撿回去
+    giveItem.last.drop = d;
     sendDrops(r);
   }
   p.loadout[s.slot] = w;
@@ -752,6 +757,7 @@ function buyItem(p, w) {
   if (err) return err;
   const price = WPN.priceOf(w);
   giveItem(p, w);
+  noteBuy(p, w, p, price);
   p.money -= price;
   p.room.econDirty = true;
   // 有人請你幫忙買的東西你自己買到了：請求自動取消
@@ -763,6 +769,54 @@ function handleBuy(p, msg) {
   const err = buyItem(p, String(msg.w || ''));
   if (err && err !== '?') send(p.ws, { t: 'buyErr', msg: err });
   sendInv(p, err ? undefined : msg.w);
+}
+// ---- 賣回：這回合買的東西，還在購買時間、沒離開出生區、沒開過槍，可以原價退（別人幫買的退給他） ----
+function noteBuy(p, w, payer, price) {
+  if (!p.buys) p.buys = new Map();
+  const L = giveItem.last;
+  p.buys.set(L.slot, { w, by: payer.id, price, drop: L.drop?.id || 0, armor: L.armor });
+}
+function canSell(p) { return canBuy(p) && !p.firedSince && !p.leftSpawn; }
+function sellable(p) {
+  if (!p.buys?.size || !canSell(p)) return [];
+  const out = [];
+  for (const [slot, b] of p.buys) if (sellOk(p, slot, b)) out.push(b.w);
+  return out;
+}
+function sellOk(p, slot, b) {
+  if (slot === 'kit') return p.dkit;
+  if (slot === 'armor') return p.armor?.kind === b.w && p.armor.v >= ECON.armor[b.w].max - 0.5; // 被打過就不能退
+  if (slot.startsWith('throw')) return p.loadout[slot] === b.w && p.nadesLeft[slot] > 0;
+  return p.loadout[slot] === b.w;
+}
+function handleSell(p, msg) {
+  const r = p.room;
+  if (!r || !isComp(r) || !p.alive) return;
+  const w = String(msg.w || '');
+  const ent = [...(p.buys || [])].find(([slot, b]) => b.w === w && sellOk(p, slot, b));
+  if (!ent) return send(p.ws, { t: 'buyErr', msg: '這個不是這回合買的，不能賣' });
+  if (!canSell(p)) return send(p.ws, { t: 'buyErr', msg: p.firedSince ? '開過槍就不能賣了' : '只能在購買時間內、待在出生區賣' });
+  const [slot, b] = ent;
+  p.buys.delete(slot);
+  if (slot === 'kit') p.dkit = false;
+  else if (slot === 'armor') p.armor = b.armor || null;
+  else {
+    p.loadout[slot] = null;
+    if (slot.startsWith('throw')) p.nadesLeft[slot] = 0;
+    else {
+      delete p.ammoBy[slot];
+      // 買的時候換下來的那把還在地上：放回身上
+      const i = b.drop ? r.drops.findIndex((d) => d.id === b.drop) : -1;
+      if (i >= 0) { const d = r.drops[i]; r.drops.splice(i, 1); p.loadout[slot] = d.w; p.ammoBy[slot] = d.ammo ?? WEAPONS[d.w].mag; sendDrops(r); }
+      if (!p.loadout[p.weapon] || p.weapon === slot) { p.weapon = p.loadout.primary ? 'primary' : p.loadout.secondary ? 'secondary' : 'melee'; p.switchUntil = Date.now() + SWITCH_MS; p.reloadUntil = 0; }
+    }
+  }
+  const payer = r.players.get(b.by) || p;
+  payer.money = Math.min(ECON.max, payer.money + b.price);
+  if (payer !== p) { send(payer.ws, { t: 'refund', id: p.id, w, v: b.price }); sendInv(payer); }
+  send(p.ws, { t: 'sold', w, v: b.price, by: payer.id });
+  sendInv(p);
+  r.econDirty = true;
 }
 // ---- 請隊友幫忙買 ----
 function cancelReq(r, id) {
@@ -795,6 +849,7 @@ function fundReq(r, payer, id) {
   if (err) return err === '錢不夠' ? '你的錢不夠' : err;
   const price = WPN.priceOf(req.w);
   giveItem(q, req.w);
+  noteBuy(q, req.w, payer, price);
   payer.money -= price;
   r.reqs.delete(id);
   toTeam(r, payer.team, { t: 'funded', id, by: payer.id, w: req.w });
@@ -1280,7 +1335,7 @@ function handleLoadout(p, msg) {
   if (p.room && isComp(p.room) && p.room.state === 'playing') {
     p.kitPick = WPN.clean(msg.l);
     p.meleePick = p.kitPick.melee;
-    if (!p.alive || p.room.phase === 'freeze') { p.loadout.melee = p.meleePick; if (p.alive && p.weapon === 'melee') p.switchUntil = Date.now() + SWITCH_MS; sendInv(p); }
+    if (!p.alive || p.room.phase === 'freeze' || p.room.phase === 'loading') { p.loadout.melee = p.meleePick; if (p.alive && p.weapon === 'melee') p.switchUntil = Date.now() + SWITCH_MS; sendInv(p); }
     return;
   }
   p.loadout = WPN.clean(msg.l);
@@ -1916,6 +1971,7 @@ wss.on('connection', (ws) => {
       case 'act': handleAct(p, msg); break;
       case 'throw': handleThrow(p, msg); break;
       case 'buy': handleBuy(p, msg); break;
+      case 'sell': handleSell(p, msg); break;
       case 'autopick': p.autoPick = msg.on !== false; break;
       case 'drop': handleDrop(p); break;
       case 'pick': handlePick(p, msg); break;

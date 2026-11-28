@@ -146,6 +146,7 @@ const ACTIONS = [
   ['w4', '投擲物（爆破模式）'], ['use', '埋彈／拆彈（按住）／撿起'],
   ['heavy', '瞄準／刀的重擊／丟近'], ['inspect', '檢視武器'],
   ['drop', '丟掉手上的武器（爆破競賽）'], ['fund', '幫隊友付錢（爆破競賽）'],
+  ['walk', '按住慢走（腳步沒有聲音）'],
 ];
 export function keyName(code) {
   if (!code) return '（未設定）';

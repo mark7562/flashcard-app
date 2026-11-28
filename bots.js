@@ -23,16 +23,19 @@ const LEVELS = {
     label: '新手', react: [950, 1400], reactPerM: 16, reactPerRad: 520, turn: 2.4, error: 0.11, track: 0.5, head: 0.01,
     burst: [2, 3], pause: [650, 1100], spray: 0.25, strafe: 0, retreatHp: 0, hear: 0, flank: false,
     fov: 0.85, notice: 30, rangeFalloff: 20, speed: 4.8, spot: 0.15, guardMs: [2000, 4000], jumpy: 0, knife: 0, pistol: false, stopShot: 0.25,
+    recoilComp: 0.2, nadeErr: 0.07,
   },
   normal: {
     label: '普通', react: [520, 800], reactPerM: 12, reactPerRad: 320, turn: 3.8, error: 0.06, track: 0.9, head: 0.08,
     burst: [3, 5], pause: [380, 650], spray: 0.18, strafe: 0.4, retreatHp: 30, hear: 24, flank: false,
     fov: 0.96, notice: 18, rangeFalloff: 30, speed: 5.8, spot: 0.45, guardMs: [3000, 6000], jumpy: 0.1, knife: 0.25, pistol: true, stopShot: 0.8,
+    recoilComp: 0.5, nadeErr: 0.03,
   },
   hard: {
     label: '老手', react: [270, 420], reactPerM: 7, reactPerRad: 200, turn: 5.5, error: 0.032, track: 2, head: 0.25,
     burst: [4, 7], pause: [240, 420], spray: 0.12, strafe: 0.9, retreatHp: 35, hear: 40, flank: true,
     fov: 1.0, notice: 10, rangeFalloff: 45, speed: 6.3, spot: 0.6, guardMs: [3500, 7000], jumpy: 0.25, knife: 0.5, pistol: true, stopShot: 1,
+    recoilComp: 0.75, nadeErr: 0.01,
   },
 };
 
@@ -688,7 +691,7 @@ function think(p, r, now, dt, api) {
       if (d > 15) continue;
       const h = q.history, n = h.length;
       const sp = n >= 3 ? Math.hypot(h[n - 1].x - h[n - 3].x, h[n - 1].z - h[n - 3].z) / Math.max(0.05, (h[n - 1].t - h[n - 3].t) / 1000) : 0;
-      if (sp > 3.5) { b.alert = [q.x, q.z]; b.heardAt = now; break; }
+      if (sp > 3.8) { b.alert = [q.x, q.z]; b.heardAt = now; break; } // 跟玩家聽到腳步聲的門檻一樣（慢走聽不到）
     }
   }
   if (seen) {
@@ -767,6 +770,7 @@ function think(p, r, now, dt, api) {
   const W = WEAPONS[p.loadout[p.weapon]];
   const ammo = W.mag ? p.ammoBy[p.weapon] : 0;
   const scopeGun = !!W.ads?.scope;
+  // 只有狙擊槍會開鏡（步槍不開鏡：模擬試過，會讓防守方明顯變弱）
   if (!(b.state === 'engage' && tgt && scopeGun) || p.reloadUntil) p.adsSince = 0;
   // 沒子彈就換彈；沒在打的時候，彈匣剩一半也先補滿
   if (W.mag && !p.reloadUntil && (ammo <= 0 || (!seen && b.state === 'patrol' && ammo < W.mag * 0.5))) api.reload(p);
@@ -791,6 +795,7 @@ function think(p, r, now, dt, api) {
     const vis = !!seen;
     const dx = tgt.x - p.x, dz = tgt.z - p.z, dist = Math.max(0.01, Math.hypot(dx, dz));
     const decay = Math.exp(-c.track * dt);
+    b.recoil = Math.max(0, (b.recoil || 0) - dt * 3); // 跟玩家一樣：不開槍就慢慢回穩
     b.aimOff[0] *= decay; b.aimOff[1] *= decay;
     const ap = vis ? aimPoint(p, tgt, map.boxes, b.head) : [tgt.x, tgt.y + 1.05, tgt.z];
     const adx = ap[0] - p.x, adz = ap[2] - p.z;
@@ -830,7 +835,7 @@ function think(p, r, now, dt, api) {
       && !(b.burstStop && (b.moveK || 0) > 0.25 && !b.peek && b.ground)) {
       // 急停的人還在跑：這一格先不開槍，等停下來（下一格）再開
       // 瞄準失誤：距離越遠越不準；連射越久越散（槍本身的散布另外算，跟玩家同一套）
-      let err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray);
+      let err = c.error * (0.6 + dist / c.rangeFalloff); // 連射越打越散改成下面跟玩家一樣的後座力
       // 開鏡：子彈幾乎就落在準心上（觀戰看到準心在人身上就會打中）；
       // 失誤改成「準心還沒對好就開槍」（看得到的偏差），開鏡後也要多瞄一下
       if (scopeGun) err = c.error * (W.bolt ? 0.3 : 0.42) * (0.5 + dist / (c.rangeFalloff * 3)); // 半自動狙擊連發快，準度給低一點
@@ -839,12 +844,18 @@ function think(p, r, now, dt, api) {
       if (W.settle && (b.moveK || 0) < 0.2) err *= Math.max(W.settle.min, 1 - W.settle.per * b.sprayN); // 輕機槍站穩越打越準
       // 槍的散布：跟玩家完全一樣（站著／移動看速度／空中），開鏡再乘上瞄準倍率
       let sp = b.ground ? W.spread[0] + (W.spread[1] - W.spread[0]) * (b.moveK || 0) : W.spread[2];
+      sp += (b.recoil || 0) * 0.03; // 連射累積的後座（跟玩家同一個公式）
       if (scopeGun && W.ads) sp *= W.ads.spread;
       if (W.hipCone) sp = 0; // 狙擊槍：上面已經是開鏡的準度
       const jy = p.yaw + randn() * err + (Math.random() - 0.5) * sp;
       const jp = p.pitch + randn() * err + (Math.random() - 0.5) * sp;
       if (b.burstStop) b.haltUntil = now + Math.max(W.fireMs, 60) + 140; // 這一串打完之前都站著
       b.sprayN += 1;
+      // 後座力：槍口往上跳（每把槍不同），機器人只壓得回一部分（新手 20%、普通 50%、老手 75%），沒壓掉的慢慢才拉回來
+      b.recoil = Math.min(1, (b.recoil || 0) + (W.recoil || 0));
+      const left = 1 - (c.recoilComp ?? 0.5);
+      b.aimOff[1] += (W.kick || 0) * left;
+      b.aimOff[0] += (Math.random() - 0.5) * (0.004 + (W.kick || 0) * 0.15) * left;
       const cp = Math.cos(jp);
       api.shoot(p, { d: [-Math.sin(jy) * cp, Math.sin(jp), -Math.cos(jy) * cp], o: [p.x, eyeY, p.z], s: (Math.random() * 1e9) | 0, a: scopeGun ? 1 : 0, m: +(b.moveK || 0).toFixed(2) });
       b.burstLeft -= 1;
@@ -1565,7 +1576,13 @@ function nadeBrain(p, b, r, now, api, seeing) {
     const t = b.throwing;
     if (p.weapon !== t.slot) { if (now - t.at > 1500) b.throwing = null; return t; }
     if (now >= p.switchUntil + 120 && Math.abs(angleDiff(p.yaw, t.yaw)) < 0.08) {
-      api.throwNade(p, { d: t.d, far: t.far, o: [p.x, p.y + 1.6, p.z] });
+      // 手會抖：新手常常丟偏、老手幾乎丟在想要的位置
+      const e = LEVELS[b.level]?.nadeErr ?? 0.03;
+      const ny = randn() * e, np = randn() * e * 0.7;
+      const [dx0, dy0, dz0] = t.d, hz = Math.hypot(dx0, dz0);
+      const yaw0 = Math.atan2(dx0, dz0) + ny, pit0 = Math.atan2(dy0, hz) + np;
+      const d = [Math.sin(yaw0) * Math.cos(pit0), Math.sin(pit0), Math.cos(yaw0) * Math.cos(pit0)];
+      api.throwNade(p, { d, far: t.far, o: [p.x, p.y + 1.6, p.z] });
       b.throwing = null;
       b.nadeCd = now + 1500;
       api.switchTo(p, 'primary');
