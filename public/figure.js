@@ -118,6 +118,8 @@ export function makeFigure(color, name = null, opts = {}) {
   part(burst, 0.06, 0.15, 0.07, dark, 0, -0.12, 0.08, 0.2); // 彈匣在後面
   part(burst, 0.05, 0.12, 0.06, poly, 0, -0.1, -0.15, -0.35);
   part(burst, 0.06, 0.06, 0.16, dark, 0, 0.1, -0.08); // 倍鏡
+  part(burst, 0.03, 0.03, 0.5, dark, 0, 0.17, -0.12); // FAMAS 提把
+  part(burst, 0.03, 0.08, 0.03, dark, 0, 0.12, -0.36);
   const carbine = new THREE.Group();
   part(carbine, 0.08, 0.1, 0.36, dark, 0, 0, -0.1);
   part(carbine, 0.085, 0.085, 0.2, poly, 0, 0, -0.38);
@@ -141,6 +143,42 @@ export function makeFigure(color, name = null, opts = {}) {
   part(revolver, 0.06, 0.06, 0.08, dark, 0, 0.02, -0.06); // 彈巢
   part(revolver, 0.025, 0.025, 0.24, dark, 0, 0.04, -0.24);
   part(revolver, 0.045, 0.13, 0.07, wood, 0, -0.07, 0.03, -0.35);
+  // 進攻方專用槍：AK-47（木頭＋彎彈匣）、AKS-74U（短＋膨脹室）、MAC-10（方盒子）、雙管短霰彈、TT-33
+  const akW = new THREE.MeshStandardMaterial({ color: 0x9a5a2c, roughness: 0.65 });
+  const akM = new THREE.MeshStandardMaterial({ color: 0x8a4526, roughness: 0.55 });
+  const plumM = new THREE.MeshStandardMaterial({ color: 0x5b3540, roughness: 0.6 });
+  const ak = new THREE.Group();
+  part(ak, 0.08, 0.1, 0.42, dark, 0, 0, -0.12);
+  part(ak, 0.09, 0.09, 0.28, akW, 0, 0, -0.45); // 木護木
+  part(ak, 0.03, 0.03, 0.28, dark, 0, 0.01, -0.72);
+  part(ak, 0.05, 0.05, 0.06, dark, 0, 0.06, -0.78); // 準星座
+  part(ak, 0.06, 0.12, 0.07, akM, 0, -0.11, -0.2, 0.2); // 彎彈匣
+  part(ak, 0.06, 0.11, 0.07, akM, 0, -0.2, -0.25, 0.6);
+  part(ak, 0.05, 0.12, 0.06, akW, 0, -0.1, 0.02, -0.35);
+  part(ak, 0.065, 0.1, 0.24, akW, 0, -0.03, 0.22, 0.1); // 木槍托
+  const aks = new THREE.Group();
+  part(aks, 0.08, 0.1, 0.36, dark, 0, 0, -0.1);
+  part(aks, 0.085, 0.085, 0.16, akW, 0, 0, -0.36);
+  part(aks, 0.055, 0.055, 0.12, dark, 0, 0.01, -0.5); // 膨脹室
+  part(aks, 0.06, 0.11, 0.07, plumM, 0, -0.1, -0.16, 0.2);
+  part(aks, 0.06, 0.1, 0.07, plumM, 0, -0.18, -0.2, 0.6);
+  part(aks, 0.05, 0.12, 0.06, poly, 0, -0.1, 0.02, -0.35);
+  part(aks, 0.02, 0.02, 0.22, steel, 0.02, 0, 0.18); // 骨架槍托
+  part(aks, 0.06, 0.09, 0.02, dark, 0, -0.01, 0.29);
+  const mac10 = new THREE.Group();
+  part(mac10, 0.08, 0.13, 0.32, dark, 0, 0, -0.08); // 方盒子
+  part(mac10, 0.03, 0.03, 0.08, dark, 0, 0.02, -0.28);
+  part(mac10, 0.05, 0.22, 0.06, poly, 0, -0.16, 0.0, -0.1); // 握把＋彈匣
+  part(mac10, 0.02, 0.02, 0.03, steel, 0, 0.08, -0.1); // 拉柄
+  const sawedoff = new THREE.Group();
+  part(sawedoff, 0.06, 0.06, 0.4, dark, -0.022, 0.02, -0.25); // 兩根槍管
+  part(sawedoff, 0.06, 0.06, 0.4, dark, 0.022, 0.02, -0.25);
+  part(sawedoff, 0.1, 0.05, 0.18, akW, 0, -0.03, -0.16); // 護木
+  part(sawedoff, 0.08, 0.08, 0.12, dark, 0, 0.01, 0.0);
+  part(sawedoff, 0.06, 0.15, 0.07, akW, 0, -0.09, 0.08, -0.55); // 鋸短的握把
+  const tt33 = new THREE.Group();
+  part(tt33, 0.045, 0.055, 0.27, dark, 0, 0.02, -0.12);
+  part(tt33, 0.045, 0.13, 0.065, akW, 0, -0.07, -0.02, -0.22);
   // 近戰
   const melee = (parts) => { const g = new THREE.Group(); for (const a of parts) part(g, ...a); return g; };
   const butterfly = melee([[0.012, 0.05, 0.22, steel, 0, 0, -0.16], [0.03, 0.04, 0.16, chrome, 0, 0, 0.03]]);
@@ -156,9 +194,9 @@ export function makeFigure(color, name = null, opts = {}) {
   const claw = melee([[0.1, 0.06, 0.12, zSkin, 0, 0, -0.04], [0.012, 0.012, 0.12, bone, -0.03, 0, -0.14], [0.012, 0.012, 0.13, bone, 0, 0, -0.15], [0.012, 0.012, 0.12, bone, 0.03, 0, -0.14]]);
   const heroGlow = new THREE.MeshBasicMaterial({ color: 0xfff0a0 });
   const herosword = melee([[0.02, 0.06, 1.2, heroGlow, 0, 0.01, -0.68], [0.1, 0.03, 0.03, accent, 0, 0, -0.06], [0.035, 0.045, 0.24, dark, 0, 0, 0.08]]);
-  arm.add(claw, herosword, gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, butterfly, bat, axe, hammer, baton, katana, tknife);
+  arm.add(claw, herosword, gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, ak, aks, mac10, sawedoff, tt33, butterfly, bat, axe, hammer, baton, katana, tknife);
   const NADE_COLORS = { frag: 0x3d5a2a, flash: 0x9aa3ad, smoke: 0x5b6b5a, molotov: 0x8a5a2a, stun: 0x2f6fd6, decoy: 0xf2c230 };
-  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, butterfly, bat, axe, hammer, baton, katana, tknife, claw, herosword };
+  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, ak, aks, mac10, sawedoff, tt33, butterfly, bat, axe, hammer, baton, katana, tknife, claw, herosword };
   for (const m of [body, head]) m.castShadow = true;
   group.add(body, head, visor, arm);
 

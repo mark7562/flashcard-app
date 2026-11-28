@@ -217,6 +217,9 @@ const muzzle = new THREE.Vector3();
 // ---------- 武器 ----------
 function curW() { return WEAPONS[heldId()] || WEAPONS[me.kit.melee] || WEAPONS.knife; }
 // 套用一整套裝備（復活、換套裝時）：子彈補滿、拿主武器
+// 爆破模式：自選套裝裡另一方專用的槍換成這一方對應的那把（AK-47 ⇄ M4A4…；伺服器也會這樣換）
+const amAtk = () => me.team === room?.attackTeam;
+function sideKit(k) { return room?.mode === 'bomb' ? WPN.kitForSide(k, amAtk()) : k; }
 function applyKit(kit) {
   // 爆破競賽：身上的東西是買的，欄位可以是空的
   me.kit = isComp() ? WPN.cleanInv(kit, kit?.melee) : WPN.clean(kit);
@@ -1076,7 +1079,7 @@ function enterMatch() {
   if (IS_TOUCH) $('touch').classList.remove('hidden');
   $('killfeed').replaceChildren();
   kitOpen = false;
-  applyKit(isComp() ? { secondary: 'pistol', melee: activeKit().melee } : activeKit()); // 爆破競賽：一開始只有手槍和刀
+  applyKit(isComp() ? { secondary: WPN.basePistol(amAtk()), melee: activeKit().melee } : sideKit(activeKit())); // 爆破競賽：一開始只有手槍和刀
   send({ t: 'loadout', l: activeKit() });
   send({ t: 'autopick', on: settings.autoPick !== false });
   // 地圖畫好之後告訴伺服器「我載入完成了」
@@ -1167,6 +1170,7 @@ function buyState(id) {
     if (me.kit.throw1 === id || me.kit.throw2 === id) return { own: true };
     if (me.kit.throw1 && me.kit.throw2) return { no: true, why: '投擲物最多兩顆' };
   } else if (me.kit[info.slot] === id) return { own: true };
+  if (WEAPONS[id] && !WPN.sideOk(id, amAtk())) return { no: true, why: `${WEAPONS[id].side === 'atk' ? '進攻' : '防守'}方專用` };
   return { ok: me.money >= price, poor: me.money < price };
 }
 function openBuy() {
@@ -1193,9 +1197,9 @@ function sendBuy(id) {
 }
 // 商店的欄位：同類型的放在一起（像瓦羅蘭特那樣一欄一類）
 const SHOP_COLS = [
-  ['手槍', ['pistol', 'mpistol', 'revolver', 'deagle'], '#9fc3e6'],
-  ['衝鋒槍・霰彈槍', ['smg', 'shotgun', 'autoshotgun'], '#7dffa8'],
-  ['步槍', ['burst', 'carbine', 'rifle'], '#ffbe0b'],
+  ['手槍', ['tt33', 'pistol', 'mpistol', 'revolver', 'deagle'], '#9fc3e6'],
+  ['衝鋒槍・霰彈槍', ['mac10', 'smg', 'sawedoff', 'shotgun', 'autoshotgun'], '#7dffa8'],
+  ['步槍', ['aks', 'burst', 'ak', 'carbine', 'rifle'], '#ffbe0b'],
   ['狙擊槍・機槍', ['dmr', 'sniper', 'lmg'], '#ff6b8b'],
   ['投擲物', ['flash', 'smoke', 'frag', 'stun', 'molotov', 'decoy'], '#c08bff'],
   ['裝備', ['light', 'heavy', 'regen', 'kit'], '#3d9bff'],
@@ -1219,7 +1223,7 @@ function renderBuy() {
     col.className = 'bm-col';
     const h = document.createElement('h5'); h.textContent = title; col.append(h);
     for (const id of ids) {
-      if (id === 'kit' && me.team === room?.attackTeam) continue;
+      if ((id === 'kit' && amAtk()) || (WEAPONS[id] && !WPN.sideOk(id, amAtk()))) continue; // 另一方專用的槍不列出來
       const info = itemInfo(id), st = buyState(id), price = WPN.priceOf(id);
       const el = document.createElement('div');
       el.className = 'bm-card' + (st.own ? ' own' : st.no ? ' no' : st.poor ? ' poor' : '');
@@ -1271,7 +1275,8 @@ function askFor(id) {
 function rebuy() {
   // 上回合買過的東西：照順序再買一次（已經有的跳過）
   let money = me.money;
-  for (const id of lastBuys) {
+  for (const id0 of lastBuys) {
+    const id = WEAPONS[id0] ? WPN.forSide(id0, amAtk()) : id0; // 換邊之後：AK-47 ⇄ M4A4 這種自動換成這一方的
     const st = buyState(id);
     if (st.own || st.no || WPN.priceOf(id) > money) continue;
     money -= WPN.priceOf(id);
@@ -2660,9 +2665,9 @@ function pickKit(i) {
   saveLoadouts();
   send({ t: 'loadout', l: activeKit() });
   uiClick();
-  if (me.alive) { applyKit(activeKit()); kitOpen = false; toast(`已換成 套裝 ${i + 1}`); }
-  else { me.kit = WPN.clean(activeKit()); toast(`下次重生使用 套裝 ${i + 1}`); }
-  renderKitCards($('kitCards'), pickKit);
+  if (me.alive) { applyKit(sideKit(activeKit())); kitOpen = false; toast(`已換成 套裝 ${i + 1}`); }
+  else { me.kit = WPN.clean(sideKit(activeKit())); toast(`下次重生使用 套裝 ${i + 1}`); }
+  renderKitCards($('kitCards'), pickKit, sideKit);
 }
 function updateKitUI(now) {
   const can = canKit(now) && $('results').classList.contains('hidden');
@@ -2670,7 +2675,7 @@ function updateKitUI(now) {
   const showPick = can && kitOpen;
   if (showPick !== kitPickVisible()) {
     $('kitPick').classList.toggle('hidden', !showPick);
-    if (showPick) renderKitCards($('kitCards'), pickKit);
+    if (showPick) renderKitCards($('kitCards'), pickKit, sideKit);
   }
   if (showPick) {
     $('kitHint').textContent = IS_TOUCH ? (me.alive ? '' : '下次重生使用') : (me.alive ? '' : '下次重生使用 · ') + '按 1 / 2 / 3 選擇，B 關閉';

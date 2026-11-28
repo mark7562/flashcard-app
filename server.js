@@ -535,9 +535,10 @@ function compSwap(round) { return round === COMP.half + 1 || (round > COMP.half 
 // 贏了沒：先拿到 13 回合、而且比對手多 2 回合以上（12:12 之後就一直打到有人領先 2 回合）
 function compWon(r, team) { return r.roundWins[team] >= COMP.win && r.roundWins[team] - r.roundWins[1 - team] >= 2; }
 // 一個人的經濟歸零（開場、下半場開始、中途加入）：800 元、只有基本手槍和刀
+function isAtk(p) { return !!p.room && p.team === p.room.attackTeam; }
 function compReset(p) {
   p.money = ECON.start;
-  p.loadout = WPN.cleanInv({ secondary: 'pistol' }, p.meleePick || p.kitPick?.melee || p.loadout?.melee);
+  p.loadout = WPN.cleanInv({ secondary: WPN.basePistol(isAtk(p)) }, p.meleePick || p.kitPick?.melee || p.loadout?.melee);
   p.armor = null; p.dkit = false;
 }
 function compInit(r) {
@@ -558,7 +559,7 @@ function compRoundStart(r, swap) {
     for (const p of r.players.values()) p.dkit = false;
   }
   for (const p of r.players.values()) {
-    if (!p.loadout.secondary && !p.loadout.primary) p.loadout.secondary = 'pistol';
+    if (!p.loadout.secondary && !p.loadout.primary) p.loadout.secondary = WPN.basePistol(isAtk(p));
     if (p.meleePick) p.loadout.melee = p.meleePick;
     if (p.armor) { p.armor.regenLeft = ECON.armor[p.armor.kind].cap || 0; p.armor.hitAt = 0; }
   }
@@ -737,6 +738,7 @@ function canBuy(p, anywhere = false) {
 function buyCheck(p, w, money) {
   const price = WPN.priceOf(w);
   if (price === null || !(WPN.SHOP.primary.includes(w) || WPN.SHOP.secondary.includes(w) || WPN.SHOP.throw.includes(w) || WPN.SHOP.gear.includes(w))) return '?';
+  if (!WPN.sideOk(w, isAtk(p))) return `${WEAPONS[w].name}是${WEAPONS[w].side === 'atk' ? '進攻' : '防守'}方專用的（撿敵人掉的才能用）`;
   if (money < price) return '錢不夠';
   const s = slotFor(p, w, true);
   if (s.err) return s.err;
@@ -946,6 +948,8 @@ function spawnAt(p, s, protect) {
   p.dmgLog = new Map(); // 這條命被誰打了多少（算助攻用）
   p.alive = true;
   p.respawnAt = 0;
+  // 爆破模式：自選套裝裡另一方專用的槍換成這一方對應的那把（AK-47 ⇄ M4A4…）
+  if (p.room?.mode === 'bomb') p.loadout = WPN.kitForSide(p.kitPick || p.loadout, isAtk(p));
   resetKit(p);
   p.seq += 1;
   p.kitUntil = Date.now() + KIT_MS;
@@ -1282,6 +1286,7 @@ function handleLoadout(p, msg) {
   p.loadout = WPN.clean(msg.l);
   p.kitPick = { ...p.loadout };
   p.meleePick = p.loadout.melee;
+  if (p.room?.mode === 'bomb') p.loadout = WPN.kitForSide(p.loadout, isAtk(p));
   if (p.alive && p.room?.state === 'playing' && canChangeKit(p)) {
     resetKit(p);
     send(p.ws, { t: 'kit', kit: p.loadout });

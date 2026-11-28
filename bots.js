@@ -38,9 +38,9 @@ const LEVELS = {
 
 // 每個難度挑主武器的比例（新手比較少拿狙擊槍）；scope：開好鏡之後還要再瞄多久才開槍
 const KIT_WEIGHTS = {
-  easy: { primary: { rifle: 4, burst: 1, carbine: 1.5, smg: 3, lmg: 1, shotgun: 1.5, autoshotgun: 1, sniper: 0.5, dmr: 1 }, secondary: { pistol: 3, mpistol: 1.5, deagle: 1, revolver: 0.5 }, scope: [900, 1500] },
-  normal: { primary: { rifle: 3, burst: 1.5, carbine: 1.5, smg: 2.5, lmg: 1, shotgun: 1.5, autoshotgun: 1, sniper: 1.2, dmr: 1.5 }, secondary: { pistol: 2, mpistol: 1.5, deagle: 1.5, revolver: 1 }, scope: [550, 1000] },
-  hard: { primary: { rifle: 3, burst: 2, carbine: 1.5, smg: 2.5, lmg: 1, shotgun: 1.5, autoshotgun: 1, sniper: 2, dmr: 2 }, secondary: { pistol: 1.5, mpistol: 1.5, deagle: 2, revolver: 1.5 }, scope: [320, 650] },
+  easy: { primary: { rifle: 2.5, ak: 2, aks: 1, burst: 1, carbine: 1.5, smg: 2, mac10: 1.5, lmg: 1, shotgun: 1, sawedoff: 0.7, autoshotgun: 1, sniper: 0.5, dmr: 1 }, secondary: { pistol: 2, tt33: 1.5, mpistol: 1.5, deagle: 1, revolver: 0.5 }, scope: [900, 1500] },
+  normal: { primary: { rifle: 2, ak: 2, aks: 1, burst: 1.5, carbine: 1.5, smg: 1.5, mac10: 1.2, lmg: 1, shotgun: 1, sawedoff: 0.7, autoshotgun: 1, sniper: 1.2, dmr: 1.5 }, secondary: { pistol: 1.2, tt33: 1, mpistol: 1.5, deagle: 1.5, revolver: 1 }, scope: [550, 1000] },
+  hard: { primary: { rifle: 2, ak: 2.5, aks: 1, burst: 2, carbine: 1.5, smg: 1.5, mac10: 1.2, lmg: 1, shotgun: 1, sawedoff: 0.7, autoshotgun: 1, sniper: 2, dmr: 2 }, secondary: { pistol: 1, tt33: 1, mpistol: 1.5, deagle: 2, revolver: 1.5 }, scope: [320, 650] },
 };
 function weighted(table) {
   const entries = Object.entries(table);
@@ -871,7 +871,7 @@ function think(p, r, now, dt, api) {
       const f = followPath(p, b);
       if (f) { mx += f.mx; mz += f.mz; if (f.jump) wantJump = true; } else { mx += dx / dist; mz += dz / dist; }
       b.strafeDir = 0;
-    } else if (W.id === 'smg' && dist > 14) { mx += dx / dist * 0.6; mz += dz / dist * 0.6; }
+    } else if ((W.id === 'smg' || W.id === 'mac10') && dist > 14) { mx += dx / dist * 0.6; mz += dz / dist * 0.6; }
     if (p.adsSince) b.strafeDir = 0; // 開鏡時站穩
     if (b.strafeDir && !W.melee) {
       // 閃躲時不要從高台上掉下去
@@ -1630,7 +1630,9 @@ function prepare() { for (const id of MAP.order) { navFor(MAP.get(id)); navFor(M
 // ======================================================================
 const PERSONAS = [
   // fav：錢夠就買；force：錢不夠又想打的時候買得起的槍（照順序）
-  { tag: '步槍手', fav: ['rifle', 'carbine', 'burst'], force: ['smg', 'shotgun'] },
+  // 這裡寫防守方的版本；當進攻方時自動換成對應的攻方槍（M4A4 → AK-47、MK9 → MAC-10…），見 sideP
+  { tag: '步槍手', fav: ['rifle', 'carbine', 'burst'], force: ['smg', 'shotgun'], w: 3 },
+  { tag: '突破手', fav: ['rifle', 'burst'], force: ['burst', 'smg'], w: 2 },
   { tag: '狙擊手', fav: ['sniper', 'dmr'], force: ['dmr', 'smg'], pistol: 'deagle' },
   { tag: '衝鋒手', fav: ['shotgun', 'autoshotgun', 'smg'], force: ['shotgun', 'smg'] },
   { tag: '機槍手', fav: ['lmg', 'rifle'], force: ['smg', 'autoshotgun'] },
@@ -1640,7 +1642,7 @@ const PERSONAS = [
 const NADE_PREFS = [['flash', 'smoke'], ['smoke', 'molotov'], ['flash', 'frag'], ['molotov', 'flash'], ['frag', 'stun'], ['smoke', 'flash'], ['stun', 'decoy']];
 function makePersonality(level) {
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  let base = pick(PERSONAS);
+  let base = PERSONAS[+weighted(Object.fromEntries(PERSONAS.map((q, i) => [i, q.w || 1])))]; // 步槍手比較多（像真人一樣）
   if (level === 'easy' && base.fav[0] === 'sniper' && Math.random() < 0.6) base = PERSONAS[0]; // 新手比較少玩狙
   return {
     ...base,
@@ -1654,6 +1656,14 @@ function makePersonality(level) {
   };
 }
 const PRICE = WPN.ECON.price;
+// 個性裡的槍換成這一方能買的（重複的去掉）
+function sideP(p, r) {
+  const atk = p.team === r.attackTeam, P = p.bot.pers;
+  if (P._side === atk) return P._s;
+  const m = (a) => [...new Set(a.map((w) => WPN.forSide(w, atk)))];
+  P._side = atk; P._s = { fav: m(P.fav), force: m(P.force) };
+  return P._s;
+}
 // 這回合的花錢決定：全買 / 強起 / 存錢；跟著隊伍的情況走，但每個人個性不同
 function compPlan(p, r) {
   const b = p.bot, P = b.pers;
@@ -1662,7 +1672,7 @@ function compPlan(p, r) {
   const pistolRound = r.round === 1 || r.round === 13;
   const lossIdx = r.econ?.loss?.[p.team] || 0;
   const armorCost = PRICE[P.armor];
-  const favCost = PRICE[P.fav[0]];
+  const favCost = PRICE[sideP(p, r).fav[0]];
   if (pistolRound) return 'pistol';
   if (p.loadout.primary) return 'full'; // 上回合活下來、槍還在：補裝備就好
   if (p.money >= favCost + Math.min(armorCost, 600)) return 'full';
@@ -1673,7 +1683,7 @@ function compPlan(p, r) {
   return p.money >= 1700 || P.risk > 0.5 ? 'force' : 'eco';
 }
 function buyList(p, r, plan) {
-  const P = p.bot.pers, out = [];
+  const P = { ...p.bot.pers, ...sideP(p, r) }, out = [];
   let money = p.money;
   const take = (w, keep = 0) => { if (w && money - PRICE[w] >= keep) { out.push(w); money -= PRICE[w]; return true; } return false; };
   const def = p.team !== r.attackTeam;
@@ -1701,7 +1711,7 @@ function buyList(p, r, plan) {
     if (!a || a.v < (WPN.ECON.armor[a.kind].max * 0.6)) { if (!take(P.armor)) take('light'); }
     if (def && Math.random() < P.kit) take('kit', 300);
     for (const n of P.nades) if (Math.random() < P.nadeLove + 0.2) take(n, 200);
-    if (!p.loadout.secondary || (P.pistol && p.loadout.secondary === 'pistol')) take(P.pistol, 2500);
+    if (!p.loadout.secondary || (P.pistol && (p.loadout.secondary === 'pistol' || p.loadout.secondary === 'tt33'))) take(P.pistol, 2500);
     return out;
   }
   // 強起：買得起最好的便宜槍＋輕甲
@@ -1720,7 +1730,7 @@ function compThink(p, r, now, api) {
     const plan = compPlan(p, r);
     b.plan = plan;
     for (const w of buyList(p, r, plan)) api.buy(p, w);
-    if (plan === 'ask' && !b.asked) { b.asked = true; api.req(p, b.pers.fav[0]); b.askAt = now; }
+    if (plan === 'ask' && !b.asked) { b.asked = true; api.req(p, sideP(p, r).fav[0]); b.askAt = now; }
   }
   // 請求沒人理：過 4 秒自己強起
   if (b.asked && b.plan === 'ask' && !p.loadout.primary && now - b.askAt > 4000 && api.canBuy(p)) {
@@ -1755,7 +1765,8 @@ function lootTarget(p, r, maxD) {
     else if (W?.nade) want = (!p.loadout.throw1 || !p.loadout.throw2) && p.loadout.throw1 !== d.w && p.loadout.throw2 !== d.w;
     else if (W) {
       const cur = p.loadout[W.slot];
-      want = !cur || (PRICE[d.w] || 0) > (PRICE[cur] || 0) + 400 || (p.bot.pers.fav.includes(d.w) && !p.bot.pers.fav.includes(cur));
+      const fav = sideP(p, r).fav;
+      want = !cur || (PRICE[d.w] || 0) > (PRICE[cur] || 0) + 400 || (fav.includes(d.w) && !fav.includes(cur));
     }
     if (want) { bd = dist; best = d; }
   }
@@ -1788,7 +1799,8 @@ function compPickup(p, r, now, take) {
     if (!W || W.nade || W.melee) continue;
     const cur = p.loadout[W.slot];
     if (!cur) continue; // 空的欄位伺服器會自動撿
-    const better = (PRICE[d.w] || 0) > (PRICE[cur] || 0) + 400 || (b.pers.fav.includes(d.w) && !b.pers.fav.includes(cur));
+    const fav = sideP(p, r).fav;
+    const better = (PRICE[d.w] || 0) > (PRICE[cur] || 0) + 400 || (fav.includes(d.w) && !fav.includes(cur));
     if (better) { take(d); break; }
   }
 }

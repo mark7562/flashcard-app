@@ -132,6 +132,44 @@ const SFX = {
     tone(t, 0.03, v * 0.25, 'square', 900 * (1 - m * 0.5), 400);
     noise(t + 0.03, 0.35, v * 0.16, 'bandpass', 700 * (1 - m * 0.5), 220, 0.8);
   },
+  // AK-47：比 M4A4 更低更重、尾音比較粗
+  ak(t, v, m) {
+    const top = 4300 * (1 - m * 0.8);
+    noise(t, 0.1, v * 1.0, 'lowpass', top, 480);
+    tone(t, 0.13, v * 0.9, 'sine', 115, 38);
+    tone(t, 0.025, v * 0.2, 'square', 700 * (1 - m * 0.5), 300);
+    noise(t + 0.02, 0.32, v * 0.26, 'bandpass', 750 * (1 - m * 0.5), 260, 0.8);
+  },
+  // AKS-74U：短槍管＋膨脹室，又尖又炸
+  aks(t, v, m) {
+    const top = 6200 * (1 - m * 0.8);
+    noise(t, 0.07, v * 0.9, 'bandpass', top * 0.5, 1000, 0.7);
+    tone(t, 0.08, v * 0.6, 'sine', 170, 55);
+    noise(t + 0.01, 0.2, v * 0.2, 'highpass', 1800 * (1 - m * 0.6), 900);
+  },
+  // MAC-10：很快、很薄的「噠噠噠」
+  mac10(t, v, m) {
+    const top = 7000 * (1 - m * 0.8);
+    noise(t, 0.04, v * 0.7, 'bandpass', top * 0.55, 1500, 0.9);
+    tone(t, 0.045, v * 0.4, 'sine', 240, 90);
+    tone(t, 0.015, v * 0.2, 'square', 1800 * (1 - m * 0.5), 1100);
+  },
+  // 雙管短霰彈：比泵動更炸、更短
+  sawedoff(t, v, m) {
+    const top = 3800 * (1 - m * 0.8);
+    noise(t, 0.14, v * 1.2, 'lowpass', top, 300);
+    tone(t, 0.22, v * 1.1, 'sine', 80, 30);
+    noise(t, 0.05, v * 0.6, 'bandpass', 1500 * (1 - m * 0.5), 600, 0.6);
+    noise(t + 0.04, 0.4, v * 0.25, 'lowpass', 800 * (1 - m * 0.5), 180);
+  },
+  // TT-33：比 M9 更尖、更響
+  tt33(t, v, m) {
+    const top = 7600 * (1 - m * 0.8);
+    noise(t, 0.05, v * 0.9, 'bandpass', top * 0.5, 1100, 0.9);
+    tone(t, 0.03, v * 0.4, 'square', 2200 * (1 - m * 0.5), 800);
+    tone(t, 0.06, v * 0.45, 'sine', 260, 90);
+    noise(t + 0.015, 0.16, v * 0.14, 'highpass', 2200 * (1 - m * 0.6), 1400);
+  },
   pump(t, v) {
     noise(t, 0.07, v * 0.5, 'bandpass', 1300, 700, 2); tone(t, 0.04, v * 0.3, 'square', 260, 180);
     noise(t + 0.16, 0.06, v * 0.55, 'bandpass', 1700, 1100, 2.5); tone(t + 0.16, 0.04, v * 0.3, 'square', 380, 260);

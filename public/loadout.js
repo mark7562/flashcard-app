@@ -3,12 +3,17 @@ import { loadouts, saveLoadouts, IS_TOUCH } from './settings.js';
 import { uiClick } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
-const { WEAPONS, CHOICES } = window.GAME_WEAPONS;
+const { WEAPONS, CHOICES, PAIR } = window.GAME_WEAPONS;
 const ROWS = [
   ['primary', '主武器'], ['secondary', '副武器'], ['melee', '近戰'], ['throw1', '投擲物 1'], ['throw2', '投擲物 2'],
 ];
 let editing = 0;
 
+function sideNote(w) {
+  if (!w.side) return '';
+  const other = WEAPONS[PAIR[w.id]];
+  return `\n${w.side === 'atk' ? '🔴 進攻方' : '🔵 防守方'}專用：爆破模式輪到${w.side === 'atk' ? '防守' : '進攻'}時自動換成 ${other.name}；爆破競賽只有${w.side === 'atk' ? '進攻' : '防守'}方買得到（撿敵人掉的可以用）`;
+}
 function stats(w) {
   if (w.disabled) return w.desc;
   if (w.nade) return `${w.desc}\n（爆破模式限定，每回合一顆）`;
@@ -22,7 +27,7 @@ function stats(w) {
   const rate = w.burst ? `每串間隔 ${((w.fireMs + w.burst.gapMs * (w.burst.n - 1)) / 1000).toFixed(2)} 秒` : w.fireMs >= 300 ? `每發間隔 ${(w.fireMs / 1000).toFixed(2)} 秒` : `每秒 ${(1000 / w.fireMs).toFixed(1)} 發`;
   const range = w.falloff ? `有效距離 ${w.falloff[0]} 公尺` : '有效距離 不衰減';
   const zoom = w.ads ? `瞄準 ${w.ads.zoom} 倍` : '';
-  return [dmg, rate, `彈匣 ${w.mag}`, range, zoom, `移動 ${Math.round(w.speed * 100)}%`].filter(Boolean).join(' · ') + `\n${w.desc}`;
+  return [dmg, rate, `彈匣 ${w.mag}`, range, zoom, `移動 ${Math.round(w.speed * 100)}%`].filter(Boolean).join(' · ') + `\n${w.desc}` + sideNote(w);
 }
 
 function render() {
@@ -53,6 +58,7 @@ function render() {
       b.innerHTML = `<span class="ki"></span><span class="kn"></span>`;
       b.querySelector('.ki').textContent = w.icon;
       b.querySelector('.kn').textContent = w.name;
+      if (w.side) { const t = document.createElement('i'); t.className = 'kside ' + w.side; t.textContent = w.side === 'atk' ? '攻' : '守'; b.append(t); }
       b.addEventListener('click', () => { set[slot] = id; saveLoadouts(); uiClick(); render(); });
       opts.append(b);
     }
@@ -70,9 +76,10 @@ function render() {
 }
 
 // 對戰中換套裝用的小卡片
-export function renderKitCards(box, onPick) {
+export function renderKitCards(box, onPick, map = (k) => k) {
   box.replaceChildren();
-  loadouts.sets.forEach((set, i) => {
+  loadouts.sets.forEach((set0, i) => {
+    const set = map(set0);
     const b = document.createElement('button');
     b.className = 'kitcard' + (loadouts.active === i ? ' on' : '');
     // 標題直接寫主武器（不用「1. 套裝 1」這種一堆數字）；下面一行是副武器和近戰

@@ -17,21 +17,21 @@
 (function (root) {
   const WEAPONS = {
     rifle: {
-      id: 'rifle', slot: 'primary', name: '突擊步槍', short: '步槍', icon: '🔫',
+      id: 'rifle', slot: 'primary', name: 'M4A4', short: 'M4A4', side: 'def', icon: '🔫',
       mag: 30, fireMs: 100, reloadMs: 1800, reloadEmptyMs: 2300, body: 25, head: 70, speed: 1,
       spread: [0.004, 0.045, 0.09], recoil: 0.18, kick: 0.007, falloff: [22, 55, 0.8],
       ads: { zoom: 1.4, ms: 200, spread: 0.35, speed: 0.75 },
       desc: '全自動，射速快、彈匣大，什麼距離都能打',
     },
     smg: {
-      id: 'smg', slot: 'primary', name: '衝鋒槍', short: '衝鋒槍', icon: '🔫',
+      id: 'smg', slot: 'primary', name: 'MK9', short: 'MK9', side: 'def', icon: '🔫',
       mag: 32, fireMs: 62, reloadMs: 1600, reloadEmptyMs: 2000, body: 21, head: 52, speed: 1.08,
       spread: [0.01, 0.03, 0.07], recoil: 0.12, kick: 0.0042, falloff: [10, 26, 0.6],
       ads: { zoom: 1.25, ms: 130, spread: 0.5, speed: 0.85 },
       desc: '射速最快、跑得快，近中距離很兇；遠距離傷害會掉',
     },
     shotgun: {
-      id: 'shotgun', slot: 'primary', name: '泵動霰彈槍', short: '霰彈槍', icon: '🔫',
+      id: 'shotgun', slot: 'primary', name: 'M87 泵動霰彈', short: 'M87', side: 'def', icon: '🔫',
       mag: 6, fireMs: 850, reloadMs: 0, body: 17, head: 26, speed: 1,
       spread: [0, 0, 0], recoil: 0.5, kick: 0.03, falloff: [7, 22, 0.3],
       pellets: 9, pelletSpread: 0.075, moveSpread: 1.3, shells: { startMs: 500, eachMs: 480, pumpMs: 500 },
@@ -39,28 +39,28 @@
       desc: '一發 9 顆彈丸，近距離一發擊倒；每發要泵動上膛，一顆一顆裝彈（可以中途開槍）',
     },
     sniper: {
-      id: 'sniper', slot: 'primary', name: '栓動狙擊槍', short: '栓狙', icon: '🎯',
+      id: 'sniper', slot: 'primary', name: 'M24 栓動狙擊', short: 'M24', icon: '🎯',
       mag: 5, fireMs: 1250, reloadMs: 2800, reloadEmptyMs: 3300, body: 75, chest: 150, head: 200, speed: 0.9,
       spread: [0.0004, 0.06, 0.12], recoil: 0.6, kick: 0.035, bolt: true, hipCone: 0.12,
       ads: { zoom: 4, ms: 320, spread: 1, speed: 0.55, scope: 'bolt' },
       desc: '開鏡打胸口以上一發擊倒（腹部、腿兩發）；每發都要拉栓；不開鏡幾乎打不準',
     },
     dmr: {
-      id: 'dmr', slot: 'primary', name: '半自動狙擊槍', short: '半自動狙', icon: '🎯',
+      id: 'dmr', slot: 'primary', name: 'M110 半自動狙擊', short: 'M110', icon: '🎯',
       mag: 7, fireMs: 340, reloadMs: 2400, reloadEmptyMs: 2900, body: 55, head: 110, speed: 0.93,
       spread: [0.0008, 0.05, 0.1], recoil: 0.4, kick: 0.022, hipCone: 0.1,
       ads: { zoom: 2.5, ms: 250, spread: 1, speed: 0.6, scope: 'dmr' },
       desc: '可以連發的狙擊槍：身體兩發、爆頭一發擊倒；不開鏡幾乎打不準',
     },
     pistol: {
-      id: 'pistol', slot: 'secondary', name: '手槍', short: '手槍', icon: '🔫',
+      id: 'pistol', slot: 'secondary', name: 'M9', short: 'M9', side: 'def', icon: '🔫',
       mag: 12, fireMs: 170, reloadMs: 1300, reloadEmptyMs: 1600, body: 22, head: 65, speed: 1.05,
       spread: [0.003, 0.03, 0.07], recoil: 0.3, kick: 0.012, falloff: [12, 35, 0.75], lockBack: true,
       ads: { zoom: 1.2, ms: 120, spread: 0.45, speed: 0.85 },
       desc: '換彈快、拿著跑得比較快，主武器沒子彈時的救命槍',
     },
     deagle: {
-      id: 'deagle', slot: 'secondary', name: '大口徑手槍', short: '大口徑', icon: '🔫',
+      id: 'deagle', slot: 'secondary', name: '沙鷹 .50', short: '沙鷹', icon: '🔫',
       mag: 7, fireMs: 340, reloadMs: 1700, reloadEmptyMs: 2000, body: 38, head: 100, speed: 1.05,
       spread: [0.004, 0.05, 0.1], recoil: 0.75, kick: 0.035, falloff: [15, 40, 0.8], lockBack: true,
       ads: { zoom: 1.25, ms: 170, spread: 0.4, speed: 0.85 },
@@ -75,46 +75,82 @@
     },
     // ---------- 第二批：新槍 ----------
     lmg: {
-      id: 'lmg', slot: 'primary', name: '輕機槍', short: '機槍', icon: '🔫',
+      id: 'lmg', slot: 'primary', name: 'M249', short: 'M249', icon: '🔫',
       mag: 50, fireMs: 82, reloadMs: 4300, reloadEmptyMs: 4900, body: 19, head: 50, speed: 0.82,
       spread: [0.014, 0.075, 0.13], recoil: 0.12, kick: 0.0055, falloff: [20, 50, 0.75], settle: { per: 0.05, min: 0.5 },
       ads: { zoom: 1.35, ms: 330, spread: 0.5, speed: 0.6 },
       desc: '50 發彈匣；單發傷害低但能一直壓制；站著連射會稍微變準，邊走邊打很散；換彈超久、走路很慢',
     },
     burst: {
-      id: 'burst', slot: 'primary', name: '三連發步槍', short: '三連發', icon: '🔫',
+      id: 'burst', slot: 'primary', name: 'FAMAS', short: 'FAMAS', side: 'def', icon: '🔫',
       mag: 30, fireMs: 260, reloadMs: 2000, reloadEmptyMs: 2400, body: 30, head: 75, speed: 1,
       spread: [0.0022, 0.045, 0.09], recoil: 0.2, kick: 0.008, falloff: [35, 70, 0.9], burst: { n: 3, gapMs: 62 },
       ads: { zoom: 1.6, ms: 220, spread: 0.3, speed: 0.72 },
       desc: '按一下打三發；中距離很準，兩串（四發）擊倒；貼臉輸給衝鋒槍',
     },
     carbine: {
-      id: 'carbine', slot: 'primary', name: '消音卡賓槍', short: '卡賓槍', icon: '🔫', quiet: true,
+      id: 'carbine', slot: 'primary', name: 'M4A1-S', short: 'M4A1-S', side: 'def', icon: '🔫', quiet: true,
       mag: 25, fireMs: 95, reloadMs: 1900, reloadEmptyMs: 2300, body: 24, head: 62, speed: 1.03,
       spread: [0.004, 0.04, 0.085], recoil: 0.15, kick: 0.006, falloff: [18, 45, 0.75],
       ads: { zoom: 1.45, ms: 190, spread: 0.35, speed: 0.78 },
       desc: '有消音器：槍聲很小，遠一點的人聽不到；傷害比步槍低一點',
     },
     autoshotgun: {
-      id: 'autoshotgun', slot: 'primary', name: '自動霰彈槍', short: '自動霰彈', icon: '💥',
+      id: 'autoshotgun', slot: 'primary', name: 'M1014 自動霰彈', short: 'M1014', icon: '💥',
       mag: 8, fireMs: 260, reloadMs: 2600, reloadEmptyMs: 3000, body: 11, head: 16, speed: 0.95,
       spread: [0.01, 0.05, 0.09], recoil: 0.5, kick: 0.025, pellets: 8, pelletSpread: 0.085, moveSpread: 1.3, falloff: [5, 18, 0.25],
       ads: { zoom: 1.15, ms: 180, spread: 0.8, speed: 0.8 },
       desc: '不用泵動、可以連發，近距離兩發擊倒；彈丸傷害比較低、彈匣小',
     },
     mpistol: {
-      id: 'mpistol', slot: 'secondary', name: '機槍手槍', short: '機槍手槍', icon: '🔫',
+      id: 'mpistol', slot: 'secondary', name: 'M93 機槍手槍', short: 'M93', icon: '🔫',
       mag: 18, fireMs: 62, reloadMs: 1500, reloadEmptyMs: 1800, body: 15, head: 40, speed: 1.05,
       spread: [0.012, 0.045, 0.08], recoil: 0.2, kick: 0.009, falloff: [6, 18, 0.55], lockBack: true,
       ads: { zoom: 1.15, ms: 120, spread: 0.6, speed: 0.85 },
       desc: '全自動手槍，射速超快但很散；近距離救命用',
     },
     revolver: {
-      id: 'revolver', slot: 'secondary', name: '左輪手槍', short: '左輪', icon: '🤠',
+      id: 'revolver', slot: 'secondary', name: '.357 左輪', short: '左輪', icon: '🤠',
       mag: 6, fireMs: 390, reloadMs: 2300, reloadEmptyMs: 2300, body: 45, head: 105, speed: 1.05,
       spread: [0.0018, 0.05, 0.1], recoil: 0.8, kick: 0.04, falloff: [30, 60, 0.9],
       ads: { zoom: 1.3, ms: 170, spread: 0.3, speed: 0.85 },
       desc: '6 發；很準、遠距離也有力，身體三發、爆頭一發；射速慢、換彈慢',
+    },
+    // ---------- 第三批：進攻方專用（爆破模式／爆破競賽只有進攻方能買；防守方的對應槍見 PAIR） ----------
+    ak: {
+      id: 'ak', slot: 'primary', name: 'AK-47', short: 'AK-47', icon: '🔫', side: 'atk',
+      mag: 30, fireMs: 116, reloadMs: 2000, reloadEmptyMs: 2500, body: 27, head: 105, speed: 0.97,
+      spread: [0.006, 0.06, 0.11], recoil: 0.26, kick: 0.01, falloff: [18, 50, 0.8],
+      ads: { zoom: 1.4, ms: 210, spread: 0.4, speed: 0.73 },
+      desc: '進攻方的主力步槍：中近距離爆頭一槍擊倒（20 公尺內）；射速比 M4A4 慢、後座大，要會壓槍',
+    },
+    aks: {
+      id: 'aks', slot: 'primary', name: 'AKS-74U', short: 'AKS-74U', icon: '🔫', side: 'atk',
+      mag: 35, fireMs: 92, reloadMs: 1800, reloadEmptyMs: 2200, body: 22, head: 58, speed: 1.03,
+      spread: [0.006, 0.035, 0.08], recoil: 0.16, kick: 0.006, falloff: [16, 42, 0.7],
+      ads: { zoom: 1.3, ms: 170, spread: 0.45, speed: 0.8 },
+      desc: '進攻方的便宜步槍：35 發、跑起來也還算準；傷害比較低，遠距離會掉',
+    },
+    mac10: {
+      id: 'mac10', slot: 'primary', name: 'MAC-10', short: 'MAC-10', icon: '🔫', side: 'atk',
+      mag: 30, fireMs: 55, reloadMs: 1700, reloadEmptyMs: 2100, body: 18, head: 46, speed: 1.1,
+      spread: [0.016, 0.03, 0.07], recoil: 0.14, kick: 0.005, falloff: [8, 22, 0.55],
+      ads: { zoom: 1.2, ms: 120, spread: 0.6, speed: 0.88 },
+      desc: '進攻方的衝鋒槍：射速超快、跑得快，邊跑邊打也不太散；站著也不會比較準，遠距離很弱',
+    },
+    sawedoff: {
+      id: 'sawedoff', slot: 'primary', name: '雙管短霰彈', short: '雙管霰彈', icon: '💥', side: 'atk',
+      mag: 2, fireMs: 220, reloadMs: 2100, reloadEmptyMs: 2100, body: 14, head: 22, speed: 1.02,
+      spread: [0, 0, 0], recoil: 0.55, kick: 0.035, pellets: 10, pelletSpread: 0.11, moveSpread: 1.15, falloff: [4, 14, 0.2],
+      ads: { zoom: 1.1, ms: 140, spread: 0.8, speed: 0.85 },
+      desc: '進攻方的霰彈槍：只有 2 發但可以連開，貼臉一發擊倒；彈丸很散，距離一拉開就沒用',
+    },
+    tt33: {
+      id: 'tt33', slot: 'secondary', name: 'TT-33', short: 'TT-33', icon: '🔫', side: 'atk',
+      mag: 8, fireMs: 200, reloadMs: 1400, reloadEmptyMs: 1700, body: 26, head: 78, speed: 1.05,
+      spread: [0.0035, 0.035, 0.075], recoil: 0.38, kick: 0.015, falloff: [14, 38, 0.75], lockBack: true,
+      ads: { zoom: 1.2, ms: 120, spread: 0.45, speed: 0.85 },
+      desc: '進攻方的基本手槍：只有 8 發，但每發比 M9 痛',
     },
     // ---------- 近戰 ----------
     butterfly: {
@@ -184,8 +220,8 @@
   };
   // 每個欄位可以選的武器
   const CHOICES = {
-    primary: ['rifle', 'burst', 'carbine', 'smg', 'lmg', 'shotgun', 'autoshotgun', 'sniper', 'dmr'],
-    secondary: ['pistol', 'mpistol', 'deagle', 'revolver'],
+    primary: ['rifle', 'carbine', 'burst', 'ak', 'aks', 'smg', 'mac10', 'shotgun', 'sawedoff', 'autoshotgun', 'lmg', 'sniper', 'dmr'],
+    secondary: ['pistol', 'tt33', 'mpistol', 'deagle', 'revolver'],
     melee: ['knife', 'butterfly', 'bat', 'axe', 'hammer', 'baton', 'katana', 'tknife'],
     throw1: ['frag', 'flash', 'smoke', 'molotov', 'stun', 'decoy'], throw2: ['frag', 'flash', 'smoke', 'molotov', 'stun', 'decoy'],
   };
@@ -195,6 +231,22 @@
   const HAND_SLOTS = ['primary', 'secondary', 'melee'];
   const BOMB_SLOTS = ['primary', 'secondary', 'melee', 'throw1', 'throw2'];
   const isBombMode = (mode) => mode === 'bomb' || mode === 'comp'; // 爆破模式、爆破競賽
+  // ---------- 攻守專用槍（只在爆破模式／爆破競賽生效；其他模式所有槍都能用） ----------
+  // side：'atk' 進攻方專用 / 'def' 防守方專用 / 沒寫 = 兩邊都能用
+  // PAIR：拿到另一方的槍時換成哪一把（爆破模式的自選套裝用；爆破競賽是用買的，撿到敵人的槍照樣能用）
+  const PAIR = {
+    ak: 'rifle', aks: 'burst', mac10: 'smg', sawedoff: 'shotgun', tt33: 'pistol',
+    rifle: 'ak', carbine: 'ak', burst: 'aks', smg: 'mac10', shotgun: 'sawedoff', pistol: 'tt33',
+  };
+  const sideOk = (id, atk) => { const s = WEAPONS[id]?.side; return !s || (s === 'atk') === !!atk; };
+  const forSide = (id, atk) => (id && !sideOk(id, atk) ? PAIR[id] || id : id);
+  const basePistol = (atk) => (atk ? 'tt33' : 'pistol'); // 每回合免費的基本手槍
+  // 整套裝備換成這一方能用的
+  function kitForSide(l, atk) {
+    const out = { ...l };
+    for (const k of ['primary', 'secondary']) if (out[k]) out[k] = forSide(out[k], atk);
+    return out;
+  }
   const slotsFor = (mode) => (isBombMode(mode) ? BOMB_SLOTS : HAND_SLOTS);
 
   // ---------- 爆破競賽：經濟系統 ----------
@@ -207,12 +259,12 @@
     plantTeam: 600, plant: 300, defuse: 300, // 進攻方輸了但有埋包：全隊加；埋包、拆包的人自己加
     buyMs: 15000, // 開打後還能買幾秒（要待在出生區）
     price: {
-      pistol: 0, mpistol: 500, revolver: 600, deagle: 700,
-      shotgun: 1100, smg: 1200, autoshotgun: 2000, burst: 2700, carbine: 2900, rifle: 3000, dmr: 3800, sniper: 4700, lmg: 5000,
+      pistol: 0, tt33: 0, mpistol: 500, revolver: 600, deagle: 700,
+      sawedoff: 1000, mac10: 1050, shotgun: 1100, smg: 1200, aks: 1800, autoshotgun: 2000, burst: 2000, ak: 2700, carbine: 2900, rifle: 3000, dmr: 3800, sniper: 4700, lmg: 5000,
       flash: 200, smoke: 300, frag: 300, stun: 300, molotov: 500, decoy: 50,
       light: 600, heavy: 1100, regen: 1300, kit: 400,
     },
-    reward: { shotgun: 900, smg: 600, autoshotgun: 600, sniper: 100, melee: 1500, def: 300 },
+    reward: { shotgun: 900, sawedoff: 900, smg: 600, mac10: 600, autoshotgun: 600, sniper: 100, melee: 1500, def: 300 },
     // 護甲：只保護身體（頭不保護）。每次身體受到的傷害有一半轉給護甲、扣掉一樣多的護甲值，護甲扣完就全部打在血上
     absorb: 0.5,
     armor: {
@@ -231,8 +283,8 @@
   }
   // 商店分頁
   const SHOP = {
-    primary: ['smg', 'shotgun', 'autoshotgun', 'burst', 'carbine', 'rifle', 'dmr', 'sniper', 'lmg'],
-    secondary: ['pistol', 'mpistol', 'revolver', 'deagle'],
+    primary: ['mac10', 'smg', 'sawedoff', 'shotgun', 'autoshotgun', 'aks', 'burst', 'ak', 'carbine', 'rifle', 'dmr', 'sniper', 'lmg'],
+    secondary: ['tt33', 'pistol', 'mpistol', 'revolver', 'deagle'],
     throw: ['flash', 'smoke', 'frag', 'stun', 'molotov', 'decoy'],
     gear: ['light', 'heavy', 'regen', 'kit'],
   };
@@ -301,7 +353,7 @@
     return out;
   }
 
-  const W = { WEAPONS, CHOICES, SLOT_OF, DEFAULT_LOADOUT, HAND_SLOTS, BOMB_SLOTS, slotsFor, isBombMode, ECON, SHOP, priceOf, rewardOf, cleanInv, LIST, clean, falloff, reloadTime, shellsLoaded, coneDirs };
+  const W = { WEAPONS, PAIR, sideOk, forSide, basePistol, kitForSide, CHOICES, SLOT_OF, DEFAULT_LOADOUT, HAND_SLOTS, BOMB_SLOTS, slotsFor, isBombMode, ECON, SHOP, priceOf, rewardOf, cleanInv, LIST, clean, falloff, reloadTime, shellsLoaded, coneDirs };
   if (typeof module !== 'undefined' && module.exports) module.exports = W;
   else root.GAME_WEAPONS = W;
 })(typeof self !== 'undefined' ? self : this);

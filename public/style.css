@@ -960,3 +960,7 @@ body.replaying #killfeed { top: calc(9vh + 8px); }
 #scoreboard.comp .sb-team td.gear, #scoreboard.comp .sb-team th:nth-child(6) { width: 78px; font-size: 12px; }
 #scoreboard.comp .sb-team th:nth-child(4) { color: var(--muted); }
 #scoreboard.comp .sb-team th:nth-child(4), #scoreboard.comp .sb-team td:nth-child(4) { width: 38px; color: inherit; }
+/* 攻守專用槍的小標籤 */
+.kside { font-style: normal; font-size: 11px; font-weight: 800; padding: 0 5px; border-radius: 4px; margin-left: 4px; color: #fff; line-height: 16px; }
+.kside.atk { background: #d9434e; }
+.kside.def { background: #2f7fd9; }
