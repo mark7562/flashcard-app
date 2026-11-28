@@ -163,7 +163,7 @@ export function makeFigure(color, name = null, opts = {}) {
   group.add(body, head, visor, arm);
 
   const fig = {
-    group, arm, label: null, weapon: '',
+    group, arm, label: null, weapon: '', weapons, nadeColors: NADE_COLORS,
     setWeapon(id) {
       if (fig.weapon === id) return;
       fig.weapon = id;
@@ -215,4 +215,46 @@ export function makeFigure(color, name = null, opts = {}) {
   fig.setWeapon('rifle');
   if (name) fig.setName(name, opts.labelColor ?? color);
   return fig;
+}
+
+// ---------- 爆破競賽：掉在地上的武器模型 ----------
+// 用第三人稱的武器模型（共用幾何和材質），放大、躺平；投擲物換成自己的顏色；拆彈器是一個藍色小盒子
+let dropTpl = null;
+const kitBox = new THREE.BoxGeometry(0.26, 0.09, 0.18);
+const kitMat = new THREE.MeshStandardMaterial({ color: 0x2f7de0, roughness: 0.5, emissive: 0x0a2a5a });
+const kitWire = new THREE.BoxGeometry(0.2, 0.02, 0.02);
+const kitWireMat = new THREE.MeshStandardMaterial({ color: 0xffd34d, emissive: 0x504000 });
+const nadeDropMats = {};
+export function makeDropModel(id) {
+  if (!dropTpl) dropTpl = makeFigure(0xffffff);
+  const holder = new THREE.Group();
+  let m;
+  if (id === 'kit') {
+    m = new THREE.Group();
+    const b = new THREE.Mesh(kitBox, kitMat);
+    const w1 = new THREE.Mesh(kitWire, kitWireMat); w1.position.set(0, 0.055, -0.03);
+    const w2 = new THREE.Mesh(kitWire, kitWireMat); w2.position.set(0, 0.055, 0.03);
+    m.add(b, w1, w2);
+    holder.add(m);
+    return holder;
+  }
+  const nc = dropTpl.nadeColors[id];
+  const src = dropTpl.weapons[nc ? 'nade' : id] || dropTpl.weapons.rifle;
+  m = src.clone(true);
+  m.visible = true;
+  m.position.set(0, 0, 0); m.rotation.set(0, 0, 0);
+  if (nc) {
+    const mat = nadeDropMats[id] || (nadeDropMats[id] = new THREE.MeshStandardMaterial({ color: nc, roughness: 0.5 }));
+    m.traverse((o) => { if (o.isMesh && o.material?.color && o.material.color.getHex() === 0x3d5a2a) o.material = mat; });
+  }
+  // 模型的中心放到原點，再躺平（槍管朝水平方向、側面貼地）
+  const box = new THREE.Box3().setFromObject(m);
+  const c = box.getCenter(new THREE.Vector3());
+  m.position.sub(c);
+  const lay = new THREE.Group();
+  lay.add(m);
+  lay.rotation.z = Math.PI / 2;
+  holder.add(lay);
+  holder.scale.setScalar(nc ? 1.6 : 1.35);
+  return holder;
 }

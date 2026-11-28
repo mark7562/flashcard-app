@@ -35,13 +35,18 @@ const RESULTS_MS = 12000; // 結算畫面顯示多久
 const REC_MS = 7000; // 最佳擊殺回放：伺服器記住最近幾秒的位置和事件
 const CLIP_BEFORE = 2600, CLIP_AFTER = 800, CLIP_MAX = 6000; // 回放從擊殺前多久播到擊殺後多久（連殺最長 6 秒）
 const COLORS = MAP.colors;
-const MODES = ['tdm', 'elim', 'bomb', 'zombie', 'hero'];
+const MODES = ['tdm', 'elim', 'bomb', 'comp', 'zombie', 'hero'];
 const RULE_OPTIONS = { scoreLimit: [25, 50, 75, 100], timeLimit: [5, 10, 15], rounds: [3, 5, 7, 9], map: MAP.order };
 // 爆破模式
 const BOMB = {
   map: 'metro', freezeMs: 10000, roundMs: 105000, fuseMs: 40000, plantMs: 3000, defuseMs: 6000,
   pickR: 1.6, defuseR: 1.8, blastR: 18, blastDmg: 260, postMs: 5000,
 };
+// 爆破競賽（comp）：跟爆破模式一樣的規則，加上經濟系統；先贏 13 回合（12:12 之後要領先 2 回合才算贏）
+const ECON = WPN.ECON;
+const COMP = { freezeMs: 12000, roundMs: 90000, win: 13, half: 12, otSwap: 3, pickR: 2.0, dropLife: 0 };
+const isB = (r) => WPN.isBombMode(r.mode); // 爆破模式或爆破競賽
+const isComp = (r) => r.mode === 'comp';
 const isRounds = (r) => r.mode !== 'tdm'; // 回合制（殲滅、爆破、生化）
 // 生化模式（zombie）／生化英雄（hero）：隊伍 0 = 人類、1 = 殭屍；每回合開始所有人都是人類
 const Z_MODES = ['zombie', 'hero'];
@@ -183,7 +188,8 @@ function roomState(r) {
   return {
     code: r.code, name: r.name, hostId: r.hostId, mode: r.mode, rules: r.rules, state: r.state,
     locked: !!r.password, score: r.score, roundWins: r.roundWins, round: r.round, phase: r.phase, timeLeft, ready,
-    attackTeam: r.attackTeam, bomb: r.mode === 'bomb' ? bombSummary(r) : null,
+    attackTeam: r.attackTeam, bomb: isB(r) ? bombSummary(r) : null,
+    buyLeft: isComp(r) && r.state === 'playing' ? (r.phase === 'freeze' ? Math.max(0, r.phaseUntil - now) + ECON.buyMs : r.phase === 'live' ? Math.max(0, r.buyUntil - now) : 0) : 0,
     z: isZ(r) && r.z ? { infectIn: r.z.started ? 0 : Math.max(0, r.z.infectAt - now), started: r.z.started, heroOn: r.z.heroOn } : null,
     players: [...r.players.values()].map((p) => ({
       id: p.id, name: p.name, color: p.color, team: p.team, kills: p.kills, deaths: p.deaths, alive: p.alive,
@@ -220,7 +226,7 @@ function createRoom(p, msg) {
     score: [0, 0], roundWins: [0, 0], round: 0, phase: null, phaseUntil: 0, endsAt: 0, resultsUntil: 0, pendingEnd: null,
     rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null, nades: [], smokes: [], fires: [],
   };
-  if (r.mode === 'bomb') { r.rules.map = BOMB.map; r.rules.rounds = 7; }
+  if (isB(r)) { r.rules.map = BOMB.map; r.rules.rounds = isComp(r) ? COMP.win : 7; }
   if (isZ(r)) { r.rules.map = MAP.zombieMaps.includes(msg.map) ? msg.map : 'hospital'; r.rules.rounds = 7; }
   rooms.set(r.code, r);
   console.log(`[房] ${p.name} 建立房間 ${r.code}「${r.name}」`);
@@ -246,6 +252,7 @@ function addToRoom(p, r) {
   p.kills = 0; p.deaths = 0; p.pts = 0; p.zi = 0; p.zrole = null; p.out = false;
   p.alive = false; p.respawnAt = 0;
   r.players.set(p.id, p);
+  if (isComp(r) && r.state === 'playing' && r.econ) { compReset(p); r.econDirty = true; }
   if (r.state === 'playing') {
     // 對戰中途加入：死鬥模式直接出生，殲滅模式等下一回合
     toRoom(r, { t: 'joined', id: p.id }, p.id);
@@ -270,6 +277,7 @@ function leaveRoom(p) {
     return;
   }
   toRoom(r, { t: 'left', id: p.id });
+  if (isComp(r) && r.state === 'playing' && !p.bot && r.econ) takeOver(r, p);
   if (r.hostId === p.id) r.hostId = [...r.players.values()].find((o) => !o.bot).id; // 房主交給下一個真人
   if (r.state === 'playing') checkTeams(r);
   syncRoom(r);
@@ -280,7 +288,7 @@ function startMatch(r) {
   if (r.state !== 'lobby') return;
   if (isZ(r) && r.players.size < 2) return send(r.players.get(r.hostId).ws, { t: 'error', msg: '生化模式至少要 2 個人，可以用「＋ 機器人」補位' });
   if (isRounds(r) && !isZ(r) && (!teamCount(r, 0) || !teamCount(r, 1))) {
-    return send(r.players.get(r.hostId).ws, { t: 'error', msg: `${r.mode === 'bomb' ? '爆破' : '回合殲滅'}模式需要兩隊都至少有 1 個人，可以用「＋ 機器人」補位` });
+    return send(r.players.get(r.hostId).ws, { t: 'error', msg: `${isComp(r) ? '爆破競賽' : isB(r) ? '爆破模式' : '回合殲滅模式'}需要兩隊都至少有 1 個人，可以用「＋ 機器人」補位` });
   }
   r.state = 'playing';
   r.score = [0, 0];
@@ -290,24 +298,30 @@ function startMatch(r) {
   r.attackTeam = 1; r.bomb = null; r.roundLog = []; r.nades = []; r.smokes = []; r.fires = []; r.knives = []; r.decoys = [];
   r.rec = []; r.recEv = []; r.best = null; r.bestScore = 0; r.pendingBest = null;
   for (const p of r.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; p.zi = 0; p.alive = false; p.respawnAt = 0; p.ready = !!p.bot; }
-  console.log(`[房] ${r.code} 開戰（${{ tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式', zombie: '生化模式', hero: '生化英雄' }[r.mode]}，${mapOf(r).name}，${r.players.size} 人）`);
+  // 上一場是爆破競賽的話身上的東西是買的（可能是空的）：換回自己的套裝
+  for (const p of r.players.values()) if (p.kitPick) p.loadout = { ...p.kitPick };
+  if (isComp(r)) compInit(r);
+  console.log(`[房] ${r.code} 開戰（${{ tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式', comp: '爆破競賽', zombie: '生化模式', hero: '生化英雄' }[r.mode]}，${mapOf(r).name}，${r.players.size} 人）`);
   // 先等大家載入地圖（最多 10 秒），再倒數 5 秒
   startRound(r, true);
 }
 
 // 回合開始（死鬥模式只有一個「回合」）：所有人回出生點
 // 出生點用哪一組：爆破模式看攻守（0 = 防守那邊、1 = 進攻那邊），其他模式看隊伍
-function sideOf(r, team) { return r.mode === 'bomb' ? (team === r.attackTeam ? 1 : 0) : team; }
-function freezeMs(r) { return r.mode === 'bomb' ? BOMB.freezeMs : FREEZE_MS; }
+function sideOf(r, team) { return isB(r) ? (team === r.attackTeam ? 1 : 0) : team; }
+function freezeMs(r) { return isComp(r) ? COMP.freezeMs : isB(r) ? BOMB.freezeMs : FREEZE_MS; }
 function startRound(r, first = false) {
   r.round += 1;
   let swap = false;
   // 爆破模式：打完上半場（先贏 N 回合 → 前 N-1 回合）兩隊交換攻守
   if (r.mode === 'bomb' && !first && r.round === r.rules.rounds) { r.attackTeam = 1 - r.attackTeam; swap = true; }
+  // 爆破競賽：打完 12 回合換邊；12:12 進延長賽之後每 3 回合換一次
+  if (isComp(r) && !first && compSwap(r.round)) { r.attackTeam = 1 - r.attackTeam; swap = true; }
   r.phase = first ? 'loading' : 'freeze';
   r.phaseUntil = Date.now() + (first ? LOAD_MAX_MS : freezeMs(r));
   const idx = [0, 0];
   if (isZ(r)) zStartRound(r);
+  if (isComp(r)) compRoundStart(r, swap);
   for (const p of r.players.values()) {
     if (isZ(r)) { const list = zHumanSpawns(r); spawnAt(p, list[idx[0]++ % list.length], 0); zSend(p); continue; }
     const sd = sideOf(r, p.team);
@@ -317,13 +331,14 @@ function startRound(r, first = false) {
   r.nades = []; r.smokes = []; r.fires = []; r.knives = []; r.decoys = [];
   r.roundFirstKill = false;
   for (const p of r.players.values()) { p.roundKills = 0; p.roundHeads = 0; p.clutchVs = 0; }
-  if (r.mode === 'bomb') giveBomb(r);
-  if (!first) toRoom(r, { t: 'round', n: r.round, freeze: freezeMs(r), swap, attack: r.attackTeam });
+  if (isB(r)) giveBomb(r);
+  if (!first) toRoom(r, { t: 'round', n: r.round, freeze: freezeMs(r), swap, attack: r.attackTeam, half: isComp(r) && r.round === COMP.half + 1, ot: isComp(r) && r.round > COMP.half * 2 });
+  if (isComp(r)) for (const p of r.players.values()) sendInv(p);
   syncRoom(r);
 }
 // 載入完成 → 倒數
 function startCountdown(r) {
-  const ms = r.mode === 'bomb' ? BOMB.freezeMs : COUNTDOWN_MS;
+  const ms = isB(r) ? freezeMs(r) : COUNTDOWN_MS;
   r.phase = 'freeze';
   r.phaseUntil = Date.now() + ms;
   toRoom(r, { t: 'round', n: r.round, freeze: ms, attack: r.attackTeam });
@@ -334,7 +349,8 @@ function goLive(r) {
   const now = Date.now();
   r.phase = 'live';
   if (r.mode === 'tdm') r.endsAt = now + r.rules.timeLimit * 60000;
-  else r.phaseUntil = now + (r.mode === 'bomb' ? BOMB.roundMs : isZ(r) ? ZM.roundMs : ROUND_MS);
+  else r.phaseUntil = now + (isComp(r) ? COMP.roundMs : isB(r) ? BOMB.roundMs : isZ(r) ? ZM.roundMs : ROUND_MS);
+  if (isComp(r)) r.buyUntil = now + ECON.buyMs;
   if (isZ(r)) { r.z.infectAt = now + ZM.infectMs; r.z.nextAmmo = now + 4000; r.z.nextBio = r.z.infectAt + 6000; }
   for (const p of r.players.values()) { p.kitUntil = now + KIT_MS; p.firedSince = false; }
   syncRoom(r);
@@ -344,12 +360,15 @@ function goLive(r) {
 function endRound(r, winner, reason = 'elim') {
   if (r.phase !== 'live') return;
   r.phase = 'post';
-  r.phaseUntil = Date.now() + (r.mode === 'bomb' ? BOMB.postMs : ROUND_POST_MS);
+  r.phaseUntil = Date.now() + (isB(r) ? BOMB.postMs : ROUND_POST_MS);
   if (winner >= 0) r.roundWins[winner] += 1;
   if (isZ(r)) {
     // 生化模式：固定打 N 回合，贏比較多回合的一方獲勝；活到最後的人類加分
     for (const p of r.players.values()) if (p.alive && (p.zrole === 'human' || p.zrole === 'hero')) p.pts += ZM.pts.survive;
     if (r.round >= r.rules.rounds) r.pendingEnd = r.roundWins[0] === r.roundWins[1] ? -1 : r.roundWins[0] > r.roundWins[1] ? 0 : 1;
+  } else if (isComp(r)) {
+    compRoundEnd(r, winner, reason);
+    if (winner >= 0 && compWon(r, winner)) r.pendingEnd = winner;
   } else if (winner >= 0 && r.roundWins[winner] >= r.rules.rounds) r.pendingEnd = winner;
   // 爆破模式：如果兩隊都差一回合就打到底（例如 6:6 打第 13 回合決勝）
   const alive = [0, 0];
@@ -400,7 +419,7 @@ function siteAt(r, x, z) {
 // 開始／停止埋彈、拆彈（要按住，不能動、不能開槍）
 function handleAct(p, msg) {
   const r = p.room;
-  if (!r || r.mode !== 'bomb' || r.phase !== 'live' || !p.alive || !r.bomb) return;
+  if (!r || !isB(r) || r.phase !== 'live' || !p.alive || !r.bomb) return;
   const now = Date.now();
   if (!msg.on) { if (p.actKind) { p.actKind = null; toRoom(r, { t: 'act', id: p.id, on: false }); } return; }
   const b = r.bomb;
@@ -411,7 +430,8 @@ function handleAct(p, msg) {
   p.actKind = kind;
   p.actAt = now;
   p.actPos = [p.x, p.z];
-  toRoom(r, { t: 'act', id: p.id, on: true, kind, ms: kind === 'plant' ? BOMB.plantMs : BOMB.defuseMs });
+  p.actMs = kind === 'plant' ? BOMB.plantMs : p.dkit ? ECON.kit.ms : BOMB.defuseMs; // 爆破競賽：有拆彈器拆比較快
+  toRoom(r, { t: 'act', id: p.id, on: true, kind, ms: p.actMs, kit: kind === 'defuse' && p.dkit ? 1 : undefined });
 }
 function cancelAct(p) {
   if (!p.actKind) return;
@@ -449,16 +469,18 @@ function bombTick(r, now) {
       b.plantedAt = now; b.explodeAt = now + BOMB.fuseMs;
       r.phaseUntil = b.explodeAt;
       p.plants = (p.plants || 0) + 1;
+      if (isComp(r)) addMoney(p, ECON.plant, '埋包');
       toRoom(r, { t: 'act', id: p.id, on: false });
       toRoom(r, { t: 'planted', id: p.id, site: site.id, fuse: BOMB.fuseMs });
       sendBomb(r);
       syncRoom(r);
       recEvent(r, { k: 'planted', id: p.id });
-    } else if (p.actKind === 'defuse' && now - p.actAt >= BOMB.defuseMs) {
+    } else if (p.actKind === 'defuse' && now - p.actAt >= (p.actMs || BOMB.defuseMs)) {
       if (b.state !== 'planted') { cancelAct(p); continue; }
       p.actKind = null;
       b.state = 'defused';
       p.defuses = (p.defuses || 0) + 1;
+      if (isComp(r)) addMoney(p, ECON.defuse, '拆包');
       toRoom(r, { t: 'act', id: p.id, on: false });
       toRoom(r, { t: 'defused', id: p.id });
       sendBomb(r);
@@ -486,16 +508,367 @@ function explodeBomb(r, now) {
 function envDamage(r, q, dmg, weapon, attackerId, now) {
   const a = attackerId ? r.players.get(attackerId) : null;
   if (a && a !== q && a.team !== q.team) return applyDamage(a, q, dmg, false, weapon, now);
+  if (isComp(r)) dmg = armorAbsorb(q, dmg, false, now);
   q.hp = Math.max(0, q.hp - dmg);
-  send(q.ws, { t: 'damaged', hp: q.hp, from: attackerId || 0, fx: q.x, fz: q.z });
+  send(q.ws, { t: 'damaged', hp: q.hp, from: attackerId || 0, fx: q.x, fz: q.z, ar: q.armor ? Math.round(q.armor.v) : undefined });
   if (q.hp > 0) return;
   q.alive = false;
   q.deaths += 1;
+  if (isComp(r)) compDeath(r, q);
   if (a && a === q) { /* 自殺 */ }
   if (r.mode === 'tdm') q.respawnAt = now + RESPAWN_MS;
   toRoom(r, { t: 'kill', killer: attackerId || 0, victim: q.id, head: false, w: weapon, kk: a ? a.kills : 0, vd: q.deaths, score: r.score, kx: q.x, kz: q.z, khp: a ? a.hp : 0 });
   recEvent(r, { k: 'kill', killer: attackerId || 0, victim: q.id, head: false, w: weapon, kx: q.x, kz: q.z });
   if (r.mode !== 'tdm') checkTeams(r);
+}
+
+// ======================================================================
+// 爆破競賽：經濟系統、商店、護甲、拆彈器、掉落與撿取、請隊友幫忙買
+// ======================================================================
+// 換邊：打完 12 回合（第 13 回合開始）；12:12 之後的延長賽每 3 回合換一次（第 25、28、31… 回合）
+function compSwap(round) { return round === COMP.half + 1 || (round > COMP.half * 2 && (round - COMP.half * 2 - 1) % COMP.otSwap === 0); }
+// 贏了沒：先拿到 13 回合、而且比對手多 2 回合以上（12:12 之後就一直打到有人領先 2 回合）
+function compWon(r, team) { return r.roundWins[team] >= COMP.win && r.roundWins[team] - r.roundWins[1 - team] >= 2; }
+// 一個人的經濟歸零（開場、下半場開始、中途加入）：800 元、只有基本手槍和刀
+function compReset(p) {
+  p.money = ECON.start;
+  p.loadout = WPN.cleanInv({ secondary: 'pistol' }, p.meleePick || p.kitPick?.melee || p.loadout?.melee);
+  p.armor = null; p.dkit = false;
+}
+function compInit(r) {
+  r.econ = { loss: [0, 0] };
+  r.drops = []; r.dropSeq = 0; r.reqs = new Map(); r.econDirty = true; r.buyUntil = 0;
+  for (const p of r.players.values()) compReset(p);
+}
+// 回合開始（在大家回出生點之前）：地上的東西清掉；死掉的人拿回基本手槍
+function compRoundStart(r, swap) {
+  r.drops = []; sendDrops(r);
+  r.reqs.clear();
+  if (r.round === COMP.half + 1) {
+    // 下半場：大家的錢和裝備重新來過（手槍局）
+    r.econ.loss = [0, 0];
+    for (const p of r.players.values()) compReset(p);
+  } else if (swap) {
+    // 延長賽換邊：拆彈器只有防守方能用，換到進攻方就收掉
+    for (const p of r.players.values()) p.dkit = false;
+  }
+  for (const p of r.players.values()) {
+    if (!p.loadout.secondary && !p.loadout.primary) p.loadout.secondary = 'pistol';
+    if (p.meleePick) p.loadout.melee = p.meleePick;
+    if (p.armor) { p.armor.regenLeft = ECON.armor[p.armor.kind].cap || 0; p.armor.hitAt = 0; }
+  }
+  r.econDirty = true;
+}
+function sendInv(p, got) {
+  if (!p.room || !isComp(p.room)) return;
+  const a = p.armor;
+  send(p.ws, { t: 'inv', kit: p.loadout, ammo: p.ammoBy, w: p.weapon, money: p.money, armor: a ? { k: a.kind, v: Math.round(a.v), max: ECON.armor[a.kind].max } : null, dk: !!p.dkit, got });
+}
+// 隊友看得到彼此的錢和裝備（對手看不到）
+function sendEcon(r) {
+  r.econDirty = false;
+  for (const team of [0, 1]) {
+    const list = [...r.players.values()].filter((q) => q.team === team).map((q) => [q.id, q.money, q.loadout.primary, q.loadout.secondary, q.armor ? q.armor.kind : null, q.dkit ? 1 : 0, q.loadout.throw1, q.loadout.throw2]);
+    const data = JSON.stringify({ t: 'econ', list });
+    for (const q of r.players.values()) if (q.team === team && q.ws.readyState === 1) q.ws.send(data);
+  }
+}
+function addMoney(p, n, why) {
+  if (!n) return;
+  const before = p.money;
+  p.money = Math.max(0, Math.min(ECON.max, p.money + n));
+  send(p.ws, { t: 'cash', n: p.money - before, why, m: p.money, full: n > 0 && p.money - before < n });
+  if (p.room) p.room.econDirty = true;
+}
+// 回合結束發錢：贏的那隊 3000（炸彈爆炸／拆除 3300），輸的那隊拿連敗獎金；進攻方輸了但有埋包多 600
+function compRoundEnd(r, winner, reason) {
+  if (winner < 0) return;
+  const loser = 1 - winner;
+  const planted = !!(r.bomb && ['planted', 'exploded', 'defused'].includes(r.bomb.state));
+  const winPay = reason === 'bomb' || reason === 'defuse' ? ECON.winObj : ECON.win;
+  const lossPay = ECON.loss[Math.min(r.econ.loss[loser], ECON.loss.length - 1)];
+  for (const p of r.players.values()) {
+    if (p.team === winner) addMoney(p, winPay, '回合勝利');
+    else {
+      addMoney(p, lossPay, r.econ.loss[loser] ? `連敗獎金（${r.econ.loss[loser] + 1} 連敗）` : '回合失敗');
+      if (loser === r.attackTeam && planted) addMoney(p, ECON.plantTeam, '有埋包');
+    }
+  }
+  r.econ.loss[winner] = 0; // 一贏就歸零
+  r.econ.loss[loser] = Math.min(ECON.loss.length - 1, r.econ.loss[loser] + 1);
+  r.reqs.clear();
+}
+// ---- 護甲：身體受到的傷害一半轉給護甲 ----
+function armorAbsorb(p, dmg, head, now) {
+  const a = p.armor;
+  if (!a || head || a.v <= 0 || dmg <= 0) return dmg;
+  const take = Math.min(a.v, dmg * ECON.absorb);
+  a.v -= take;
+  a.hitAt = now;
+  if (a.v <= 0.01) a.v = 0;
+  return Math.round(dmg - take);
+}
+// ---- 掉落物 ----
+function sendDrops(r, thrown) {
+  toRoom(r, { t: 'drops', list: r.drops.map((d) => [d.id, d.w, +d.x.toFixed(2), +d.y.toFixed(2), +d.z.toFixed(2)]), thrown });
+}
+function floorAtPt(r, x, z, y) {
+  let fy = MAP.floorAt(mapOf(r).boxes, x, z, y + 0.5);
+  if (fy > y + 0.5) fy = y;
+  return fy;
+}
+function addDrop(r, by, w, x, y, z, ammo) {
+  const d = { id: ++r.dropSeq, w, x, y, z, ammo, by: by ? by.id : 0, at: Date.now() };
+  r.drops.push(d);
+  return d;
+}
+// 一個點能不能放東西（沒有卡在牆裡、在場地範圍內）
+function freeSpot(r, x, y, z) {
+  if (!MAP.inBounds(mapOf(r), x, z)) return false;
+  for (const b of mapOf(r).boxes) if (x > b.min[0] - 0.1 && x < b.max[0] + 0.1 && z > b.min[2] - 0.1 && z < b.max[2] + 0.1 && y + 0.3 > b.min[1] && y + 0.2 < b.max[1]) return false;
+  return true;
+}
+// 死掉：刀和護甲以外的東西全部掉在屍體旁邊（圍成一圈，不會疊在同一點）
+function compDeath(r, p) {
+  const items = [];
+  for (const slot of ['primary', 'secondary', 'throw1', 'throw2']) {
+    const w = p.loadout[slot];
+    if (!w || (slot.startsWith('throw') && !(p.nadesLeft?.[slot] > 0))) continue;
+    items.push([w, WEAPONS[w].mag ? p.ammoBy[slot] ?? WEAPONS[w].mag : 0]);
+  }
+  if (p.dkit) items.push(['kit', 0]);
+  const a0 = Math.random() * Math.PI * 2;
+  items.forEach(([w, ammo], i) => {
+    const ang = a0 + (i / items.length) * Math.PI * 2, rad = items.length > 1 ? 0.6 : 0;
+    let x = p.x + Math.sin(ang) * rad, z = p.z + Math.cos(ang) * rad;
+    if (!freeSpot(r, x, p.y, z) || !los(r, [p.x, p.y + 0.4, p.z], [x, p.y + 0.4, z])) { x = p.x; z = p.z; }
+    addDrop(r, null, w, x, floorAtPt(r, x, z, p.y), z, ammo);
+  });
+  p.loadout = WPN.cleanInv({}, p.loadout.melee);
+  p.armor = null; p.dkit = false;
+  if (items.length) sendDrops(r);
+  r.econDirty = true;
+}
+// 手上的槍丟出去（往前 1.6 公尺；前面是牆就丟在腳邊）
+function handleDrop(p) {
+  const r = p.room;
+  if (!r || !isComp(r) || r.state !== 'playing' || !p.alive || r.phase === 'post') return;
+  const slot = p.weapon;
+  const w = p.loadout[slot];
+  if (!w || slot === 'melee' || p.actKind) return;
+  if (slot.startsWith('throw') && !(p.nadesLeft[slot] > 0)) return;
+  const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+  let x = p.x + fx * 1.6, z = p.z + fz * 1.6;
+  if (!freeSpot(r, x, p.y, z) || !los(r, [p.x, p.y + 1.2, p.z], [x, p.y + 0.6, z])) { x = p.x + fx * 0.3; z = p.z + fz * 0.3; }
+  const ammo = WEAPONS[w].mag ? p.ammoBy[slot] ?? WEAPONS[w].mag : 0;
+  const d = addDrop(r, p, w, x, floorAtPt(r, x, z, p.y), z, ammo);
+  p.loadout[slot] = null;
+  if (slot.startsWith('throw')) p.nadesLeft[slot] = 0;
+  p.reloadUntil = 0;
+  p.weapon = p.loadout.primary ? 'primary' : p.loadout.secondary ? 'secondary' : 'melee';
+  p.switchUntil = Date.now() + SWITCH_MS;
+  sendDrops(r, { id: d.id, o: [+p.x.toFixed(2), +(p.y + 1.3).toFixed(2), +p.z.toFixed(2)] });
+  sendInv(p);
+  r.econDirty = true;
+}
+// 這件東西會放進哪一格（投擲物不能重複、最多兩顆；拆彈器只有防守方）
+// 回傳 { slot, swap } 或 { err }
+function slotFor(p, w, allowSwap) {
+  const r = p.room;
+  if (w === 'kit') {
+    if (p.team === r.attackTeam) return { err: '只有防守方能拿拆彈器' };
+    return p.dkit ? { err: '你已經有拆彈器了' } : { slot: 'kit' };
+  }
+  if (ECON.armor[w]) return { slot: 'armor' };
+  const W = WEAPONS[w];
+  if (!W) return { err: '?' };
+  if (W.nade) {
+    if (p.loadout.throw1 === w || p.loadout.throw2 === w) return { err: `你已經有${W.name}了（同一種只能帶一顆）` };
+    if (!p.loadout.throw1) return { slot: 'throw1' };
+    if (!p.loadout.throw2) return { slot: 'throw2' };
+    return { err: '投擲物最多帶兩顆' };
+  }
+  const slot = W.slot;
+  if (p.loadout[slot] && !allowSwap) return { err: 'full' };
+  return { slot, swap: !!p.loadout[slot] };
+}
+// 把東西放到身上（買、撿、隊友幫買都走這裡）；原本那格有槍就丟在腳邊
+function giveItem(p, w, ammo, at) {
+  const r = p.room;
+  const s = slotFor(p, w, true);
+  if (s.err) return s.err;
+  if (s.slot === 'kit') { p.dkit = true; return null; }
+  if (s.slot === 'armor') {
+    const A = ECON.armor[w];
+    p.armor = { kind: w, v: A.max, regenLeft: A.cap || 0, hitAt: 0, acc: 0 };
+    return null;
+  }
+  const old = p.loadout[s.slot];
+  if (old) {
+    const pos = at || p;
+    const d = addDrop(r, p, old, pos.x, floorAtPt(r, pos.x, pos.z, pos.y ?? p.y), pos.z, WEAPONS[old].mag ? p.ammoBy[s.slot] ?? WEAPONS[old].mag : 0);
+    d.at = Date.now() + 500; // 剛換下來的：自己不會馬上又自動撿回去
+    sendDrops(r);
+  }
+  p.loadout[s.slot] = w;
+  const W = WEAPONS[w];
+  if (W.nade) p.nadesLeft[s.slot] = 1;
+  else {
+    p.ammoBy[s.slot] = ammo ?? W.mag;
+    if (p.weapon === s.slot) p.reloadUntil = 0;
+    // 買了（撿了）主武器：直接拿在手上
+    if (s.slot === 'primary' || (s.slot === 'secondary' && !p.loadout.primary)) { p.weapon = s.slot; p.switchUntil = Date.now() + SWITCH_MS; p.reloadUntil = 0; }
+  }
+  return null;
+}
+// 現在能不能買：準備時間，或開打後 15 秒內而且還在自己的出生區
+function canBuy(p, anywhere = false) {
+  const r = p.room;
+  if (!r || !isComp(r) || r.state !== 'playing' || !p.alive) return false;
+  if (r.phase === 'freeze') return true;
+  return r.phase === 'live' && Date.now() < r.buyUntil && (anywhere || MAP.inSpawn(mapOf(r), sideOf(r, p.team), p.x, p.z));
+}
+// 買東西前的檢查（錢夠不夠、身上放不放得下）：回傳錯誤訊息或 null
+function buyCheck(p, w, money) {
+  const price = WPN.priceOf(w);
+  if (price === null || !(WPN.SHOP.primary.includes(w) || WPN.SHOP.secondary.includes(w) || WPN.SHOP.throw.includes(w) || WPN.SHOP.gear.includes(w))) return '?';
+  if (money < price) return '錢不夠';
+  const s = slotFor(p, w, true);
+  if (s.err) return s.err;
+  if (s.slot === 'armor' && p.armor && p.armor.kind === w && p.armor.v >= ECON.armor[w].max - 0.5) return `你的${ECON.armor[w].name}是滿的`;
+  if (!s.slot.startsWith('throw') && s.slot !== 'armor' && s.slot !== 'kit' && p.loadout[s.slot] === w) return `你已經有${WEAPONS[w].name}了`;
+  return null;
+}
+function buyItem(p, w) {
+  if (!canBuy(p)) return '現在不能買（只能在準備時間、或開打後 15 秒內待在出生區買）';
+  const err = buyCheck(p, w, p.money);
+  if (err) return err;
+  const price = WPN.priceOf(w);
+  giveItem(p, w);
+  p.money -= price;
+  p.room.econDirty = true;
+  // 有人請你幫忙買的東西你自己買到了：請求自動取消
+  if (p.room.reqs.has(p.id)) cancelReq(p.room, p.id);
+  return null;
+}
+function handleBuy(p, msg) {
+  if (!p.room || !isComp(p.room)) return;
+  const err = buyItem(p, String(msg.w || ''));
+  if (err && err !== '?') send(p.ws, { t: 'buyErr', msg: err });
+  sendInv(p, err ? undefined : msg.w);
+}
+// ---- 請隊友幫忙買 ----
+function cancelReq(r, id) {
+  if (!r.reqs.delete(id)) return;
+  const q = r.players.get(id);
+  if (q) toTeam(r, q.team, { t: 'req', id, w: null });
+}
+function toTeam(r, team, msg) {
+  const data = JSON.stringify(msg);
+  for (const q of r.players.values()) if (q.team === team && q.ws.readyState === 1) q.ws.send(data);
+}
+function handleReq(p, msg) {
+  const r = p.room;
+  if (!r || !isComp(r)) return;
+  if (!msg.w) { cancelReq(r, p.id); return; }
+  const w = String(msg.w);
+  if (!canBuy(p, true)) return send(p.ws, { t: 'buyErr', msg: '購買時間過了' });
+  const err = buyCheck(p, w, Infinity);
+  if (err) return send(p.ws, { t: 'buyErr', msg: err === '?' ? '不能請求這個' : err });
+  r.reqs.set(p.id, { w, at: Date.now() });
+  toTeam(r, p.team, { t: 'req', id: p.id, w });
+}
+// 幫隊友付錢：東西直接送到他身上
+function fundReq(r, payer, id) {
+  const req = r.reqs.get(id);
+  const q = r.players.get(id);
+  if (!req || !q || q === payer || q.team !== payer.team || !q.alive) return '請求已經結束了';
+  if (!canBuy(payer, true) || !canBuy(q, true)) return '購買時間過了';
+  const err = buyCheck(q, req.w, payer.money);
+  if (err) return err === '錢不夠' ? '你的錢不夠' : err;
+  const price = WPN.priceOf(req.w);
+  giveItem(q, req.w);
+  payer.money -= price;
+  r.reqs.delete(id);
+  toTeam(r, payer.team, { t: 'funded', id, by: payer.id, w: req.w });
+  sendInv(q, req.w);
+  sendInv(payer);
+  r.econDirty = true;
+  return null;
+}
+function handleFund(p, msg) {
+  const r = p.room;
+  if (!r || !isComp(r) || !p.alive) return;
+  const err = fundReq(r, p, msg.id);
+  if (err) send(p.ws, { t: 'buyErr', msg: err });
+}
+// ---- 撿東西 ----
+function takeDrop(r, p, d) {
+  const i = r.drops.indexOf(d);
+  if (i < 0) return '?';
+  r.drops.splice(i, 1);
+  const err = giveItem(p, d.w, d.ammo, d);
+  if (err) { r.drops.push(d); return err; }
+  sendDrops(r);
+  sendInv(p, d.w);
+  r.econDirty = true;
+  return null;
+}
+function nearDrop(p, d, rad) { return Math.hypot(p.x - d.x, p.z - d.z) <= rad && d.y - p.y < 1.6 && p.y - d.y < 1.2; }
+// 按「撿起」：可以跟身上同一格的槍交換
+function handlePick(p, msg) {
+  const r = p.room;
+  if (!r || !isComp(r) || r.state !== 'playing' || !p.alive || r.phase === 'post') return;
+  const d = r.drops.find((x) => x.id === msg.id);
+  if (!d || !nearDrop(p, d, COMP.pickR + 0.4)) return;
+  const err = takeDrop(r, p, d);
+  if (err && err !== '?') send(p.ws, { t: 'buyErr', msg: err });
+}
+// 每一格：空的欄位走過去自動撿；再生護甲回復；購買時間結束就取消請求
+function compTick(r, now) {
+  if (r.phase === 'live' || r.phase === 'freeze') {
+    for (const p of r.players.values()) {
+      if (!p.alive) continue;
+      for (const d of r.drops) {
+        if (!nearDrop(p, d, COMP.pickR) || (d.by === p.id && now - d.at < 1500) || now < d.at) continue;
+        const s = slotFor(p, d.w, false);
+        if (s.err || s.slot === 'armor') continue;
+        // 自動撿：只撿空著的欄位（不會把手上的槍換掉）；機器人看到比較好的槍也會換
+        takeDrop(r, p, d);
+        break;
+      }
+      if (p.bot) BOT.compPickup?.(p, r, now, (d) => takeDrop(r, p, d));
+      const a = p.armor;
+      if (a && a.kind === 'regen' && a.v < ECON.armor.regen.max && a.regenLeft > 0 && now - a.hitAt >= ECON.armor.regen.delay) {
+        const add = Math.min(ECON.armor.regen.rate * TICK_MS / 1000, a.regenLeft, ECON.armor.regen.max - a.v);
+        const before = Math.round(a.v);
+        a.v += add; a.regenLeft -= add;
+        if (Math.round(a.v) !== before && now - (a.sentAt || 0) > 250) { a.sentAt = now; send(p.ws, { t: 'ar', v: Math.round(a.v) }); }
+        if (a.v >= ECON.armor.regen.max - 0.01 || a.regenLeft <= 0) send(p.ws, { t: 'ar', v: Math.round(a.v) });
+      }
+    }
+  }
+  if (r.reqs.size && !(r.phase === 'freeze' || (r.phase === 'live' && now < r.buyUntil))) for (const id of [...r.reqs.keys()]) cancelReq(r, id);
+  if (r.econDirty && now - (r.econAt || 0) > 150) { r.econAt = now; sendEcon(r); }
+}
+// 玩家中途離開：機器人接手他的錢、裝備（還活著的話連位置和血量一起）
+function takeOver(r, p) {
+  const team = p.team;
+  if (!addBot(r, team, 'normal')) return;
+  const b = [...r.players.values()].at(-1);
+  b.name = p.name.slice(0, 12) + '代打';
+  b.money = p.money; b.loadout = { ...p.loadout }; b.armor = p.armor ? { ...p.armor } : null; b.dkit = p.dkit; b.meleePick = p.loadout.melee;
+  b.kills = p.kills; b.deaths = p.deaths;
+  if (p.alive) {
+    b.x = p.x; b.y = p.y; b.z = p.z; b.yaw = p.yaw; b.pitch = 0; b.hp = p.hp; b.alive = true;
+    b.ammoBy = { ...p.ammoBy }; b.nadesLeft = { ...p.nadesLeft }; b.weapon = p.loadout[p.weapon] ? p.weapon : 'secondary';
+    if (!b.loadout[b.weapon]) b.weapon = b.loadout.primary ? 'primary' : 'melee';
+    b.history = []; b.protectUntil = 0; b.lastStateAt = Date.now(); b.seq = 1;
+    BOT.resetBrain(b.bot);
+    if (r.bomb && r.bomb.state === 'carried' && r.bomb.carrier === p.id) r.bomb.carrier = b.id;
+    toRoom(r, { t: 'respawn', id: b.id, x: b.x, y: b.y, z: b.z, yaw: b.yaw, seq: b.seq, kit: b.loadout });
+  }
+  r.econDirty = true;
 }
 
 function endMatch(r, winner, reason = '') {
@@ -527,7 +900,7 @@ function checkTeams(r) {
   for (const p of r.players.values()) if (p.alive) alive[p.team]++;
   // 殘局：隊上只剩自己、對面還有人 → 記下來（贏了回合要顯示「殘局勝利」）
   for (const p of r.players.values()) if (p.alive && alive[p.team] === 1 && alive[1 - p.team] > 0) p.clutchVs = Math.max(p.clutchVs || 0, alive[1 - p.team]);
-  if (r.mode === 'bomb') {
+  if (isB(r)) {
     const A = r.attackTeam, D = 1 - A, planted = r.bomb && r.bomb.state === 'planted';
     if (!alive[D]) endRound(r, A, 'elim'); // 防守方全滅：進攻方贏（不管炸彈有沒有埋）
     else if (!alive[A] && !planted) endRound(r, D, 'elim'); // 進攻方全滅而且炸彈還沒埋
@@ -816,12 +1189,14 @@ function positionAt(p, time) {
 function heldId(p) { return p.zrole === 'zombie' || p.zrole === 'mother' ? 'claw' : p.zrole === 'hero' ? 'herosword' : p.loadout[p.weapon]; }
 function weaponOf(p) { return WEAPONS[heldId(p)]; }
 function resetKit(p) {
-  p.weapon = 'primary';
+  // 爆破競賽：欄位可能是空的（沒買主武器），手上拿身上最好的那把
+  p.weapon = p.loadout.primary ? 'primary' : p.loadout.secondary ? 'secondary' : 'melee';
   p.ammoBy = {};
-  for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[p.loadout[slot]]; if (w.mag) p.ammoBy[slot] = w.mag; }
+  for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[p.loadout[slot]]; if (w?.mag) p.ammoBy[slot] = w.mag; }
   // 生化模式：人類的子彈有限（身上另外只有 2 個備用彈匣，靠彈藥箱補）
   p.reserve = p.room && isZ(p.room) ? fullReserve(p) : null;
   p.nadesLeft = { throw1: 1, throw2: 1 }; // 投擲物：每回合各一顆
+  if (p.room && isComp(p.room)) p.nadesLeft = { throw1: p.loadout.throw1 ? 1 : 0, throw2: p.loadout.throw2 ? 1 : 0 }; // 爆破競賽：有買才有
   p.tknifeOut = 0; // 飛刀丟出去了沒（還沒撿回來就不能用近戰）
   p.burstN = 0;
   p.reloadUntil = 0;
@@ -834,6 +1209,7 @@ function resetKit(p) {
 function finishReload(p, now) {
   if (!p.reloadUntil) return;
   const w = weaponOf(p);
+  if (!w) { p.reloadUntil = 0; return; }
   const take = p.reloadTake ?? w.mag;
   if (w.shells) {
     const n = Math.min(take, WPN.shellsLoaded(w, now - p.reloadStart + RELOAD_SLACK));
@@ -852,7 +1228,7 @@ function fullReserve(p) { return { primary: WEAPONS[p.loadout.primary].mag * ZM.
 function sendReserve(p) { if (p.reserve) send(p.ws, { t: 'res', res: p.reserve }); }
 function startReload(p) {
   const w = weaponOf(p);
-  if (!p.alive || p.reloadUntil || !w.mag || p.ammoBy[p.weapon] >= w.mag) return;
+  if (!w || !p.alive || p.reloadUntil || !w.mag || p.ammoBy[p.weapon] >= w.mag) return;
   // 子彈打光才換彈比較久（要多拉一次槍機）
   const ammo = p.ammoBy[p.weapon];
   // 生化模式：備用子彈用完就不能換彈
@@ -868,7 +1244,7 @@ function startReload(p) {
   toRoom(p.room, { t: 'reload', id: p.id, ms, n: w.mag - ammo, empty: ammo <= 0 }, p.id); // 讓其他人看到、聽到你在換彈
 }
 function switchWeapon(p, slot) {
-  if (!WPN.slotsFor(p.room?.mode).includes(slot) || p.weapon === slot) return;
+  if (!WPN.slotsFor(p.room?.mode).includes(slot) || p.weapon === slot || !p.loadout[slot]) return;
   if (slot.startsWith('throw') && !(p.nadesLeft && p.nadesLeft[slot] > 0)) return;
   if (slot === 'melee' && p.tknifeOut) return; // 飛刀還沒撿回來
   p.weapon = slot;
@@ -890,7 +1266,16 @@ function canChangeKit(p) {
   return Date.now() < p.kitUntil && !p.firedSince && !p.leftSpawn;
 }
 function handleLoadout(p, msg) {
+  // 爆破競賽：身上的東西要用買的，套裝只決定帶哪把刀
+  if (p.room && isComp(p.room) && p.room.state === 'playing') {
+    p.kitPick = WPN.clean(msg.l);
+    p.meleePick = p.kitPick.melee;
+    if (!p.alive || p.room.phase === 'freeze') { p.loadout.melee = p.meleePick; if (p.alive && p.weapon === 'melee') p.switchUntil = Date.now() + SWITCH_MS; sendInv(p); }
+    return;
+  }
   p.loadout = WPN.clean(msg.l);
+  p.kitPick = { ...p.loadout };
+  p.meleePick = p.loadout.melee;
   if (p.alive && p.room?.state === 'playing' && canChangeKit(p)) {
     resetKit(p);
     send(p.ws, { t: 'kit', kit: p.loadout });
@@ -902,7 +1287,7 @@ let nadeSeq = 0;
 function handleThrow(p, msg) {
   const r = p.room;
   const now = Date.now();
-  if (!r || r.mode !== 'bomb' || r.state !== 'playing' || r.phase !== 'live' || !p.alive) return;
+  if (!r || !isB(r) || r.state !== 'playing' || r.phase !== 'live' || !p.alive) return;
   const slot = p.weapon;
   if (!slot.startsWith('throw') || !(p.nadesLeft[slot] > 0) || now < p.switchUntil || now - p.lastShot < 400) return;
   const d = aimDir(msg);
@@ -910,6 +1295,11 @@ function handleThrow(p, msg) {
   const kind = p.loadout[slot];
   if (!NADE.NADES[kind]) return;
   p.nadesLeft[slot] -= 1;
+  if (isComp(r)) {
+    // 爆破競賽：丟掉就沒了，那一格空出來（可以撿別人的）；手上先換回槍（客戶端等一下也會切回來）
+    p.loadout[slot] = null; r.econDirty = true;
+    p.weapon = p.loadout.primary ? 'primary' : p.loadout.secondary ? 'secondary' : 'melee';
+  }
   p.lastShot = now;
   p.firedSince = true;
   cancelAct(p);
@@ -964,7 +1354,7 @@ function detonate(r, n, now) {
     if (inSmoke) ev.fizzle = true;
     else r.fires.push({ id: n.nid, x, y: fy, z, at: now, until: now + cfg.life, owner: n.owner, next: now });
   } else if (n.kind === 'decoy') {
-    r.decoys.push({ id: n.nid, x, y, z, owner: n.owner, team: n.team, w: owner ? owner.loadout.primary : 'rifle', until: now + cfg.life, next: now + 300 });
+    r.decoys.push({ id: n.nid, x, y, z, owner: n.owner, team: n.team, w: owner?.loadout.primary || owner?.loadout.secondary || 'rifle', until: now + cfg.life, next: now + 300 });
   } else if (n.kind === 'stun') {
     for (const q of r.players.values()) {
       if (!q.alive) continue;
@@ -1031,6 +1421,7 @@ function readyToFire(p, now) {
   const r = p.room;
   if (!r || r.state !== 'playing' || !p.alive || r.phase !== 'live') return null;
   const w = weaponOf(p);
+  if (!w) return null;
   let cd = p.lastHeavy && w.heavy ? w.heavy.fireMs : w.fireMs; // 重擊之後要等比較久
   if (w.burst && p.burstN > 0 && p.burstN < w.burst.n) cd = w.burst.gapMs; // 三連發：同一串裡的下一發
   if (now < p.switchUntil || now - p.lastShot < cd * FIRE_SLACK) return null;
@@ -1043,15 +1434,22 @@ function applyDamage(p, target, dmg, headshot, weapon, now, extra = {}) {
   p.protectUntil = 0; // 攻擊就取消重生保護
   if (now < target.protectUntil) return;
   if (isZ(r)) dmg = zDamage(p, target, dmg);
+  const hadArmor = isComp(r) && !headshot && target.armor?.v > 0;
+  if (isComp(r)) dmg = armorAbsorb(target, dmg, headshot, now);
   target.hp = Math.max(0, target.hp - dmg);
-  send(p.ws, { t: 'hit', id: target.id, head: headshot, kill: target.hp <= 0 });
-  send(target.ws, { t: 'damaged', hp: target.hp, from: p.id, fx: p.x, fz: p.z });
+  send(p.ws, { t: 'hit', id: target.id, head: headshot, kill: target.hp <= 0, ar: hadArmor ? 1 : undefined });
+  send(target.ws, { t: 'damaged', hp: target.hp, from: p.id, fx: p.x, fz: p.z, ar: target.armor ? Math.round(target.armor.v) : undefined });
   if (target.bot) BOT.damaged(target, p, now);
   if (target.hp > 0) return;
   if (isZ(r) && zKilled(r, p, target, now)) return; // 人類被殭屍打倒：變成殭屍，不算死
   target.alive = false;
   target.deaths += 1;
   p.kills += 1;
+  if (isComp(r)) {
+    compDeath(r, target);
+    const w = WEAPONS[weapon];
+    addMoney(p, WPN.rewardOf(weapon), `擊殺 ${target.name}（${w ? w.short : ''}）`);
+  }
   if (r.mode === 'tdm') {
     target.respawnAt = now + RESPAWN_MS;
     r.score[p.team] += 1;
@@ -1333,7 +1731,7 @@ function handleState(p, msg) {
   p.yaw = num(msg.yaw, p.yaw);
   p.pitch = Math.max(-1.6, Math.min(1.6, num(msg.pitch, p.pitch)));
   // 瞄準：記住從什麼時候開始瞄（狙擊槍要瞄滿才準）
-  if (msg.ads && weaponOf(p).ads && !p.reloadUntil) { if (!p.adsSince) p.adsSince = now; } else p.adsSince = 0;
+  if (msg.ads && weaponOf(p)?.ads && !p.reloadUntil) { if (!p.adsSince) p.adsSince = now; } else p.adsSince = 0;
   p.lastStateAt = now;
   p.history.push({ t: now, x, y, z });
   while (p.history.length && p.history[0].t < now - 1000) p.history.shift();
@@ -1363,11 +1761,14 @@ function setRules(p, msg) {
     if (RULE_OPTIONS[k].includes(msg[k])) r.rules[k] = msg[k];
   }
   // 爆破模式只能用霓虹地鐵站；回合數 5 / 7 / 9；殲滅模式 3 / 5 / 7
-  if (r.mode === 'bomb') {
+  if (isComp(r)) {
+    r.rules.map = BOMB.map;
+    r.rules.rounds = COMP.win; // 爆破競賽固定先贏 13 回合
+  } else if (isB(r)) {
     r.rules.map = BOMB.map;
     if (![5, 7, 9].includes(r.rules.rounds)) r.rules.rounds = 7;
-  } else if (r.mode === 'elim' && r.rules.rounds === 9) r.rules.rounds = 7;
-  if (was === 'bomb' && r.mode !== 'bomb' && r.rules.map === BOMB.map) r.rules.map = MAP.defaultMap;
+  } else if (r.mode === 'elim' && ![3, 5, 7].includes(r.rules.rounds)) r.rules.rounds = 5;
+  if (WPN.isBombMode(was) && !isB(r) && r.rules.map === BOMB.map) r.rules.map = MAP.defaultMap;
   // 生化模式只開放適合的地圖
   if (isZ(r) && !MAP.zombieMaps.includes(r.rules.map)) r.rules.map = 'hospital';
   syncRoom(r);
@@ -1420,6 +1821,7 @@ function addBot(r, team, level) {
   p.color = COLORS[Math.floor(Math.random() * COLORS.length)];
   p.bot = BOT.makeBrain(level);
   p.loadout = BOT.pickLoadout(level);
+  p.kitPick = { ...p.loadout };
   p.room = r;
   p.team = team;
   r.players.set(p.id, p);
@@ -1473,6 +1875,11 @@ wss.on('connection', (ws) => {
       case 'loadout': handleLoadout(p, msg); break;
       case 'act': handleAct(p, msg); break;
       case 'throw': handleThrow(p, msg); break;
+      case 'buy': handleBuy(p, msg); break;
+      case 'drop': handleDrop(p); break;
+      case 'pick': handlePick(p, msg); break;
+      case 'req': handleReq(p, msg); break;
+      case 'fund': handleFund(p, msg); break;
       case 'resultsDone': {
         // 玩家按「返回房間」：所有真人都回來了就不用等結算倒數
         const r = p.room;
@@ -1539,7 +1946,7 @@ function tick() {
         // 時間到：還有人類活著就是人類贏
         const humans = [...r.players.values()].filter((p) => p.alive && p.team === 0).length;
         endRound(r, humans ? 0 : 1, 'time');
-      } else if (r.phase === 'live' && r.mode === 'bomb') {
+      } else if (r.phase === 'live' && isB(r)) {
         // 炸彈埋了 → 爆炸；沒埋 → 時間到防守方贏
         if (r.bomb && r.bomb.state === 'planted') explodeBomb(r, now);
         else endRound(r, 1 - r.attackTeam, 'time');
@@ -1557,14 +1964,16 @@ function tick() {
     if (r.phase === 'live' || r.mode === 'tdm') knifeTick(r, now);
     if (r.state !== 'playing') continue;
     if (isZ(r) && r.phase === 'live') { zTick(r, now); if (r.state !== 'playing') continue; }
-    if (r.mode === 'bomb') {
+    if (isComp(r) && r.econ) { compTick(r, now); if (r.state !== 'playing') continue; }
+    if (isB(r)) {
       bombTick(r, now);
       if (r.state === 'playing' && r.phase === 'live') nadeTick(r, now);
       if (r.state !== 'playing') continue;
     }
 
     // 機器人思考
-    const api = { shoot: handleShoot, melee: handleMelee, reload: startReload, switchTo: switchWeapon, finishReload, act: handleAct, throwNade: handleThrow };
+    const api = { shoot: handleShoot, melee: handleMelee, reload: startReload, switchTo: switchWeapon, finishReload, act: handleAct, throwNade: handleThrow,
+      buy: (p, w) => { const e = buyItem(p, w); if (!e) sendInv(p); return e; }, req: (p, w) => handleReq(p, { w }), fund: (p, id) => fundReq(r, p, id), canBuy, buyCheck, drop: handleDrop };
     for (const p of r.players.values()) {
       if (p.bot && r.state === 'playing') BOT.think(p, r, now, TICK_MS / 1000, api);
     }
@@ -1592,10 +2001,11 @@ if (require.main === module) {
   module.exports = {
     tick, rooms, addBot, startMatch, BOMB, TICK_MS, setHook(fn) { simHook = fn; },
     // 建一個只有機器人的房間（模擬用）
+    COMP, ECON,
     simRoom(mode, map, level0, level1, n = 5, rules = {}) {
       const r = {
         code: makeCode(), name: 'sim', password: '', mode, attackTeam: 1, bomb: null, roundLog: [],
-        rules: { scoreLimit: 50, timeLimit: 10, rounds: 7, map: mode === 'bomb' ? BOMB.map : map, ...rules },
+        rules: { scoreLimit: 50, timeLimit: 10, rounds: mode === 'comp' ? COMP.win : 7, map: WPN.isBombMode(mode) ? BOMB.map : map, ...rules },
         hostId: 0, state: 'lobby', players: new Map(),
         score: [0, 0], roundWins: [0, 0], round: 0, phase: null, phaseUntil: 0, endsAt: 0, resultsUntil: 0, pendingEnd: null,
         rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null, nades: [], smokes: [], fires: [],

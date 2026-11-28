@@ -1,6 +1,6 @@
 // 方塊戰場 Block Arena — 瀏覽器端
 import * as THREE from 'three';
-import { makeFigure } from './figure.js';
+import { makeFigure, makeDropModel } from './figure.js';
 import { settings, onSettingsChange, setSetting, profile, IS_TOUCH, loadouts, saveLoadouts, activeKit, drawCrosshair } from './settings.js';
 import { renderKitCards, initLoadout } from './loadout.js';
 import { initAudio, setVolumes, sfx, beep, uiStart, uiClick } from './audio.js';
@@ -37,19 +37,22 @@ const me = {
 const isRounds = () => !!room && room.mode !== 'tdm';
 // 生化模式：me.role = human / zombie / mother / hero；殭屍只能用爪子、英雄只能用長刀
 const isZ = () => !!room && (room.mode === 'zombie' || room.mode === 'hero');
+const isBomb = () => !!room && WPN.isBombMode(room.mode); // 爆破模式、爆破競賽
+const isComp = () => room?.mode === 'comp'; // 爆破競賽（有經濟系統）
 const zombieRole = (r) => r === 'zombie' || r === 'mother';
 function heldId() { return zombieRole(me.role) ? 'claw' : me.role === 'hero' ? 'herosword' : me.kit[me.weapon]; }
 const ROLE_NAMES = { human: '人類', zombie: '殭屍', mother: '母體殭屍', hero: '英雄' };
 function sleeveColor() { return zombieRole(me.role) ? 0x3f6a2e : me.role === 'hero' ? 0xd9a520 : MAP.teams[me.team].color; }
 function slotList() { return WPN.slotsFor(room?.mode); }
 function slotUsable(slot) {
+  if (!me.kit[slot]) return false; // 爆破競賽：這格是空的
   if (slot === 'melee' && me.tknifeOut) return false; // 飛刀丟出去了，還沒撿回來
   return !slot.startsWith('throw') || (me.nadesLeft[slot] > 0 && WEAPONS[me.kit[slot]]?.nade);
 }
 const roster = new Map(); // id -> { name, color, kills, deaths }
 const remotes = new Map(); // id -> { group, buf: [...], alive }
 const keys = {};
-const TOUCH_BTNS = ['btnFire', 'btnJump', 'btnReload', 'btnScore', 'btnMenu', 'btnSwap', 'btnAim', 'btnAct']; // 可以調整位置的手機按鈕
+const TOUCH_BTNS = ['btnFire', 'btnJump', 'btnReload', 'btnScore', 'btnMenu', 'btnSwap', 'btnAim', 'btnAct', 'btnPick', 'btnDrop']; // 可以調整位置的手機按鈕
 let ws = null, playing = false, firing = false, jumpQueued = false;
 let moveVec = { x: 0, y: 0 }; // 手機搖桿
 let rtt = 0, lastSend = 0, respawnAt = 0;
@@ -212,15 +215,16 @@ function traceEnd(origin, dir) {
 const camDir = new THREE.Vector3();
 const muzzle = new THREE.Vector3();
 // ---------- 武器 ----------
-function curW() { return WEAPONS[heldId()]; }
+function curW() { return WEAPONS[heldId()] || WEAPONS[me.kit.melee] || WEAPONS.knife; }
 // 套用一整套裝備（復活、換套裝時）：子彈補滿、拿主武器
 function applyKit(kit) {
-  me.kit = WPN.clean(kit);
+  // 爆破競賽：身上的東西是買的，欄位可以是空的
+  me.kit = isComp() ? WPN.cleanInv(kit, kit?.melee) : WPN.clean(kit);
   me.ammoBy = {};
-  for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[me.kit[slot]]; if (w.mag) me.ammoBy[slot] = w.mag; }
-  me.weapon = 'primary';
-  me.prevWeapon = 'primary';
-  me.nadesLeft = { throw1: 1, throw2: 1 };
+  for (const slot of WPN.HAND_SLOTS) { const w = WEAPONS[me.kit[slot]]; if (w?.mag) me.ammoBy[slot] = w.mag; }
+  me.weapon = me.kit.primary ? 'primary' : me.kit.secondary ? 'secondary' : 'melee';
+  me.prevWeapon = me.weapon;
+  me.nadesLeft = isComp() ? { throw1: me.kit.throw1 ? 1 : 0, throw2: me.kit.throw2 ? 1 : 0 } : { throw1: 1, throw2: 1 };
   me.tknifeOut = 0;
   me.burstN = 0;
   views.knifeBack();
@@ -263,7 +267,7 @@ function cycleWeapon(dir) {
 }
 // 按 4：切到投擲物（再按一次換另一顆）
 function cycleNade() {
-  if (room?.mode !== 'bomb') return;
+  if (!isBomb()) return;
   const order = me.weapon === 'throw1' ? ['throw2', 'throw1'] : ['throw1', 'throw2'];
   const s = order.find((x) => slotUsable(x) && x !== me.weapon);
   if (s) switchWeapon(s);
@@ -334,14 +338,14 @@ function selfFlash(pos) {
 function syncBomb() {
   const b = room?.bomb;
   if (b && b.st === 'planted') { b.explodeAt = performance.now() + b.left; roomDeadline = b.explodeAt; }
-  effects.setBomb(b && room?.mode === 'bomb' ? b : null);
+  effects.setBomb(b && isBomb() ? b : null);
 }
 
 // ---------- 爆破模式：埋彈 / 拆彈（按住） ----------
 function siteHere(x, z) { return (curMap.sites || []).find((s) => x >= s.x1 && x <= s.x2 && z >= s.z1 && z <= s.z2) || null; }
 function canAct() {
   const b = room?.bomb;
-  if (room?.mode !== 'bomb' || room.phase !== 'live' || !me.alive || !b || frozen()) return null;
+  if (!isBomb() || room.phase !== 'live' || !me.alive || !b || frozen()) return null;
   if (me.team === room.attackTeam && b.st === 'carried' && b.carrier === me.id && siteHere(me.x, me.z)) return 'plant';
   if (me.team !== room.attackTeam && b.st === 'planted' && Math.hypot(b.x - me.x, b.z - me.z) <= 1.7 && Math.abs(b.y - me.y) < 1.5) return 'defuse';
   return null;
@@ -349,7 +353,7 @@ function canAct() {
 function startAct() {
   const kind = canAct();
   if (!kind || me.acting) return;
-  me.acting = { kind, at: performance.now(), ms: kind === 'plant' ? 3000 : 6000 };
+  me.acting = { kind, at: performance.now(), ms: kind === 'plant' ? 3000 : isComp() && me.dk ? WPN.ECON.kit.ms : 6000 }; // 有拆彈器拆比較快
   me.vx = me.vz = 0;
   firing = false;
   send({ t: 'act', on: true });
@@ -575,7 +579,7 @@ function aimSens() {
   return (1 + (settings.adsSens / w.ads.zoom - 1) * me.adsK) * stun;
 }
 // 爆破模式：我這邊是進攻（1，用南邊出生區）還是防守（0）
-function mySide() { return room?.mode === 'bomb' ? (me.team === room.attackTeam ? 1 : 0) : me.team; }
+function mySide() { return isBomb() ? (me.team === room.attackTeam ? 1 : 0) : me.team; }
 
 // ---------- 爆破模式的畫面：攻守身份、炸彈在哪、埋彈／拆彈進度 ----------
 let siteMarks = [], bombMark = null, actSoundAt = 0;
@@ -597,7 +601,7 @@ function setupBombMarks() {
   for (const m of siteMarks) scene.remove(m);
   siteMarks = [];
   if (bombMark) { scene.remove(bombMark); bombMark = null; }
-  if (!curMap.sites || room?.mode !== 'bomb') return;
+  if (!curMap.sites || !isBomb()) return;
   for (const st of curMap.sites) {
     const sp = textSprite(st.id, '#ffbe0b', 2.2);
     sp.position.set(st.c[0], 7.5, st.c[1]);
@@ -609,7 +613,7 @@ function setupBombMarks() {
   scene.add(bombMark);
 }
 function updateBombHud(now) {
-  const bomb = room?.mode === 'bomb';
+  const bomb = isBomb();
   $('bombInfo').classList.toggle('hidden', !bomb);
   if (!bomb) { $('btnAct').classList.add('hidden'); $('actBar').classList.add('hidden'); return; }
   const b = room.bomb, att = me.team === room.attackTeam;
@@ -690,8 +694,10 @@ function updateAmmo() {
   slotList().forEach((slot, i) => {
     const d = document.createElement('div');
     const nade = slot.startsWith('throw');
+    const sw = WEAPONS[me.kit[slot]];
+    if (!sw) { if (isComp()) { d.className = 'ws used'; d.textContent = nade ? `${slot === 'throw1' ? 4 : ''} —` : `${i + 1} —`; box.append(d); } return; }
     d.className = 'ws' + (slot === me.weapon ? ' on' : '') + (nade && !slotUsable(slot) ? ' used' : '');
-    d.textContent = nade ? `${slot === 'throw1' ? 4 : ''} ${WEAPONS[me.kit[slot]].icon}${WEAPONS[me.kit[slot]].short}` : `${i + 1} ${WEAPONS[me.kit[slot]].short}`;
+    d.textContent = nade ? `${slot === 'throw1' ? 4 : ''} ${sw.icon}${sw.short}` : `${i + 1} ${sw.short}`;
     box.append(d);
   });
   updateSwapButton();
@@ -884,7 +890,8 @@ function teamTable(team, players) {
   h.textContent = `${MAP.teams[team].name}（${players.length}）`;
   const table = document.createElement('table');
   const head = document.createElement('tr');
-  for (const t of ['玩家', '擊殺', '死亡']) { const th = document.createElement('th'); th.textContent = t; head.append(th); }
+  const money = isComp() && playing && team === me.team; // 爆破競賽：看得到隊友的錢
+  for (const t of money ? ['玩家', '擊殺', '死亡', '💰', '裝備'] : ['玩家', '擊殺', '死亡']) { const th = document.createElement('th'); th.textContent = t; head.append(th); }
   table.append(head);
   players.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
   for (const p of players) {
@@ -898,6 +905,13 @@ function teamTable(team, players) {
     const td2 = document.createElement('td'); td2.textContent = p.kills;
     const td3 = document.createElement('td'); td3.textContent = p.deaths;
     tr.append(td1, td2, td3);
+    if (money) {
+      const e = teamEcon.get(p.id);
+      const td4 = document.createElement('td'); td4.textContent = e ? fmt$(e.m) : '';
+      const td5 = document.createElement('td'); td5.textContent = e ? [WEAPONS[e.p]?.short || WEAPONS[e.s]?.short || '—', e.a ? ECON.armor[e.a].icon : '', e.k ? '✂' : ''].join(' ') : '';
+      td4.className = 'money';
+      tr.append(td4, td5);
+    }
     table.append(tr);
   }
   wrap.append(h, table);
@@ -1023,6 +1037,7 @@ function onRoom(r) {
   if (r.z) zInfectAt = r.z.started ? 0 : performance.now() + r.z.infectIn;
   views.setTeamColor(sleeveColor()); // 袖子是隊伍色（殭屍綠、英雄金）
   roomDeadline = performance.now() + r.timeLeft;
+  if (r.mode === 'comp') buyEnd = performance.now() + (r.buyLeft || 0);
   if (r.state === 'results') resultsEnd = roomDeadline;
   if (r.state === 'playing') syncBomb();
   $('count').textContent = `房號 ${r.code}`;
@@ -1058,7 +1073,7 @@ function enterMatch() {
   if (IS_TOUCH) $('touch').classList.remove('hidden');
   $('killfeed').replaceChildren();
   kitOpen = false;
-  applyKit(activeKit());
+  applyKit(isComp() ? { secondary: 'pistol', melee: activeKit().melee } : activeKit()); // 爆破競賽：一開始只有手槍和刀
   send({ t: 'loadout', l: activeKit() });
   // 地圖畫好之後告訴伺服器「我載入完成了」
   requestAnimationFrame(() => requestAnimationFrame(() => send({ t: 'ready' })));
@@ -1086,6 +1101,8 @@ function exitMatch() {
   actors.clear();
   me.acting = null;
   setPickups([]);
+  setDrops([]); closeBuy(false); teamEcon.clear(); reqs.clear(); myReq = null; me.armor = null; me.money = 0; renderReqs();
+  for (const id of ['econ', 'teamEcon', 'armorBox', 'pickPrompt', 'btnPick', 'btnDrop']) $(id).classList.add('hidden');
   me.role = null; me.reserve = null; me.maxHp = 100; zInfectAt = 0;
   $('zbar').classList.add('hidden');
   playing = false;
@@ -1101,6 +1118,382 @@ function exitMatch() {
   title.visible = true;
   showTitle('', room ? 'scrRoom' : 'scrLobby');
   if (room) renderRoom(room);
+}
+
+// ======================================================================
+// 爆破競賽：錢、商店、護甲、掉在地上的東西、撿起／丟掉、請隊友幫忙買
+// ======================================================================
+const ECON = WPN.ECON;
+const teamEcon = new Map(); // id -> { m, p, s, a, k, t1, t2 }（隊友的錢和裝備）
+const reqs = new Map(); // 隊友的請求：id -> 武器
+let buyOpen = false, buyTab = 'primary', buyEnd = 0, myReq = null, roundBuys = [], lastBuys = [];
+try { lastBuys = JSON.parse(localStorage.getItem('ba-lastbuy') || '[]'); } catch {}
+const pendingBuy = new Set();
+const fmt$ = (n) => '$' + Math.round(n || 0).toLocaleString('en-US');
+function itemInfo(id) {
+  if (ECON.armor[id]) return ECON.armor[id];
+  if (id === 'kit') return ECON.kit;
+  return WEAPONS[id];
+}
+// 掉落物的顏色：主武器白、手槍灰藍、投擲物各自的顏色、拆彈器藍
+const DROP_COLORS = { primary: '#ffffff', secondary: '#9fc3e6', flash: '#ffe14d', smoke: '#cfd6de', frag: '#7cd35a', molotov: '#ff8a3d', stun: '#c08bff', decoy: '#e8c25a', kit: '#3d9bff' };
+function dropColor(id) {
+  const w = WEAPONS[id];
+  if (id === 'kit') return DROP_COLORS.kit;
+  if (w?.nade) return DROP_COLORS[id] || '#ffffff';
+  return w?.slot === 'secondary' ? DROP_COLORS.secondary : DROP_COLORS.primary;
+}
+// 現在能不能買（跟伺服器同樣的規則：準備時間，或開打後 15 秒內待在出生區）
+function buyWindow(now = performance.now()) {
+  return isComp() && playing && room?.state === 'playing' && (room.phase === 'freeze' || (room.phase === 'live' && now < buyEnd));
+}
+function canBuyNow(now = performance.now()) {
+  if (!buyWindow(now) || !me.alive) return false;
+  return room.phase === 'freeze' || MAP.inSpawn(curMap, mySide(), me.x, me.z);
+}
+// 這件東西現在能不能買：回傳 { ok, own, why }
+function buyState(id) {
+  const info = itemInfo(id), price = WPN.priceOf(id);
+  if (id === 'kit') {
+    if (me.team === room?.attackTeam) return { no: true, why: '只有防守方能買' };
+    if (me.dk) return { own: true };
+  } else if (ECON.armor[id]) {
+    if (me.armor && me.armor.k === id && me.armor.v >= me.armor.max) return { own: true };
+  } else if (info.nade) {
+    if (me.kit.throw1 === id || me.kit.throw2 === id) return { own: true };
+    if (me.kit.throw1 && me.kit.throw2) return { no: true, why: '投擲物最多兩顆' };
+  } else if (me.kit[info.slot] === id) return { own: true };
+  return { ok: me.money >= price, poor: me.money < price };
+}
+function openBuy() {
+  if (!canBuyNow()) { if (buyWindow()) toast(me.alive ? '離開出生區就不能買了' : '死掉的時候不能買'); return; }
+  buyOpen = true;
+  document.body.classList.add('buying');
+  firing = false;
+  if (document.pointerLockElement) document.exitPointerLock();
+  renderBuy();
+  $('buyMenu').classList.remove('hidden');
+  uiClick();
+}
+function closeBuy(relock = true) {
+  if (!buyOpen) return;
+  buyOpen = false;
+  document.body.classList.remove('buying');
+  $('buyMenu').classList.add('hidden');
+  if (relock && playing && !IS_TOUCH && $('results').classList.contains('hidden')) lockPointer();
+}
+function sendBuy(id) {
+  pendingBuy.add(id);
+  send({ t: 'buy', w: id });
+}
+function renderBuy() {
+  if (!buyOpen) return;
+  $('bmMoney').textContent = fmt$(me.money);
+  for (const b of $('bmTabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.tab === buyTab);
+  const grid = $('bmGrid');
+  grid.replaceChildren();
+  for (const id of WPN.SHOP[buyTab]) {
+    if (id === 'kit' && me.team === room?.attackTeam) continue;
+    const info = itemInfo(id), st = buyState(id), price = WPN.priceOf(id);
+    const el = document.createElement('div');
+    el.className = 'bm-item' + (st.own ? ' own' : st.no ? ' no' : st.poor ? ' poor' : '');
+    const reward = WEAPONS[id] && !WEAPONS[id].nade ? `擊殺 +${fmt$(WPN.rewardOf(id))}` : '';
+    el.innerHTML = '<b></b><span class="bm-p"></span><span class="bm-r"></span><span class="bm-d"></span>';
+    el.querySelector('b').textContent = `${info.icon} ${info.name}`;
+    el.querySelector('.bm-p').textContent = price ? fmt$(price) : '免費';
+    el.querySelector('.bm-r').textContent = reward;
+    el.querySelector('.bm-d').textContent = st.why || (ECON.armor[id] || id === 'kit' ? info.desc : info.nade ? '' : '');
+    if (st.poor && !st.own && !st.no) {
+      const ask = document.createElement('button');
+      ask.className = 'bm-ask';
+      ask.textContent = myReq === id ? '已請求…' : '🙏 請隊友幫買';
+      ask.addEventListener('click', (e) => { e.stopPropagation(); askFor(id); });
+      el.append(ask);
+    }
+    el.addEventListener('click', () => {
+      if (st.own || st.no) return;
+      if (st.poor) { toast('錢不夠，可以請隊友幫忙買 🙏'); return; }
+      sendBuy(id);
+    });
+    grid.append(el);
+  }
+  $('bmRebuy').disabled = !lastBuys.length;
+  $('bmRebuy').title = lastBuys.map((id) => itemInfo(id)?.name).join('、');
+  const rq = $('bmReq');
+  rq.replaceChildren();
+  if (myReq) {
+    rq.append(`🙏 已請求 ${itemInfo(myReq).name}`);
+    const c = document.createElement('button');
+    c.textContent = '取消';
+    c.addEventListener('click', () => askFor(null));
+    rq.append(c);
+  }
+  $('bmHint').textContent = IS_TOUCH ? '' : '1~4 換分頁 · B 關閉';
+}
+function askFor(id) {
+  myReq = id;
+  send({ t: 'req', w: id });
+  if (id) toast(`🙏 已請隊友幫你買 ${itemInfo(id).name}`);
+  uiClick();
+  renderBuy();
+}
+function rebuy() {
+  // 上回合買過的東西：照順序再買一次（已經有的跳過）
+  let money = me.money;
+  for (const id of lastBuys) {
+    const st = buyState(id);
+    if (st.own || st.no || WPN.priceOf(id) > money) continue;
+    money -= WPN.priceOf(id);
+    sendBuy(id);
+  }
+  uiClick();
+}
+$('bmClose').addEventListener('click', (e) => { e.stopPropagation(); closeBuy(); });
+$('bmRebuy').addEventListener('click', (e) => { e.stopPropagation(); rebuy(); });
+for (const b of $('bmTabs').querySelectorAll('button')) b.addEventListener('click', (e) => { e.stopPropagation(); buyTab = b.dataset.tab; uiClick(); renderBuy(); });
+// 收入明細：左下角一行一行跳出來
+function cashLine(text, cls = '') {
+  const d = document.createElement('div');
+  d.textContent = text;
+  if (cls) d.className = cls;
+  const box = $('cashFeed');
+  box.append(d);
+  while (box.children.length > 5) box.firstChild.remove();
+  setTimeout(() => d.classList.add('out'), 3200);
+  setTimeout(() => d.remove(), 3900);
+}
+function updateMoney() {
+  $('money').textContent = fmt$(me.money);
+  if (buyOpen) renderBuy();
+}
+function updateArmor() {
+  const a = me.armor, show = isComp() && playing && !!a && !specActive;
+  $('armorBox').classList.toggle('hidden', !show);
+  if (!show) return;
+  const info = ECON.armor[a.k];
+  $('arIcon').textContent = info.icon;
+  $('artext').textContent = a.v;
+  $('arfill').style.width = Math.max(0, Math.min(100, a.v / a.max * 100)) + '%';
+  $('armorBox').classList.toggle('regen', a.k === 'regen');
+  $('armorBox').classList.toggle('empty', a.v <= 0);
+}
+// 伺服器送來身上的東西（買了、撿了、丟了、回合開始）
+function applyInv(m) {
+  const old = me.kit;
+  const kit = WPN.cleanInv(m.kit, m.kit.melee);
+  me.kit = kit;
+  for (const slot of WPN.HAND_SLOTS) {
+    const w = WEAPONS[kit[slot]];
+    if (!w) { delete me.ammoBy[slot]; continue; }
+    // 這格換了一把新的槍：子彈照伺服器的（撿來的槍可能沒滿）
+    if (old[slot] !== kit[slot] || me.ammoBy[slot] === undefined) me.ammoBy[slot] = m.ammo?.[slot] ?? w.mag;
+  }
+  for (const s of ['throw1', 'throw2']) me.nadesLeft[s] = kit[s] ? Math.max(old[s] === kit[s] ? me.nadesLeft[s] : 1, 0) : 0;
+  me.money = m.money;
+  me.armor = m.armor;
+  me.dk = !!m.dk;
+  // 手上那格被換掉、空了，或伺服器幫你換到新買的槍：跟著伺服器
+  const got = m.got && (WEAPONS[m.got]?.slot || null);
+  if (m.w && m.w !== me.weapon && (!kit[me.weapon] || (got && got === m.w))) {
+    me.weapon = m.w;
+    me.reloadEnd = 0; me.heavyAt = 0; me.adsToggled = false;
+    me.drawEnd = performance.now() + DRAW_MS;
+    showWeapon(me.id, heldId());
+  } else if (m.w && m.w !== me.weapon && me.alive) send({ t: 'weapon', s: me.weapon });
+  else if (old[me.weapon] !== kit[me.weapon]) { me.reloadEnd = 0; me.drawEnd = performance.now() + DRAW_MS; showWeapon(me.id, heldId()); }
+  if (m.got) {
+    const info = itemInfo(m.got);
+    if (pendingBuy.has(m.got)) {
+      pendingBuy.delete(m.got);
+      roundBuys.push(m.got);
+      const price = WPN.priceOf(m.got);
+      if (price) cashLine(`-${fmt$(price)} ${info.name}`, 'spend');
+      sfx('pickup', 0.45);
+      if (myReq === m.got) myReq = null;
+    } else if (info) { toast(`🖐 撿起 ${info.icon} ${info.name}`); sfx('pickup', 0.5); }
+  }
+  updateAmmo(); updateMoney(); updateArmor();
+}
+// 隊友的經濟（準備時間在左邊顯示，計分板也看得到）
+function renderTeamEcon(now) {
+  const show = buyWindow(now) && !buyOpen && teamEcon.size > 0;
+  $('teamEcon').classList.toggle('hidden', !show);
+  if (!show || now - (renderTeamEcon.at || 0) < 250) return;
+  renderTeamEcon.at = now;
+  const box = $('teamEcon');
+  box.replaceChildren();
+  for (const [id, e] of teamEcon) {
+    const row = document.createElement('div');
+    row.className = 'te-row' + (id === me.id ? ' me' : '') + ((id === me.id ? me.alive : remotes.get(id)?.alive) ? '' : ' dead');
+    row.style.setProperty('--tc', colorOf(id));
+    const n = document.createElement('span'); n.className = 'te-name'; n.textContent = nameOf(id);
+    const mm = document.createElement('span'); mm.className = 'te-m'; mm.textContent = fmt$(e.m);
+    const g = document.createElement('span'); g.className = 'te-g';
+    const gun = WEAPONS[e.p] || WEAPONS[e.s];
+    const parts = [gun ? gun.short : '—'];
+    if (e.a) parts.push(ECON.armor[e.a].icon);
+    if (e.k) parts.push('✂');
+    for (const t of [e.t1, e.t2]) if (t) parts.push(WEAPONS[t].icon);
+    g.textContent = parts.join(' ');
+    if (!e.p) g.classList.add('none');
+    row.append(n, mm, g);
+    box.append(row);
+  }
+}
+// 隊友的請求：畫面上方跳出卡片，可以按「幫他買」（電腦按 Y）
+function renderReqs() {
+  const box = $('reqList');
+  box.replaceChildren();
+  if (!buyWindow() || !me.alive) return;
+  for (const [id, w] of reqs) {
+    if (id === me.id) continue;
+    const info = itemInfo(w), price = WPN.priceOf(w);
+    const d = document.createElement('div');
+    d.className = 'rq';
+    d.innerHTML = '<span></span><button></button>';
+    d.querySelector('span').textContent = `🙏 ${nameOf(id)} 想要 ${info.icon} ${info.name}`;
+    const b = d.querySelector('button');
+    b.textContent = `${IS_TOUCH ? '' : '[Y] '}幫他買 ${fmt$(price)}`;
+    b.disabled = me.money < price;
+    b.addEventListener('click', (e) => { e.stopPropagation(); fund(id); });
+    box.append(d);
+  }
+}
+function fund(id) {
+  if (id === undefined) id = [...reqs.keys()].find((x) => x !== me.id);
+  if (!id) return;
+  const w = reqs.get(id);
+  if (!w) return;
+  if (me.money < WPN.priceOf(w)) { toast('你的錢不夠'); return; }
+  send({ t: 'fund', id });
+  uiClick();
+}
+// ---- 地上的東西 ----
+const drops = new Map(); // id -> { group, label, ring, w, x, y, z, fly }
+const ringGeo = new THREE.RingGeometry(0.28, 0.42, 24);
+function dropLabel(id) {
+  const info = itemInfo(id);
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.font = '800 34px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const text = `${info.icon} ${info.short || info.name}`;
+  const w = Math.min(250, g.measureText(text).width + 24);
+  g.fillStyle = 'rgba(7,4,24,0.72)';
+  g.beginPath(); g.roundRect?.(128 - w / 2, 8, w, 48, 10); if (!g.roundRect) g.rect(128 - w / 2, 8, w, 48); g.fill();
+  g.strokeStyle = dropColor(id); g.lineWidth = 3; g.stroke();
+  g.fillStyle = dropColor(id); g.fillText(text, 128, 34);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false }));
+  sp.scale.set(0.9, 0.225, 1);
+  sp.renderOrder = 14;
+  return sp;
+}
+function setDrops(list, thrown) {
+  const ids = new Set(list.map((d) => d[0]));
+  for (const [id, d] of drops) if (!ids.has(id)) { scene.remove(d.group); d.label.material.map.dispose(); d.label.material.dispose(); d.ring.material.dispose(); drops.delete(id); }
+  for (const [id, w, x, y, z] of list) {
+    if (drops.has(id)) continue;
+    const g = new THREE.Group();
+    const model = makeDropModel(w);
+    model.position.y = 0.08;
+    model.rotation.y = Math.random() * Math.PI * 2;
+    const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color(dropColor(w)), transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.02;
+    const label = dropLabel(w);
+    label.position.y = 0.62;
+    g.add(model, ring, label);
+    g.position.set(x, y, z);
+    scene.add(g);
+    const d = { group: g, label, ring, w, x, y, z, model };
+    if (thrown && thrown.id === id) d.fly = { o: thrown.o, t0: performance.now() };
+    drops.set(id, d);
+  }
+}
+function updateDrops(now) {
+  for (const d of drops.values()) {
+    if (d.fly) {
+      // 丟出去：從手上畫一個小拋物線飛到地上
+      const k = Math.min(1, (now - d.fly.t0) / 380);
+      const [ox, oy, oz] = d.fly.o;
+      d.group.position.set(ox + (d.x - ox) * k, oy + (d.y - oy) * k + Math.sin(k * Math.PI) * 0.5, oz + (d.z - oz) * k);
+      d.model.rotation.y += 0.25;
+      if (k >= 1) { d.fly = null; d.group.position.set(d.x, d.y, d.z); }
+    }
+    // 名字：近的才看得到，越遠越淡
+    const dist = Math.hypot(d.x - camera.position.x, d.z - camera.position.z);
+    const op = Math.max(0, Math.min(1, 1 - (dist - 7) / 7));
+    d.label.visible = op > 0.02;
+    d.label.material.opacity = op;
+    d.ring.material.opacity = 0.25 + 0.2 * Math.sin(now * 0.004);
+  }
+}
+// 準心附近、腳邊最近的那件東西，以及撿不撿得起
+let pickTarget = null;
+function pickCheck(w) {
+  const info = itemInfo(w), W = WEAPONS[w];
+  if (w === 'kit') return me.team === room?.attackTeam ? { no: '只有防守方能撿拆彈器' } : me.dk ? { no: '你已經有拆彈器了' } : { text: '' };
+  if (W?.nade) {
+    if (me.kit.throw1 === w || me.kit.throw2 === w) return { no: `已經有${info.name}了（同一種只能一顆）` };
+    if (me.kit.throw1 && me.kit.throw2) return { no: '投擲物最多兩顆' };
+    return { text: '' };
+  }
+  const cur = me.kit[W.slot];
+  return { text: cur ? `（換掉 ${WEAPONS[cur].name}）` : '' };
+}
+function updatePickPrompt() {
+  pickTarget = null;
+  const el = $('pickPrompt');
+  if (!isComp() || !me.alive || !playing || room?.phase === 'post' || buyOpen) { el.classList.add('hidden'); $('btnPick').classList.add('hidden'); return; }
+  camera.getWorldDirection(camDir);
+  let best = null, bs = Infinity;
+  for (const [id, d] of drops) {
+    if (d.fly) continue;
+    const dx = d.x - me.x, dz = d.z - me.z, dist = Math.hypot(dx, dz);
+    if (dist > 2.2 || d.y - me.y > 1.6 || me.y - d.y > 1.2) continue;
+    const facing = dist < 0.01 ? 1 : (dx * camDir.x + dz * camDir.z) / (dist * (Math.hypot(camDir.x, camDir.z) || 1));
+    const score = dist - facing * 1.2;
+    if (score < bs) { bs = score; best = [id, d]; }
+  }
+  if (!best) { el.classList.add('hidden'); $('btnPick').classList.add('hidden'); return; }
+  const [id, d] = best;
+  const chk = pickCheck(d.w), info = itemInfo(d.w);
+  pickTarget = chk.no ? null : id;
+  const key = IS_TOUCH ? '' : `[${keyLabel('use')}] `;
+  const html = `<span class="ic" style="background:${dropColor(d.w)}"></span>` + (chk.no ? `${info.icon} ${info.name}：${chk.no}` : `${key}撿起 ${info.icon} ${info.name}${chk.text}`);
+  if (el.innerHTML !== html) el.innerHTML = html;
+  el.classList.toggle('no', !!chk.no);
+  el.classList.remove('hidden');
+  $('btnPick').classList.toggle('hidden', !IS_TOUCH || !pickTarget);
+}
+function keyLabel(a) { const c = settings.keys[a] || ''; return c.replace(/^Key/, '').replace(/^Digit/, ''); }
+function doPick() {
+  if (!pickTarget) return false;
+  send({ t: 'pick', id: pickTarget });
+  return true;
+}
+function doDrop() {
+  if (!isComp() || !me.alive || me.acting) return;
+  const slot = me.weapon;
+  if (slot === 'melee' || !me.kit[slot] || (slot.startsWith('throw') && !(me.nadesLeft[slot] > 0))) { toast('刀不能丟'); return; }
+  send({ t: 'drop' });
+  sfx('flip', 0.35);
+}
+function updateCompHud(now) {
+  const on = isComp() && playing;
+  $('econ').classList.toggle('hidden', !on || !!specActive);
+  if (!on) { $('teamEcon').classList.add('hidden'); $('btnDrop').classList.add('hidden'); return; }
+  if (buyOpen) {
+    if (!canBuyNow(now)) { closeBuy(true); toast(buyWindow(now) ? '離開出生區了，不能再買' : '購買時間結束'); }
+    else $('bmTime').textContent = `購買時間 ${Math.max(0, Math.ceil((buyEnd - now) / 1000))} 秒`;
+  }
+  renderTeamEcon(now);
+  if (now - (updateCompHud.rq || 0) > 300) { updateCompHud.rq = now; renderReqs(); updateArmor(); }
+  updatePickPrompt();
+  const canDrop = IS_TOUCH && me.alive && me.weapon !== 'melee' && !!me.kit[me.weapon] && room.phase !== 'post';
+  $('btnDrop').classList.toggle('hidden', !canDrop);
 }
 
 // ---------- 回合橫幅 / 觀戰 / 結算 ----------
@@ -1287,7 +1680,9 @@ function updateMatchbar(now) {
   $('mbScore1').textContent = score[1];
   const goal = room.mode === 'tdm' ? 0 : room.rules?.rounds || 0;
   $('mbGoal').classList.toggle('hidden', !goal);
-  if (goal) $('mbGoalN').textContent = goal;
+  // 爆破競賽 12:12 之後：要領先 2 回合
+  const ot = isComp() && score[0] >= 12 && score[1] >= 12;
+  if (goal) { $('mbGoalN').textContent = ot ? '+2' : goal; $('mbGoal').querySelector('small').textContent = ot ? '領先' : '先贏'; }
   document.querySelector('.mb-team.t0').classList.toggle('mine', me.team === 0);
   document.querySelector('.mb-team.t1').classList.toggle('mine', me.team === 1);
   if (room.phase === 'loading') {
@@ -1307,7 +1702,7 @@ function updateMatchbar(now) {
     const alive = [0, 0];
     if (me.alive) alive[me.team]++;
     for (const r of remotes.values()) if (r.alive) alive[r.team]++;
-    const pre = room.mode === 'bomb' ? (me.team === room.attackTeam ? '進攻 · ' : '防守 · ') : '';
+    const pre = isBomb() ? (me.team === room.attackTeam ? '進攻 · ' : '防守 · ') : '';
     $('mbSub').textContent = pre + (room.phase === 'freeze' ? `第 ${room.round} 回合 · 準備`
       : room.phase === 'post' ? `第 ${room.round} 回合結束` : `存活 ${alive[0]} vs ${alive[1]}`);
   }
@@ -1356,6 +1751,46 @@ function handle(m) {
       break;
     case 'kit':
       applyKit(m.kit);
+      break;
+    // ---------- 爆破競賽 ----------
+    case 'inv':
+      applyInv(m);
+      break;
+    case 'cash':
+      me.money = m.m;
+      cashLine(`${m.n >= 0 ? '+' : '-'}${fmt$(Math.abs(m.n))} ${m.why}`, m.full ? 'cap' : '');
+      if (m.full) setTimeout(() => cashLine(`錢已經到上限 ${fmt$(ECON.max)}`, 'cap'), 120);
+      if (m.n > 0) beep(1320, 0.05, 0.05, 'triangle');
+      updateMoney();
+      break;
+    case 'econ':
+      teamEcon.clear();
+      for (const [id, mm, pr, se, a, k, t1, t2] of m.list) teamEcon.set(id, { m: mm, p: pr, s: se, a, k, t1, t2 });
+      if (!$('scoreboard').classList.contains('hidden')) renderScores();
+      break;
+    case 'req':
+      if (m.w) reqs.set(m.id, m.w); else reqs.delete(m.id);
+      if (m.id === me.id && !m.w) myReq = null;
+      if (m.w && m.id !== me.id) beep(880, 0.06, 0.06, 'triangle');
+      renderReqs(); renderBuy();
+      break;
+    case 'funded': {
+      reqs.delete(m.id);
+      const info = itemInfo(m.w);
+      if (m.id === me.id) { myReq = null; toast(`🎁 ${nameOf(m.by)} 幫你買了 ${info.icon} ${info.name}`); sfx('pickup', 0.5); }
+      else if (m.by === me.id) { cashLine(`-${fmt$(WPN.priceOf(m.w))} 幫 ${nameOf(m.id)} 買 ${info.name}`, 'spend'); toast(`你幫 ${nameOf(m.id)} 買了 ${info.name}`); }
+      renderReqs(); renderBuy();
+      break;
+    }
+    case 'buyErr':
+      toast(m.msg);
+      pendingBuy.clear();
+      break;
+    case 'drops':
+      setDrops(m.list, m.thrown);
+      break;
+    case 'ar':
+      if (me.armor) { me.armor.v = m.v; updateArmor(); }
       break;
     // ---------- 生化模式 ----------
     case 'zstat': {
@@ -1576,6 +2011,7 @@ function handle(m) {
       break;
     case 'damaged':
       me.hp = m.hp;
+      if (m.ar !== undefined && me.armor) { me.armor.v = m.ar; updateArmor(); }
       updateHp();
       showDamage();
       beep(160, 0.12, 0.15, 'sawtooth');
@@ -1591,6 +2027,7 @@ function handle(m) {
       if (m.victim === me.id) {
         me.alive = false;
         me.hp = 0;
+        if (isComp()) { me.armor = null; me.dk = false; closeBuy(false); updateArmor(); }
         specShown.hp = specShown.ammo = null;
         firing = false;
         me.heavyAt = 0;
@@ -1641,11 +2078,15 @@ function handle(m) {
     }
     case 'round':
       me.rk = 0; me.rh = 0;
+      if (roundBuys.length) { lastBuys = roundBuys; try { localStorage.setItem('ba-lastbuy', JSON.stringify(lastBuys)); } catch {} }
+      roundBuys = []; reqs.clear(); myReq = null; renderReqs();
+      if (m.half) setTimeout(() => banner('🔄 下半場', `交換攻守 · 大家的錢重設成 ${fmt$(ECON.start)}，裝備重新買`, '', 3200), 100);
+      else if (m.ot && m.swap) setTimeout(() => banner('⏱ 延長賽 · 交換攻守', '要領先 2 回合才算贏', 'gold', 3000), 100);
       effects.clear();
       actors.clear();
       me.acting = null;
       if (room && m.attack !== undefined) room.attackTeam = m.attack;
-      if (m.swap) setTimeout(() => banner('🔄 交換攻守', me.team === room?.attackTeam ? '這半場你們是進攻方' : '這半場你們是防守方', '', 2600), 100);
+      if (m.swap && !m.half && !m.ot) setTimeout(() => banner('🔄 交換攻守', me.team === room?.attackTeam ? '這半場你們是進攻方' : '這半場你們是防守方', '', 2600), 100);
       freezeEnd = performance.now() + m.freeze;
       lastCount = 0;
       for (const r of remotes.values()) clearCorpse(r); // 新回合：屍體清掉
@@ -1664,7 +2105,7 @@ function handle(m) {
       // 殘局勝利：大字；不然在橫幅下面顯示自己這回合的擊殺數
       const myClutch = m.clutch && m.clutch.id === me.id;
       if (myClutch) banner('🏆 殘局勝利！', `一個人打贏 1v${m.clutch.vs} · ${tail}`, 'gold', 4000);
-      else banner(big, room?.mode === 'bomb' && why ? `${why} · ${tail}` : tail, cls, 3500);
+      else banner(big, isBomb() && why ? `${why} · ${tail}` : tail, cls, 3500);
       $('bannerStat').textContent = !isZ() && me.rk ? `本回合 ${me.rk} 殺${me.rh ? ` · ${me.rh} 爆頭` : ''}` : '';
       if (myClutch) [523, 659, 784, 1047].forEach((f, i) => beep(f, 0.22, 0.12, 'triangle', i * 0.12));
       actors.clear();
@@ -1700,7 +2141,10 @@ function onInput(code, down) {
     if (curW().nade) { if (down) startNadeHold(true); else releaseNade(); firing = false; }
     else firing = down;
   }
-  if (a === 'use') { if (down) startAct(); else stopAct(); }
+  if (a === 'use') { if (down) { if (canAct()) startAct(); else doPick(); } else stopAct(); } // 爆破競賽：旁邊沒有炸彈可以埋／拆的時候 = 撿東西
+  if (a === 'drop' && down) doDrop();
+  if (a === 'fund' && down) fund();
+  if (buyOpen && down && (a === 'w1' || a === 'w2' || a === 'w3' || a === 'w4')) { buyTab = ['primary', 'secondary', 'throw', 'gear'][Number(a[1]) - 1]; renderBuy(); return true; }
   if (a === 'w4' && down) cycleNade();
   if (a === 'jump' && down) jumpQueued = true;
   if (a === 'reload' && down) startReload();
@@ -1709,7 +2153,7 @@ function onInput(code, down) {
     if (kitPickVisible()) pickKit(i); // 換套裝選單開著：1 / 2 / 3 選套裝
     else switchWeapon(WPN.HAND_SLOTS[i]);
   }
-  if (a === 'kit' && down) toggleKitPick();
+  if (a === 'kit' && down) { if (isComp()) { if (buyOpen) closeBuy(); else openBuy(); } else toggleKitPick(); }
   // 右鍵：拿刀＝重擊，拿槍＝瞄準
   if (a === 'heavy') {
     if (curW().nade) { if (down) startNadeHold(false); else releaseNade(); }
@@ -1728,8 +2172,8 @@ function lockPointer() {
 document.addEventListener('pointerlockchange', () => {
   if (IS_TOUCH || !playing) return;
   const locked = document.pointerLockElement === canvas;
-  if (locked) { $('paused').classList.add('hidden'); $('settings').classList.add('hidden'); }
-  else if ($('settings').classList.contains('hidden') && $('results').classList.contains('hidden') && !replay && room?.state !== 'results') {
+  if (locked) { $('paused').classList.add('hidden'); $('settings').classList.add('hidden'); if (buyOpen) closeBuy(false); }
+  else if (!buyOpen && $('settings').classList.contains('hidden') && $('results').classList.contains('hidden') && !replay && room?.state !== 'results') {
     $('pauseHint').textContent = '遊戲仍在進行，其他人還能打你！';
     $('paused').classList.remove('hidden');
   }
@@ -1814,7 +2258,7 @@ function onTouchStart(e) {
     // 暫停選單或設定開著的時候，讓按鈕和滑桿正常運作
     if (t.target.closest?.('.overlay')) continue;
     if (t.target.closest?.('#scoreboard')) { e.preventDefault(); setScoreboard(false); continue; }
-    if (t.target.closest?.('#kitChip, #kitPick, #results, #replay')) continue; // 讓按鈕正常點
+    if (t.target.closest?.('#kitChip, #kitPick, #results, #replay, #buyMenu, #reqList')) continue; // 讓按鈕正常點
     // 拿投擲物時點「◎ 丟遠／丟近」那行字＝切換丟法（跟按瞄準鈕一樣）
     if (t.target.closest?.('#reloadtext') && curW().nade) { e.preventDefault(); me.nadeNear = !me.nadeNear; if (me.nadeHold) me.nadeHold.far = !me.nadeNear; updateAmmo(); continue; }
     if (t.target.closest?.('#ammo')) { e.preventDefault(); doInspect(); continue; } // 點武器資訊＝檢視武器
@@ -1829,6 +2273,9 @@ function onTouchStart(e) {
       } else if (btn.id === 'btnAct') {
         startAct();
         touches.set(t.identifier, { role: 'act', btn });
+      } else if (btn.id === 'btnPick' || btn.id === 'btnDrop') {
+        if (btn.id === 'btnPick') doPick(); else doDrop();
+        touches.set(t.identifier, { role: 'btn', btn });
       } else if (btn.id === 'btnAim' && curW().nade) {
         // 拿投擲物時，瞄準鈕＝切換丟遠／丟近
         me.nadeNear = !me.nadeNear;
@@ -2129,6 +2576,7 @@ $('layoutReset').addEventListener('click', () => { setSetting('layout', {}); set
 let kitOpen = false, lastCount = 0, kitShownSec = -1;
 function canKit(now = performance.now()) {
   if (!playing || !room || room.state !== 'playing') return false;
+  if (isComp()) return canBuyNow(now) && !buyOpen; // 爆破競賽：這顆按鈕變成「商店」
   if (isZ() && me.role && me.role !== 'human') return false; // 殭屍、英雄不能換套裝
   if (!me.alive || room.phase !== 'live') return true;
   return now < me.kitUntil && !me.firedSince && !me.leftSpawn;
@@ -2163,7 +2611,12 @@ function updateKitUI(now) {
   }
   const showChip = can && !kitOpen;
   $('kitChip').classList.toggle('hidden', !showChip);
-  if (showChip) {
+  if (showChip && isComp()) {
+    const left = Math.max(0, Math.ceil((buyEnd - now) / 1000));
+    const t = `🛒 商店${IS_TOUCH ? '' : ' [' + keyLabel('kit') + ']'}（${left}）`;
+    if ($('kitChip').textContent !== t) $('kitChip').textContent = t;
+    kitShownSec = -2;
+  } else if (showChip) {
     const left = me.alive && room.phase === 'live' ? Math.ceil((me.kitUntil - now) / 1000) : null;
     if (left !== kitShownSec) {
       kitShownSec = left;
@@ -2171,7 +2624,7 @@ function updateKitUI(now) {
     }
   }
 }
-$('kitChip').addEventListener('click', (e) => { e.stopPropagation(); toggleKitPick(); });
+$('kitChip').addEventListener('click', (e) => { e.stopPropagation(); if (isComp()) openBuy(); else toggleKitPick(); });
 document.querySelector('#kitPick .kp-title').addEventListener('click', (e) => { e.stopPropagation(); kitOpen = false; uiClick(); });
 
 // ---------- 手機切換武器鈕 ----------
@@ -2193,6 +2646,7 @@ function openSwapPop() {
   for (const slot of slotList()) {
     if (slot === me.weapon || !slotUsable(slot)) continue;
     const w = WEAPONS[me.kit[slot]];
+    if (!w) continue;
     const o = document.createElement('div');
     o.className = 'swopt';
     o.dataset.slot = slot;
@@ -2339,6 +2793,8 @@ function frame() {
       } else { freezeEnd = 0; banner('開戰！', '', '', 900); beep(1200, 0.2, 0.1, 'sawtooth'); }
     }
     updateKitUI(now);
+    updateCompHud(now);
+    updateDrops(now);
     effects.update(dt, now);
     updatePickups(now);
     updateNadeArc(now);

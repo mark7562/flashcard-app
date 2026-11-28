@@ -6,12 +6,13 @@ import { profile } from './settings.js';
 
 const $ = (id) => document.getElementById(id);
 const TEAMS = window.GAME_MAP.teams;
-const MODE_NAMES = { tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式', zombie: '生化模式', hero: '生化英雄' };
+const MODE_NAMES = { tdm: '團隊死鬥', elim: '回合殲滅', bomb: '爆破模式', comp: '爆破競賽', zombie: '生化模式', hero: '生化英雄' };
 const isZMode = (m) => m === 'zombie' || m === 'hero';
 const MODE_DESC = {
   tdm: '死了 3 秒後重生，先達到目標擊殺數，或時間到時擊殺比較多的隊伍獲勝。',
   elim: '死了要等下一回合才能復活，把對面全部擊倒就贏一回合，先贏到指定回合數的隊伍獲勝。',
   bomb: '一隊進攻、一隊防守，半場交換。進攻方把炸彈埋在 A 或 B 包點並讓它爆炸；防守方阻止或拆彈。死了等下一回合，可以用投擲物。地圖：霓虹地鐵站。',
+  comp: '跟爆破模式一樣，但要用錢買裝備：擊殺、贏回合、埋包拆包都有錢，連輸會有連敗獎金。可以買槍、投擲物、三種護甲和拆彈器；死了身上的東西會掉在地上，大家都能撿。先贏 13 回合獲勝（12:12 之後要領先 2 回合）。地圖：霓虹地鐵站。',
   zombie: '最多 12 人，開局大家都是人類。20 秒後隨機一人變成母體殭屍，被殭屍抓兩下就會被感染。人類撐過 3 分鐘就贏；子彈有限，撿彈藥箱補充。殭屍撿生化箱回血升級。',
   hero: '跟生化模式一樣，但人類剩下最後 1～2 個時會變成英雄：拿發光長刀、600 血、最高傷害加成，被英雄砍死的殭屍不能復活。',
 };
@@ -30,6 +31,7 @@ export function rulesText(r) {
   return `${mapName(r.rules.map)} · ` + (r.mode === 'tdm'
     ? `${MODE_NAMES.tdm} · 目標 ${r.rules.scoreLimit} 殺 · ${r.rules.timeLimit} 分鐘`
     : isZMode(r.mode) ? `${MODE_NAMES[r.mode]} · 共 ${r.rules.rounds} 回合`
+    : r.mode === 'comp' ? `${MODE_NAMES.comp} · 先贏 13 回合 · 有經濟系統`
     : `${MODE_NAMES[r.mode]} · 先贏 ${r.rules.rounds} 回合`);
 }
 
@@ -171,7 +173,8 @@ export function renderRoom(r) {
   hr.classList.toggle('hidden', !isHost || r.state !== 'lobby');
   hr.classList.toggle('tdm', r.mode === 'tdm');
   hr.classList.toggle('elim', r.mode !== 'tdm');
-  hr.classList.toggle('bomb', r.mode === 'bomb');
+  hr.classList.toggle('bomb', r.mode === 'bomb' || r.mode === 'comp');
+  hr.classList.toggle('comp', r.mode === 'comp');
   $('roundsLabel').textContent = zm ? '回合數' : '勝利回合';
   $('fillBots').textContent = zm ? '🤖 自動補滿 12 人' : '🤖 自動補滿兩隊';
   const mark = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === String(v)); };

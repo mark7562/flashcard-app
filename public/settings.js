@@ -5,6 +5,7 @@ export const DEFAULT_KEYS = {
   forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
   jump: 'Space', reload: 'KeyR', fire: 'Mouse0', score: 'Tab',
   w1: 'Digit1', w2: 'Digit2', w3: 'Digit3', w4: 'Digit4', kit: 'KeyB', heavy: 'Mouse2', inspect: 'KeyF', use: 'KeyE',
+  drop: 'KeyG', fund: 'KeyY', // 爆破競賽：丟槍、幫隊友買
 };
 
 const DEFAULTS = {

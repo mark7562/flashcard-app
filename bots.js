@@ -379,6 +379,7 @@ function randomPoint(nav, biasTeam = -1) {
 // ---------- 機器人本體 ----------
 function makeBrain(level) {
   return {
+    pers: makePersonality(level),
     level, cfg: LEVELS[level], state: 'patrol', path: null, pathIdx: 0, goal: null,
     target: 0, reactAt: 0, aimOff: [0, 0], head: false, burstLeft: 0, nextShotAt: 0, sprayN: 0,
     strafeDir: 0, strafeUntil: 0, lastSeen: null, lastSeenAt: 0, holdUntil: 0, retreated: false,
@@ -468,7 +469,7 @@ function hear(p, shooter, now, range = Infinity) {
   if (b.state === 'investigate' && now - b.heardAt < 1500) return; // 不要每一發槍聲都重新找路
   const d = Math.hypot(shooter.x - p.x, shooter.z - p.z);
   if (d > range) return; // 消音槍：太遠聽不到
-  if (p.room.mode === 'bomb') {
+  if (WPN.isBombMode(p.room.mode)) {
     // 爆破模式：不離開崗位去找人；聽到包點附近有槍聲就通知隊友轉點，很近的話轉頭看
     if (shooter.team !== p.team) bombAlert(p.room, p, shooter, now);
     if (d < Math.min(c.hear || 15, 18)) { b.alert = [shooter.x, shooter.z]; b.heardAt = now; }
@@ -497,7 +498,7 @@ function damaged(p, attacker, now) {
   if (!p.alive) return;
   b.hurtAt = now;
   b.hurtFrom = [attacker.x, attacker.z];
-  if (p.room?.mode === 'bomb') {
+  if (WPN.isBombMode(p.room?.mode)) {
     teamSaw(p.room, p.team, attacker, now); // 隊友也知道那邊有人
     if (b.state !== 'engage') { b.alert = [attacker.x, attacker.z]; b.heardAt = now; }
     return;
@@ -636,6 +637,7 @@ function jump(b, now, zombie = false) {
 function think(p, r, now, dt, api) {
   const b = p.bot, c = b.cfg;
   if (!p.alive) { if (b.state !== 'patrol' || b.path) resetBrain(b); return; }
+  if (r.mode === 'comp') compThink(p, r, now, api);
   if (r.phase !== 'live') { record(p, now); return; }
   const map = MAP.get(r.rules.map), nav = navFor(map);
   // 生化模式：殭屍、英雄都是近戰追人，用另一套比較簡單的腦
@@ -647,7 +649,7 @@ function think(p, r, now, dt, api) {
 
   // ---- 視覺：找看得到的最近敵人 ----
   let seen = null, bestD = Infinity;
-  const longGun = !!WEAPONS[p.loadout.primary].ads?.scope; // 拿狙擊槍看得比較遠
+  const longGun = !!WEAPONS[p.loadout.primary]?.ads?.scope; // 拿狙擊槍看得比較遠
   const blind = (b.blindUntil || 0) > now; // 被閃光彈閃到：什麼都看不到
   for (const q of r.players.values()) {
     if (blind) break;
@@ -666,7 +668,7 @@ function think(p, r, now, dt, api) {
     if (q && q.alive) mem = { id: q.id, x: b.lastSeen[0], z: b.lastSeen[1], y: b.lastSeen[2] };
   }
   // 聽腳步聲：附近（15 公尺內）有敵人在跑，就轉頭看那邊（爆破模式守點用）
-  if (!seen && r.mode === 'bomb' && b.state !== 'engage' && now - b.heardAt > 1200) {
+  if (!seen && WPN.isBombMode(r.mode) && b.state !== 'engage' && now - b.heardAt > 1200) {
     for (const q of r.players.values()) {
       if (q.team === p.team || !q.alive) continue;
       const d = Math.hypot(q.x - p.x, q.z - p.z);
@@ -698,7 +700,7 @@ function think(p, r, now, dt, api) {
       if (!again) b.knife = Math.random() < c.knife;
     }
     b.lastTarget = seen.id;
-    if (r.mode === 'bomb') bombAlert(r, p, seen, now);
+    if (WPN.isBombMode(r.mode)) bombAlert(r, p, seen, now);
     b.lastSeen = [seen.x, seen.z, seen.y];
     b.lastSeenAt = now;
     if (b.state !== 'retreat') b.state = 'engage';
@@ -707,7 +709,7 @@ function think(p, r, now, dt, api) {
   } else if (b.state === 'engage') {
     b.target = 0;
     b.guard = null;
-    if (r.mode === 'bomb') { b.state = 'obj'; b.path = null; b.alert = b.lastSeen; b.heardAt = now; } // 爆破模式：回到自己的任務，不追出去
+    if (WPN.isBombMode(r.mode)) { b.state = 'obj'; b.path = null; b.alert = b.lastSeen; b.heardAt = now; } // 爆破模式：回到自己的任務，不追出去
     else { b.state = 'search'; setGoal(p, b, nav, b.lastSeen[0], b.lastSeen[1]); }
   }
 
@@ -724,7 +726,7 @@ function think(p, r, now, dt, api) {
 
   // ---- 選武器（跟玩家一樣：主武器、手槍、刀） ----
   let want = p.weapon;
-  const shotgunner = !!WEAPONS[p.loadout.primary].pellets;
+  const shotgunner = !!WEAPONS[p.loadout.primary]?.pellets;
   const tgt = seen || mem;
   const tgtD = tgt ? Math.hypot(tgt.x - p.x, tgt.z - p.z) : Infinity;
   if (seen && shotgunner && c.pistol && p.weapon !== 'melee' && !(b.knife && bestD < 3)) {
@@ -746,6 +748,8 @@ function think(p, r, now, dt, api) {
     const has = (sl) => (p.ammoBy[sl] || 0) > 0 || (p.reserve[sl] || 0) > 0;
     if (want !== 'melee' && !has(want)) want = has('primary') ? 'primary' : has('secondary') ? 'secondary' : 'melee';
   }
+  // 爆破競賽：那一格是空的（沒買、被撿走）就拿身上有的
+  if (!p.loadout[want]) want = p.loadout.primary ? 'primary' : p.loadout.secondary ? 'secondary' : 'melee';
   if (want !== p.weapon) api.switchTo(p, want);
   const W = WEAPONS[p.loadout[p.weapon]];
   const ammo = W.mag ? p.ammoBy[p.weapon] : 0;
@@ -755,8 +759,8 @@ function think(p, r, now, dt, api) {
   if (W.mag && !p.reloadUntil && (ammo <= 0 || (!seen && b.state === 'patrol' && ammo < W.mag * 0.5))) api.reload(p);
 
   // 爆破模式：埋彈／拆彈到一半看到敵人或被打 → 停下來先打（快完成了、或不做就輸了才硬撐）
-  if (r.mode === 'bomb' && p.actKind && (b.state === 'engage' || now - (b.hurtAt || 0) < 400)) {
-    const total = p.actKind === 'plant' ? 3000 : 6000; // 跟伺服器的埋彈、拆彈時間一樣
+  if (WPN.isBombMode(r.mode) && p.actKind && (b.state === 'engage' || now - (b.hurtAt || 0) < 400)) {
+    const total = p.actMs || (p.actKind === 'plant' ? 3000 : 6000); // 跟伺服器的埋彈、拆彈時間一樣（有拆彈器比較快）
     const remain = total - (now - (p.actAt || now));
     const bombLeft = r.bomb?.explodeAt ? r.bomb.explodeAt - now : Infinity;
     const commit = p.actKind === 'plant' ? remain < 700 || r.phaseUntil - now < 15000 : remain < 1500 || bombLeft < remain + 2500;
@@ -843,7 +847,7 @@ function think(p, r, now, dt, api) {
     }
     if (c.strafe > 0 && now >= b.strafeUntil) {
       // 爆破模式守點的人：站穩守住角度，比較少左右閃
-      const holding = r.mode === 'bomb' && p.team !== r.attackTeam && (!r.bomb || r.bomb.state !== 'planted');
+      const holding = WPN.isBombMode(r.mode) && p.team !== r.attackTeam && (!r.bomb || r.bomb.state !== 'planted');
       b.strafeDir = Math.random() < c.strafe * (holding ? 0.3 : 1) ? (Math.random() < 0.5 ? -1 : 1) : 0;
       b.strafeUntil = now + rand(500, 1300);
       if (b.strafeDir && Math.random() < c.jumpy) wantJump = true; // 偶爾邊閃邊跳
@@ -881,7 +885,7 @@ function think(p, r, now, dt, api) {
         }
       }
       if (b.lastSeen) lookYaw = yawTo(b.lastSeen[0] - p.x, b.lastSeen[1] - p.z);
-    } else if (r.mode === 'bomb' && r.bomb !== undefined && (b.state === 'patrol' || b.state === 'guard' || b.state === 'obj')) {
+    } else if (WPN.isBombMode(r.mode) && r.bomb !== undefined && (b.state === 'patrol' || b.state === 'guard' || b.state === 'obj')) {
       // ---- 爆破模式的任務：集合、衝點、埋彈、守包、回防、拆彈 ----
       b.state = 'obj';
       const o = bombObjective(p, b, r, nav, now);
@@ -974,7 +978,7 @@ function think(p, r, now, dt, api) {
 
   // ---- 轉身 ----
   // ---- 投擲物 ----
-  if (r.mode === 'bomb') {
+  if (WPN.isBombMode(r.mode)) {
     const t = nadeBrain(p, b, r, now, api, tgt || null);
     if (t) { lookYaw = t.yaw; lookPitch = t.pitch; }
     // 站在火裡：往外走
@@ -1258,8 +1262,8 @@ function threatened(p, b, r, now) {
   return now - (b.hurtAt || 0) < 2500 || dangerNear(r, p.team, p.x, p.z, 18, 2500, now);
 }
 function bombAlert(r, p, q, now) {
-  if (r.mode === 'bomb') teamSaw(r, p.team, q, now);
-  if (r.mode !== 'bomb' || p.team === r.attackTeam || !r.botPlan) return;
+  if (WPN.isBombMode(r.mode)) teamSaw(r, p.team, q, now);
+  if (!WPN.isBombMode(r.mode) || p.team === r.attackTeam || !r.botPlan) return;
   for (const s of p.room ? MAP.get(r.rules.map).sites : []) {
     if (Math.hypot(q.x - s.c[0], q.z - s.c[1]) < 30) { r.botPlan.alert = s.id; r.botPlan.alertAt = now; }
   }
@@ -1342,4 +1346,138 @@ function record(p, now) {
 // 伺服器啟動時先把每張地圖的尋路網格算好
 function prepare() { for (const id of MAP.order) { navFor(MAP.get(id)); navFor(MAP.get(id), true); } }
 
-module.exports = { move, followPath, jump, LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };
+// ======================================================================
+// 爆破競賽：每個機器人有自己的個性（愛用的槍、花錢風格、大不大方、愛帶什麼投擲物、穿什麼甲）
+// ======================================================================
+const PERSONAS = [
+  // fav：錢夠就買；force：錢不夠又想打的時候買得起的槍（照順序）
+  { tag: '步槍手', fav: ['rifle', 'carbine', 'burst'], force: ['smg', 'shotgun'] },
+  { tag: '狙擊手', fav: ['sniper', 'dmr'], force: ['dmr', 'smg'], pistol: 'deagle' },
+  { tag: '衝鋒手', fav: ['shotgun', 'autoshotgun', 'smg'], force: ['shotgun', 'smg'] },
+  { tag: '機槍手', fav: ['lmg', 'rifle'], force: ['smg', 'autoshotgun'] },
+  { tag: '游擊手', fav: ['smg', 'carbine'], force: ['smg', 'mpistol'] },
+  { tag: '精準射手', fav: ['dmr', 'burst', 'rifle'], force: ['burst', 'smg'], pistol: 'revolver' },
+];
+const NADE_PREFS = [['flash', 'smoke'], ['smoke', 'molotov'], ['flash', 'frag'], ['molotov', 'flash'], ['frag', 'stun'], ['smoke', 'flash'], ['stun', 'decoy']];
+function makePersonality(level) {
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  let base = pick(PERSONAS);
+  if (level === 'easy' && base.fav[0] === 'sniper' && Math.random() < 0.6) base = PERSONAS[0]; // 新手比較少玩狙
+  return {
+    ...base,
+    risk: Math.random(), // 越高越愛強起（錢不夠也硬買）
+    generous: Math.random(), // 越高越常幫隊友買槍
+    nades: pick(NADE_PREFS),
+    nadeLove: rand(0.3, 1), // 多愛買投擲物
+    armor: weighted({ light: 1, heavy: 2, regen: 1.3 }),
+    kit: rand(0.3, 1), // 防守時買拆彈器的機率
+    buyDelay: rand(800, 4500), // 準備時間過多久才開始買（不會大家同時買好）
+  };
+}
+const PRICE = WPN.ECON.price;
+// 這回合的花錢決定：全買 / 強起 / 存錢；跟著隊伍的情況走，但每個人個性不同
+function compPlan(p, r) {
+  const b = p.bot, P = b.pers;
+  const mates = [...r.players.values()].filter((q) => q.team === p.team);
+  const avg = mates.reduce((a, q) => a + (q.money || 0), 0) / Math.max(1, mates.length);
+  const pistolRound = r.round === 1 || r.round === 13;
+  const lossIdx = r.econ?.loss?.[p.team] || 0;
+  const armorCost = PRICE[P.armor];
+  const favCost = PRICE[P.fav[0]];
+  if (pistolRound) return 'pistol';
+  if (p.loadout.primary) return 'full'; // 上回合活下來、槍還在：補裝備就好
+  if (p.money >= favCost + Math.min(armorCost, 600)) return 'full';
+  // 隊伍大部分人都能全買：錢不夠的自己請隊友幫忙
+  if (avg >= 4200 && p.money < favCost) return 'ask';
+  // 隊伍很窮：存錢（冒險型的還是會強起；連敗獎金已經很高的時候大家都存）
+  if (avg < 2600 && !(P.risk > 0.75 && lossIdx < 3)) return 'eco';
+  return p.money >= 1700 || P.risk > 0.5 ? 'force' : 'eco';
+}
+function buyList(p, r, plan) {
+  const P = p.bot.pers, out = [];
+  let money = p.money;
+  const take = (w, keep = 0) => { if (w && money - PRICE[w] >= keep) { out.push(w); money -= PRICE[w]; return true; } return false; };
+  const def = p.team !== r.attackTeam;
+  if (plan === 'pistol') {
+    // 手槍局：有人買甲、有人買好一點的手槍、有人買投擲物
+    const style = P.risk > 0.6 ? 'gun' : P.nadeLove > 0.7 ? 'nade' : 'armor';
+    if (style === 'armor') take('light');
+    else if (style === 'gun') take(P.pistol || 'deagle');
+    for (const n of P.nades) take(n);
+    if (def) take('kit');
+    return out;
+  }
+  if (plan === 'eco') {
+    // 存錢局：頂多買一顆便宜的投擲物
+    if (P.nadeLove > 0.6) take(P.nades[0], 1800);
+    return out;
+  }
+  if (plan === 'full' || plan === 'ask') {
+    // 錢很多但手上不是自己愛用的槍：換一把（舊的丟在地上，隊友可以撿）
+    if (p.loadout.primary && plan === 'full' && !P.fav.includes(p.loadout.primary) && money >= PRICE[P.fav[0]] + 1500) take(P.fav[0]);
+    if (!p.loadout.primary && plan === 'full') {
+      if (!take(P.fav.find((w) => PRICE[w] <= money - 300) || null)) take(P.force.find((w) => PRICE[w] <= money) || null);
+    }
+    const a = p.armor;
+    if (!a || a.v < (WPN.ECON.armor[a.kind].max * 0.6)) { if (!take(P.armor)) take('light'); }
+    if (def && Math.random() < P.kit) take('kit', 300);
+    for (const n of P.nades) if (Math.random() < P.nadeLove + 0.2) take(n, 200);
+    if (!p.loadout.secondary || (P.pistol && p.loadout.secondary === 'pistol')) take(P.pistol, 2500);
+    return out;
+  }
+  // 強起：買得起最好的便宜槍＋輕甲
+  take(P.force.find((w) => PRICE[w] + 300 <= money) || P.force.find((w) => PRICE[w] <= money) || null);
+  take('light');
+  if (Math.random() < P.nadeLove) take(P.nades[0]);
+  return out;
+}
+function compThink(p, r, now, api) {
+  const b = p.bot;
+  if (!p.alive || !api.canBuy) return;
+  if (!api.canBuy(p, true)) return;
+  if (b.buyRound !== r.round) { b.buyRound = r.round; b.buyAt = now + b.pers.buyDelay; b.bought = false; b.asked = false; }
+  if (!b.bought && now >= b.buyAt && api.canBuy(p)) {
+    b.bought = true;
+    const plan = compPlan(p, r);
+    b.plan = plan;
+    for (const w of buyList(p, r, plan)) api.buy(p, w);
+    if (plan === 'ask' && !b.asked) { b.asked = true; api.req(p, b.pers.fav[0]); b.askAt = now; }
+  }
+  // 請求沒人理：過 4 秒自己強起
+  if (b.asked && b.plan === 'ask' && !p.loadout.primary && now - b.askAt > 4000 && api.canBuy(p)) {
+    b.plan = 'force';
+    api.req(p, null);
+    for (const w of buyList(p, r, 'force')) api.buy(p, w);
+  }
+  // 幫隊友付錢：大方的人、自己買完還剩很多錢才會幫（過一下才回應，像真人在看）
+  if (b.bought && r.reqs?.size) {
+    for (const [id, q] of r.reqs) {
+      if (id === p.id) continue;
+      const mate = r.players.get(id);
+      if (!mate || mate.team !== p.team) continue;
+      const price = PRICE[q.w] ?? 99999;
+      const keep = 4500 - b.pers.generous * 3000; // 越大方，自己留越少錢
+      if (b.pers.generous < 0.25 || p.money - price < keep) continue;
+      if (now - q.at < 700 + (1 - b.pers.generous) * 2500 + (p.id % 7) * 120) continue;
+      api.fund(p, id);
+      break;
+    }
+  }
+}
+// 走過地上比較好的槍：換掉手上的（交戰中不會）
+function compPickup(p, r, now, take) {
+  const b = p.bot;
+  if (b.state === 'engage' || p.actKind || now < (b.lootCd || 0)) return;
+  b.lootCd = now + 500;
+  for (const d of r.drops || []) {
+    if (Math.hypot(d.x - p.x, d.z - p.z) > 2.2 || Math.abs(d.y - p.y) > 1.4) continue;
+    const W = WEAPONS[d.w];
+    if (!W || W.nade || W.melee) continue;
+    const cur = p.loadout[W.slot];
+    if (!cur) continue; // 空的欄位伺服器會自動撿
+    const better = (PRICE[d.w] || 0) > (PRICE[cur] || 0) + 400 || (b.pers.fav.includes(d.w) && !b.pers.fav.includes(cur));
+    if (better) { take(d); break; }
+  }
+}
+
+module.exports = { compPickup, move, followPath, jump, LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };

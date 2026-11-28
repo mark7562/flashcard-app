@@ -445,7 +445,7 @@ body.touch #hpbar { width: 120px; }
 .hostrules .setrow { grid-template-columns: 80px 1fr; font-size: 14px; }
 .hostrules .seg button { padding: 6px 8px; font-size: 14px; }
 .hostrules.tdm .elim-only, .hostrules.elim .tdm-only { display: none; }
-.hostrules.bomb .map-row, .hostrules.bomb #ruleRounds [data-v="3"], .hostrules:not(.bomb) #ruleRounds [data-v="9"] { display: none; }
+.hostrules.comp .elim-only, .hostrules.bomb .map-row, .hostrules.bomb #ruleRounds [data-v="3"], .hostrules:not(.bomb) #ruleRounds [data-v="9"] { display: none; }
 
 @media (max-height: 520px) {
   #title.sub .topbar { display: none; }
@@ -822,3 +822,102 @@ body.replaying #hud > :not(#replay):not(#killfeed):not(#hitmarker):not(#scope):n
 #wslots .ws.used { opacity: 0.35; text-decoration: line-through; }
 #banner.bomb #bannerBig { color: #ffbe0b; } #banner.defuse #bannerBig { color: #5cf2ff; }
 @media (max-height: 420px) { #bombInfo { top: 58px; font-size: 12px; padding: 3px 10px; } }
+
+/* ===== 爆破競賽：經濟 ===== */
+#armorBox { display: flex; align-items: center; gap: 6px; font-size: 15px; }
+#armorBox.hidden { display: none; }
+#arbar { width: 70px; height: 8px; background: rgba(0, 0, 0, 0.5); border-radius: 4px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.2); }
+#arfill { height: 100%; width: 100%; background: linear-gradient(90deg, #4da3ff, #9fd0ff); transition: width 0.15s; }
+#armorBox.regen #arfill { background: linear-gradient(90deg, #00c2d6, #7ff6ff); }
+#armorBox.regen.healing #arfill { animation: rpPulse 0.8s ease-in-out infinite; }
+#armorBox.empty { opacity: 0.45; }
+#econ {
+  position: absolute; left: max(16px, env(safe-area-inset-left)); bottom: max(54px, calc(env(safe-area-inset-bottom) + 38px));
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; pointer-events: none;
+}
+#econ.hidden { display: none; }
+#money { font: 900 22px var(--num, sans-serif); color: #7dffa8; text-shadow: 0 1px 4px #000, 0 0 10px rgba(61, 220, 132, 0.5); }
+#cashFeed { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+#cashFeed div { font-size: 14px; font-weight: 800; padding: 1px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.5); color: #7dffa8; animation: cashIn 0.25s ease-out; white-space: nowrap; }
+#cashFeed div.spend { color: #ffb4b4; }
+#cashFeed div.cap { color: #ffe066; }
+#cashFeed div.out { opacity: 0; transition: opacity 0.6s; }
+@keyframes cashIn { from { transform: translateX(-16px); opacity: 0; } to { transform: none; opacity: 1; } }
+#teamEcon {
+  position: absolute; left: max(12px, env(safe-area-inset-left)); top: max(150px, calc(env(safe-area-inset-top) + 140px));
+  display: flex; flex-direction: column; gap: 3px; font-size: 13px; pointer-events: none; z-index: 2;
+}
+#teamEcon.hidden { display: none; }
+#teamEcon .te-row { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 4px; background: rgba(7, 4, 24, 0.6); border-left: 3px solid var(--tc, #00e5ff); }
+#teamEcon .te-row.me { outline: 1px solid rgba(0, 229, 255, 0.6); }
+#teamEcon .te-row.dead { opacity: 0.45; }
+#teamEcon .te-name { min-width: 64px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#teamEcon .te-m { color: #7dffa8; font-weight: 800; min-width: 52px; text-align: right; }
+#teamEcon .te-g { color: #dfe7f7; white-space: nowrap; }
+#teamEcon .te-g.none { color: #8a93a8; }
+#reqList { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 6; pointer-events: none; }
+#reqList .rq { pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; background: rgba(7, 4, 24, 0.85); border: 1px solid rgba(255, 190, 11, 0.7); box-shadow: 0 0 14px rgba(255, 190, 11, 0.3); font-size: 14px; animation: cashIn 0.2s ease-out; }
+#reqList .rq button { font: 800 14px var(--zh); padding: 5px 12px; border-radius: 4px; border: 0; background: #ffbe0b; color: #1a1030; cursor: pointer; }
+#reqList .rq button:disabled { background: #555; color: #aaa; cursor: default; }
+#reqList .rq small { color: #b9c4da; }
+#pickPrompt {
+  position: absolute; left: 50%; top: 58%; transform: translateX(-50%); padding: 5px 12px; border-radius: 6px; white-space: nowrap;
+  background: rgba(7, 4, 24, 0.7); border: 1px solid rgba(255, 255, 255, 0.35); font-size: 15px; font-weight: 700; text-shadow: 0 1px 3px #000;
+}
+#pickPrompt.hidden { display: none; }
+#pickPrompt.no { border-color: rgba(255, 107, 107, 0.6); color: #ffb4b4; }
+#pickPrompt .ic { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+#buyMenu {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 8; pointer-events: auto;
+  width: min(720px, calc(100vw - 24px)); max-height: calc(100vh - 24px); display: flex; flex-direction: column;
+  background: rgba(7, 4, 24, 0.92); border: 1px solid rgba(0, 229, 255, 0.5); border-radius: 8px; box-shadow: 0 0 30px rgba(123, 43, 255, 0.4);
+}
+#buyMenu.hidden { display: none; }
+.bm-head { display: flex; align-items: center; gap: 14px; padding: 8px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+.bm-head b { font-size: 17px; color: var(--cyan); }
+#bmMoney { font: 900 20px var(--num, sans-serif); color: #7dffa8; }
+#bmTime { color: #ffe066; font-size: 14px; margin-left: auto; }
+.bm-x { font-size: 18px; background: none; border: 0; color: #fff; cursor: pointer; padding: 2px 8px; }
+.bm-tabs { display: flex; gap: 4px; padding: 6px 10px 0; }
+.bm-tabs button { flex: 1; font: 800 14px var(--zh); padding: 7px 4px; border: 0; border-radius: 4px 4px 0 0; background: rgba(255, 255, 255, 0.06); color: #b9c4da; cursor: pointer; }
+.bm-tabs button.on { background: rgba(0, 229, 255, 0.22); color: #fff; }
+.bm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; padding: 8px 10px; overflow-y: auto; min-height: 0; }
+.bm-item { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 7px 9px; border-radius: 5px; border: 1px solid rgba(0, 229, 255, 0.3); background: rgba(255, 255, 255, 0.04); color: var(--text); font: 13px var(--zh); cursor: pointer; text-align: left; }
+.bm-item b { font-size: 15px; }
+.bm-item .bm-p { color: #7dffa8; font-weight: 800; }
+.bm-item .bm-r { color: #9aa7bf; font-size: 11px; }
+.bm-item .bm-d { color: #9aa7bf; font-size: 11px; line-height: 1.3; }
+.bm-item.own { border-color: #ffbe0b; }
+.bm-item.own::after { content: '已裝備'; position: absolute; top: 5px; right: 7px; font-size: 11px; color: #ffbe0b; }
+.bm-item.poor { opacity: 0.75; }
+.bm-item.poor .bm-p { color: #ff8a8a; }
+.bm-item.no { opacity: 0.4; cursor: default; }
+.bm-item .bm-ask { margin-top: 3px; align-self: flex-start; font: 800 12px var(--zh); padding: 3px 8px; border-radius: 4px; border: 0; background: #ffbe0b; color: #1a1030; cursor: pointer; }
+.bm-foot { display: flex; align-items: center; gap: 10px; padding: 6px 10px 9px; border-top: 1px solid rgba(255, 255, 255, 0.1); flex-wrap: wrap; }
+.bm-btn { font: 800 13px var(--zh); padding: 6px 12px; border-radius: 4px; border: 1px solid rgba(0, 229, 255, 0.5); background: rgba(0, 229, 255, 0.12); color: #fff; cursor: pointer; }
+.bm-btn:disabled { opacity: 0.4; cursor: default; }
+#bmReq { font-size: 13px; color: #ffe066; }
+#bmReq button { margin-left: 6px; font: 700 12px var(--zh); padding: 2px 8px; border-radius: 4px; border: 1px solid #ffe066; background: none; color: #ffe066; cursor: pointer; }
+.bm-hint { margin-left: auto; font-size: 12px; color: #9aa7bf; }
+@media (max-height: 520px) {
+  .bm-grid { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 4px; padding: 5px 8px; }
+  .bm-item { padding: 5px 7px; } .bm-item .bm-d { display: none; }
+  .bm-head { padding: 5px 10px; } .bm-tabs button { padding: 5px 4px; }
+  #teamEcon { top: max(92px, calc(env(safe-area-inset-top) + 84px)); font-size: 11px; }
+  #econ { bottom: max(44px, calc(env(safe-area-inset-bottom) + 30px)); }
+  #money { font-size: 18px; }
+}
+#btnPick, #btnDrop { width: 60px; height: 60px; font-size: 22px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+#btnPick small, #btnDrop small { font-size: 11px; margin-top: 3px; color: #dfe7f7; }
+#btnPick { left: calc(50% + 56px); bottom: max(120px, calc(env(safe-area-inset-bottom) + 104px)); border-color: rgba(125, 255, 168, 0.8); }
+#btnDrop { right: max(40px, calc(env(safe-area-inset-right) + 12px)); bottom: max(266px, calc(env(safe-area-inset-bottom) + 250px)); width: 48px; height: 48px; font-size: 18px; }
+#btnPick.hidden, #btnDrop.hidden { display: none; }
+body.touch #econ { bottom: max(48px, calc(env(safe-area-inset-bottom) + 34px)); }
+body.buying #touch .tbtn { display: none; } /* 商店開著：觸控按鈕先收起來 */
+#econ { bottom: max(84px, calc(env(safe-area-inset-bottom) + 76px)); }
+body.touch #econ { bottom: max(88px, calc(env(safe-area-inset-bottom) + 80px)); }
+@media (max-height: 520px) {
+  #teamEcon { top: max(146px, calc(env(safe-area-inset-top) + 138px)); }
+  #econ, body.touch #econ { bottom: max(80px, calc(env(safe-area-inset-bottom) + 72px)); }
+}
+#btnPick { left: calc(50% - 30px); bottom: max(22px, calc(env(safe-area-inset-bottom) + 10px)); }

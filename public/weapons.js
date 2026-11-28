@@ -194,7 +194,53 @@
   // 能拿在手上的欄位（投擲物只有爆破模式能用）
   const HAND_SLOTS = ['primary', 'secondary', 'melee'];
   const BOMB_SLOTS = ['primary', 'secondary', 'melee', 'throw1', 'throw2'];
-  const slotsFor = (mode) => (mode === 'bomb' ? BOMB_SLOTS : HAND_SLOTS);
+  const isBombMode = (mode) => mode === 'bomb' || mode === 'comp'; // 爆破模式、爆破競賽
+  const slotsFor = (mode) => (isBombMode(mode) ? BOMB_SLOTS : HAND_SLOTS);
+
+  // ---------- 爆破競賽：經濟系統 ----------
+  // price：價格  reward：用它擊殺敵人拿到的錢（便宜的槍獎金高，讓存錢局也有翻盤的機會）
+  // 刀免費、擊殺獎金最高；基本手槍每回合都有
+  const ECON = {
+    start: 800, max: 16000,
+    win: 3000, winObj: 3300, // 回合勝利；炸彈爆炸／拆彈成功的那隊多一點
+    loss: [1400, 1900, 2400, 2900, 3400], // 連敗獎金（贏一回合就歸零）
+    plantTeam: 600, plant: 300, defuse: 300, // 進攻方輸了但有埋包：全隊加；埋包、拆包的人自己加
+    buyMs: 15000, // 開打後還能買幾秒（要待在出生區）
+    price: {
+      pistol: 0, mpistol: 500, revolver: 600, deagle: 700,
+      shotgun: 1100, smg: 1200, autoshotgun: 2000, burst: 2700, carbine: 2900, rifle: 3000, dmr: 3800, sniper: 4700, lmg: 5000,
+      flash: 200, smoke: 300, frag: 300, stun: 300, molotov: 500, decoy: 50,
+      light: 600, heavy: 1100, regen: 1300, kit: 400,
+    },
+    reward: { shotgun: 900, smg: 600, autoshotgun: 600, sniper: 100, melee: 1500, def: 300 },
+    // 護甲：只保護身體（頭不保護）。每次身體受到的傷害有一半轉給護甲、扣掉一樣多的護甲值，護甲扣完就全部打在血上
+    absorb: 0.5,
+    armor: {
+      light: { id: 'light', name: '輕甲', short: '輕甲', icon: '🦺', max: 50, desc: '50 點護甲' },
+      heavy: { id: 'heavy', name: '重甲', short: '重甲', icon: '🛡', max: 100, desc: '100 點護甲' },
+      regen: { id: 'regen', name: '再生護甲', short: '再生甲', icon: '💠', max: 60, desc: '60 點護甲；4 秒沒被打就慢慢回復（每回合最多回 60 點）', delay: 4000, rate: 15, cap: 60 },
+    },
+    kit: { id: 'kit', name: '拆彈器', short: '拆彈器', icon: '✂', desc: '拆彈時間 6 秒 → 4 秒（只有防守方能買）', ms: 4000 },
+  };
+  // 一樣東西多少錢、用它擊殺拿多少獎金
+  const priceOf = (id) => ECON.price[id] ?? null;
+  function rewardOf(id) {
+    const w = WEAPONS[id];
+    if (w?.melee) return ECON.reward.melee;
+    return ECON.reward[id] ?? ECON.reward.def;
+  }
+  // 商店分頁
+  const SHOP = {
+    primary: ['smg', 'shotgun', 'autoshotgun', 'burst', 'carbine', 'rifle', 'dmr', 'sniper', 'lmg'],
+    secondary: ['pistol', 'mpistol', 'revolver', 'deagle'],
+    throw: ['flash', 'smoke', 'frag', 'stun', 'molotov', 'decoy'],
+    gear: ['light', 'heavy', 'regen', 'kit'],
+  };
+  // 爆破競賽的身上裝備：欄位可以是空的（null），刀一定有
+  function cleanInv(l, melee) {
+    const ok = (slot, v) => v && CHOICES[slot].includes(v) ? v : null;
+    return { primary: ok('primary', l?.primary), secondary: ok('secondary', l?.secondary), melee: CHOICES.melee.includes(melee || l?.melee) ? melee || l.melee : 'knife', throw1: ok('throw1', l?.throw1), throw2: ok('throw2', l?.throw2) };
+  }
   const LIST = Object.keys(WEAPONS); // 同步位置時用編號代表武器
 
   // 檢查玩家送來的套裝，不合法的欄位換成預設
@@ -255,7 +301,7 @@
     return out;
   }
 
-  const W = { WEAPONS, CHOICES, SLOT_OF, DEFAULT_LOADOUT, HAND_SLOTS, BOMB_SLOTS, slotsFor, LIST, clean, falloff, reloadTime, shellsLoaded, coneDirs };
+  const W = { WEAPONS, CHOICES, SLOT_OF, DEFAULT_LOADOUT, HAND_SLOTS, BOMB_SLOTS, slotsFor, isBombMode, ECON, SHOP, priceOf, rewardOf, cleanInv, LIST, clean, falloff, reloadTime, shellsLoaded, coneDirs };
   if (typeof module !== 'undefined' && module.exports) module.exports = W;
   else root.GAME_WEAPONS = W;
 })(typeof self !== 'undefined' ? self : this);

@@ -152,6 +152,7 @@
           <button data-mode="tdm" class="on">團隊死鬥</button>
           <button data-mode="elim">回合殲滅</button>
           <button data-mode="bomb">爆破模式</button>
+          <button data-mode="comp">爆破競賽</button>
           <button data-mode="zombie">生化模式</button>
           <button data-mode="hero">生化英雄</button>
         </div>
@@ -214,6 +215,7 @@
               <button data-v="tdm">團隊死鬥</button>
               <button data-v="elim">回合殲滅</button>
               <button data-v="bomb">爆破</button>
+              <button data-v="comp">爆破競賽</button>
               <button data-v="zombie">生化</button>
               <button data-v="hero">生化英雄</button>
             </div>
@@ -245,7 +247,7 @@
       </div>
     </section>
 
-    <div class="ver">v1.35</div>
+    <div class="ver">v1.36</div>
   </div>
 
   <!-- ===== 設定（標題畫面和遊戲中都能開） ===== -->
@@ -401,10 +403,24 @@
     <div id="hpbox">
       <div id="hpbar"><div id="hpfill"></div></div>
       <span id="hptext">100</span>
+      <div id="armorBox" class="hidden"><span id="arIcon"></span><div id="arbar"><div id="arfill"></div></div><span id="artext"></span></div>
       <div id="zbar" class="hidden"><span id="zrole" class="zrole"></span><span id="zlvl"></span><div id="zxp"><div id="zxpfill"></div></div></div>
     </div>
     <div id="ammo"><div id="wname"></div><span id="ammonow">30</span><small id="ammomax"> / 30</small><div id="reloadtext"></div></div>
     <div id="wslots"></div>
+    <!-- 爆破競賽：錢、收入明細、隊友經濟、撿東西提示、隊友的請求、商店 -->
+    <div id="econ" class="hidden"><div id="cashFeed"></div><div id="money">$0</div></div>
+    <div id="teamEcon" class="hidden"></div>
+    <div id="reqList"></div>
+    <div id="pickPrompt" class="hidden"></div>
+    <div id="buyMenu" class="hidden">
+      <div class="bm-head"><b>🛒 商店</b><span id="bmMoney"></span><span id="bmTime"></span><button id="bmClose" class="bm-x">✕</button></div>
+      <div id="bmTabs" class="bm-tabs">
+        <button data-tab="primary" class="on">主武器</button><button data-tab="secondary">手槍</button><button data-tab="throw">投擲物</button><button data-tab="gear">裝備</button>
+      </div>
+      <div id="bmGrid" class="bm-grid"></div>
+      <div class="bm-foot"><button id="bmRebuy" class="bm-btn">↻ 重複上次購買</button><span id="bmReq"></span><span id="bmHint" class="bm-hint"></span></div>
+    </div>
     <button id="kitChip" class="hidden"></button>
     <div id="kitPick" class="hidden"><div class="kp-title">換套裝 <span class="kp-x">✕</span></div><div id="kitCards" class="kitcards"></div><div id="kitHint" class="hint"></div></div>
     <div id="death" class="hidden">
@@ -444,6 +460,8 @@
     <button class="tbtn" id="btnFire">🔫</button>
     <button class="tbtn" id="btnAim">◎</button>
     <button class="tbtn hidden" id="btnAct">💣<small>埋彈</small></button>
+    <button class="tbtn hidden" id="btnPick">🖐<small>撿起</small></button>
+    <button class="tbtn hidden" id="btnDrop">⤓<small>丟槍</small></button>
     <button class="tbtn" id="btnSwap"><span id="swapIcon">⇄</span><small id="swapLabel"></small></button>
     <div id="swapPop" class="hidden"></div>
   </div>
