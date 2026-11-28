@@ -509,6 +509,8 @@ function envDamage(r, q, dmg, weapon, attackerId, now) {
   const a = attackerId ? r.players.get(attackerId) : null;
   if (a && a !== q && a.team !== q.team) return applyDamage(a, q, dmg, false, weapon, now);
   if (isComp(r)) dmg = armorAbsorb(q, dmg, false, now);
+  // 傷害到隊友（火焰彈）：警告放火的人（2 秒最多一次）
+  if (a && a !== q && a.team === q.team && dmg > 0 && now - (a.ffWarnAt || 0) > 2000) { a.ffWarnAt = now; send(a.ws, { t: 'ff' }); }
   q.hp = Math.max(0, q.hp - dmg);
   send(q.ws, { t: 'damaged', hp: q.hp, from: attackerId || 0, fx: q.x, fz: q.z, ar: q.armor ? Math.round(q.armor.v) : undefined });
   if (q.hp > 0) return;
@@ -519,6 +521,7 @@ function envDamage(r, q, dmg, weapon, attackerId, now) {
   if (r.mode === 'tdm') q.respawnAt = now + RESPAWN_MS;
   // tk：被隊友的火燒死（不算擊殺，顯示「誤傷」）
   const tk = a && a !== q && a.team === q.team ? 1 : undefined;
+  if (tk && isComp(r)) addMoney(a, -300, `誤殺隊友 ${q.name}`); // 爆破競賽：燒死隊友扣錢
   toRoom(r, { t: 'kill', killer: attackerId || 0, victim: q.id, head: false, w: weapon, kk: a ? a.kills : 0, vd: q.deaths, score: r.score, kx: q.x, kz: q.z, khp: a ? a.hp : 0, tk });
   recEvent(r, { k: 'kill', killer: attackerId || 0, victim: q.id, head: false, w: weapon, kx: q.x, kz: q.z });
   if (r.mode !== 'tdm') checkTeams(r);

@@ -1802,6 +1802,11 @@ function handle(m) {
     case 'inv':
       applyInv(m);
       break;
+    case 'ff':
+      // 火焰彈燒到隊友
+      toast('傷害隊友是不被允許的🆘');
+      beep(220, 0.15, 0.12, 'square'); beep(180, 0.15, 0.12, 'square', 0.17);
+      break;
     case 'assist': {
       // 助攻：準心下面一行小字（不跳骷髏徽章，右上的擊殺紀錄也不顯示）
       me.ra = (me.ra || 0) + 1;
@@ -1815,7 +1820,7 @@ function handle(m) {
     }
     case 'cash':
       me.money = m.m;
-      cashLine(`${m.n >= 0 ? '+' : '-'}${fmt$(Math.abs(m.n))} ${m.why}`, m.full ? 'cap' : '');
+      cashLine(`${m.n >= 0 ? '+' : '-'}${fmt$(Math.abs(m.n))} ${m.why}`, m.n < 0 ? 'spend' : m.full ? 'cap' : '');
       if (m.full) setTimeout(() => cashLine(`錢已經到上限 ${fmt$(ECON.max)}`, 'cap'), 120);
       if (m.n > 0) beep(1320, 0.05, 0.05, 'triangle');
       updateMoney();
@@ -2080,7 +2085,7 @@ function handle(m) {
       for (const id of m.as || []) { const q = roster.get(id); if (q) q.as = (q.as || 0) + 1; } // 助攻（右上不顯示，只算在計分板）
       if (room && m.score) room.score = m.score;
       feed(m.killer, m.victim, m.head, m.w, m);
-      if (m.tk) { if (m.killer === me.id) toast(`⚠ 你燒死了隊友 ${nameOf(m.victim)}`); } // 被隊友的火燒死：不跳擊殺特效
+      if (m.tk) { if (m.killer === me.id) toast(`傷害隊友是不被允許的🆘（燒死了 ${nameOf(m.victim)}）`); } // 被隊友的火燒死：不跳擊殺特效
       else if (m.killer === me.id && m.victim !== me.id) showKillFx(m);
       else if (specActive && m.killer === specActive && m.victim !== specActive) showKillFx(m, false); // 觀戰：看得到被觀戰的人的擊殺特效
       if (m.victim === me.id) {
