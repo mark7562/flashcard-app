@@ -361,7 +361,7 @@ export function createWorld(scene) {
         if (tx) out.multiplyScalar(1.15 + (((i * 7919) % 13) / 13 - 0.5) * 0.12); // 每個方塊顏色稍微不同
       });
       const mat = new THREE.MeshStandardMaterial({ vertexColors: true, map: tx ? tx.tex : null, roughness: k === 'metal' ? 0.6 : 0.88, metalness: k === 'metal' ? 0.25 : 0 });
-      if (k === 'roof') { mat.emissive.set(0x2a2f45); mat.emissiveMap = tx.tex; } // 室內天花板
+      if (k === 'roof') { mat.emissive.set(map.theme === 'desert' ? 0x4a3826 : 0x2a2f45); mat.emissiveMap = tx.tex; } // 室內天花板（沙漠用暖色）
       const mesh = new THREE.Mesh(geo, mat);
       mesh.castShadow = mesh.receiveShadow = true;
       group.add(mesh);
