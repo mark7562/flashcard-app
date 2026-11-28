@@ -397,6 +397,17 @@ export function createWorld(scene) {
       group.add(ground);
       group.add(skyline(map.half + 30));
     }
+    if (map.theme === 'desert') {
+      // 沙漠的大白天：藍天、地平線偏黃、大太陽；圍牆外是沙地
+      group.add(skyDome([[-1, 0xd8c09a], [-0.02, 0xe8d6b4], [0.0, 0xf2e2c2], [0.12, 0xa8cdea], [0.4, 0x6aa6dc], [1, 0x3f7fc4]]));
+      const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(16, 32), new THREE.MeshBasicMaterial({ color: 0xfff6dc, fog: false }));
+      sunDisc.position.set(180, 200, -120);
+      sunDisc.lookAt(0, 0, 0);
+      group.add(sunDisc);
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshLambertMaterial({ color: 0xcfb07e }));
+      ground.rotation.x = -Math.PI / 2; ground.position.y = -0.05;
+      group.add(ground);
+    }
     if (map.theme === 'harbor') {
       // 海上的黃昏：天空比碼頭亮，四周都是海
       group.add(skyDome([[-1, 0x2a2440], [-0.02, 0x4a3050], [0.0, 0xffb07a], [0.1, 0xf08a7a], [0.3, 0x8a5a9a], [1, 0x2a2a66]]));
@@ -433,6 +444,14 @@ export function createWorld(scene) {
       sun.color.set(0xb8c8ff); sun.intensity = 1.1; // 月光
       sun.position.set(25, 40, -30);
       edgeMat.color.set(0x000000); edgeMat.opacity = 0.3;
+    } else if (map.theme === 'desert') {
+      scene.background.set(0x8fc0e8);
+      scene.fog.color.set(0xe6d2ae);
+      scene.fog.near = 80; scene.fog.far = 260;
+      hemi.color.set(0xfff4e0); hemi.groundColor.set(0xa88a5c); hemi.intensity = 1.45;
+      sun.color.set(0xfff0d6); sun.intensity = 2.5;
+      sun.position.set(30, 50, -22);
+      edgeMat.color.set(0x000000); edgeMat.opacity = 0.22;
     } else if (map.theme === 'harbor') {
       scene.background.set(0x4a3050);
       scene.fog.color.set(0x9a6a86);

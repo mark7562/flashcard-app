@@ -447,7 +447,7 @@ body.touch #hpbar { width: 120px; }
 .hostrules .setrow { grid-template-columns: 80px 1fr; font-size: 14px; }
 .hostrules .seg button { padding: 6px 8px; font-size: 14px; }
 .hostrules.tdm .elim-only, .hostrules.elim .tdm-only { display: none; }
-.hostrules.comp .elim-only, .hostrules.bomb .map-row, .hostrules.bomb #ruleRounds [data-v="3"], .hostrules:not(.bomb) #ruleRounds [data-v="9"] { display: none; }
+.hostrules.comp .elim-only, .hostrules.bomb #ruleRounds [data-v="3"], .hostrules:not(.bomb) #ruleRounds [data-v="9"] { display: none; }
 
 @media (max-height: 520px) {
   #title.sub .topbar { display: none; }

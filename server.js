@@ -226,7 +226,7 @@ function createRoom(p, msg) {
     score: [0, 0], roundWins: [0, 0], round: 0, phase: null, phaseUntil: 0, endsAt: 0, resultsUntil: 0, pendingEnd: null,
     rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null, nades: [], smokes: [], fires: [],
   };
-  if (isB(r)) { r.rules.map = BOMB.map; r.rules.rounds = isComp(r) ? COMP.win : 7; }
+  if (isB(r)) { r.rules.map = MAP.bombMaps.includes(msg.map) ? msg.map : BOMB.map; r.rules.rounds = isComp(r) ? COMP.win : 7; }
   if (isZ(r)) { r.rules.map = MAP.zombieMaps.includes(msg.map) ? msg.map : 'hospital'; r.rules.rounds = 7; }
   rooms.set(r.code, r);
   console.log(`[房] ${p.name} 建立房間 ${r.code}「${r.name}」`);
@@ -1799,12 +1799,12 @@ function setRules(p, msg) {
   for (const k of Object.keys(RULE_OPTIONS)) {
     if (RULE_OPTIONS[k].includes(msg[k])) r.rules[k] = msg[k];
   }
-  // 爆破模式只能用霓虹地鐵站；回合數 5 / 7 / 9；殲滅模式 3 / 5 / 7
+  // 爆破模式只能用有兩個包點的地圖；回合數 5 / 7 / 9；殲滅模式 3 / 5 / 7
+  // 爆破模式只能用有兩個包點的地圖（霓虹地鐵站、黃沙古鎮）
+  if (isB(r) && !MAP.bombMaps.includes(r.rules.map)) r.rules.map = BOMB.map;
   if (isComp(r)) {
-    r.rules.map = BOMB.map;
     r.rules.rounds = COMP.win; // 爆破競賽固定先贏 13 回合
   } else if (isB(r)) {
-    r.rules.map = BOMB.map;
     if (![5, 7, 9].includes(r.rules.rounds)) r.rules.rounds = 7;
   } else if (r.mode === 'elim' && ![3, 5, 7].includes(r.rules.rounds)) r.rules.rounds = 5;
   if (WPN.isBombMode(was) && !isB(r) && r.rules.map === BOMB.map) r.rules.map = MAP.defaultMap;
@@ -2066,7 +2066,7 @@ if (require.main === module) {
     simRoom(mode, map, level0, level1, n = 5, rules = {}) {
       const r = {
         code: makeCode(), name: 'sim', password: '', mode, attackTeam: 1, bomb: null, roundLog: [],
-        rules: { scoreLimit: 50, timeLimit: 10, rounds: mode === 'comp' ? COMP.win : 7, map: WPN.isBombMode(mode) ? BOMB.map : map, ...rules },
+        rules: { scoreLimit: 50, timeLimit: 10, rounds: mode === 'comp' ? COMP.win : 7, map: WPN.isBombMode(mode) && !MAP.bombMaps.includes(map) ? BOMB.map : map, ...rules },
         hostId: 0, state: 'lobby', players: new Map(),
         score: [0, 0], roundWins: [0, 0], round: 0, phase: null, phaseUntil: 0, endsAt: 0, resultsUntil: 0, pendingEnd: null,
         rec: [], recEv: [], best: null, bestScore: 0, pendingBest: null, nades: [], smokes: [], fires: [],

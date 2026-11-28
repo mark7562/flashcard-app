@@ -180,7 +180,9 @@ export function renderRoom(r) {
   const mark = (id, v) => { for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === String(v)); };
   mark('ruleMap', r.rules.map);
   // 生化模式只顯示適合的地圖
-  for (const b of $('ruleMap').querySelectorAll('button')) b.classList.toggle('hidden', zm && !window.GAME_MAP.zombieMaps.includes(b.dataset.v));
+  // 生化模式、爆破模式只顯示適合的地圖
+  const bm = r.mode === 'bomb' || r.mode === 'comp';
+  for (const b of $('ruleMap').querySelectorAll('button')) b.classList.toggle('hidden', (zm && !window.GAME_MAP.zombieMaps.includes(b.dataset.v)) || (bm && !window.GAME_MAP.bombMaps.includes(b.dataset.v)));
   mark('ruleMode', r.mode);
   mark('ruleScore', r.rules.scoreLimit);
   mark('ruleTime', r.rules.timeLimit);

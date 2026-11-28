@@ -1299,8 +1299,9 @@ function bombObjective(p, b, r, nav, now) {
     const defs = [...r.players.values()].filter((q) => q.alive && q.team === p.team);
     if (!b.rallyPt || b.rallyRound !== r.round) {
       b.rallyRound = r.round;
+      // 離自己最近的集合點（不要跑到另一頭的集合點去繞一大圈）
       const list = map.rally[bomb.site];
-      b.rallyPt = list[Math.floor(Math.random() * list.length)];
+      b.rallyPt = [...list].sort((a2, c2) => Math.hypot(a2[0] - p.x, a2[1] - p.z) - Math.hypot(c2[0] - p.x, c2[1] - p.z))[0];
     }
     // 不管人數多少都回防（沒有經濟系統，保命沒有好處；跑回家掛機看起來也很怪）
     // 只有真的來不及拆（拆彈要 6 秒）才退到集合點（包點外面），不會跑回出生點
