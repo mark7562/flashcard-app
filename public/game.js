@@ -765,7 +765,7 @@ function skullSvg(color) {
 const KILL_TIERS = [
   ['擊殺', '#ffffff'], ['雙殺', '#00e5ff'], ['三殺', '#b06bff'], ['四殺', '#ff9a3c'], ['ACE 團滅', '#ffd34d'],
 ];
-let killFxTimer = 0;
+let killFxTimer = 0, smallTimer = 0; // 骷髏徽章、準心下的小字各自計時
 // 擊殺特效：殲滅、爆破顯示大的骷髏徽章（連殺會升級）；其他模式只顯示一行小字
 // own = 自己擊殺（才算進自己的回合統計）；觀戰、回放時顯示被看的那個人的擊殺
 function showKillFx(m, own = true) {
@@ -777,9 +777,10 @@ function showKillFx(m, own = true) {
   if (!(isRounds() && !isZ())) {
     const el = $('killsmall');
     el.textContent = `${m.head ? '💀 爆頭擊殺' : '擊殺'} ${nameOf(m.victim)}`;
+    el.classList.remove('assist');
     el.classList.add('show');
-    clearTimeout(killFxTimer);
-    killFxTimer = setTimeout(() => el.classList.remove('show'), 1500);
+    clearTimeout(smallTimer);
+    smallTimer = setTimeout(() => el.classList.remove('show'), 1500);
     return;
   }
   const kTeam = own ? me.team : roster.get(m.killer)?.team ?? me.team;
@@ -1829,8 +1830,8 @@ function handle(m) {
       const el = $('killsmall');
       el.textContent = `助攻 擊倒 ${nameOf(m.victim)}（${m.dmg} 傷害）`;
       el.classList.add('show', 'assist');
-      clearTimeout(killFxTimer);
-      killFxTimer = setTimeout(() => el.classList.remove('show', 'assist'), 1600);
+      clearTimeout(smallTimer);
+      smallTimer = setTimeout(() => el.classList.remove('show', 'assist'), 1600); // 跟擊殺徽章分開計時（不然擊殺會把這個計時器蓋掉，字就一直留著）
       beep(990, 0.07, 0.07, 'triangle'); beep(1320, 0.07, 0.06, 'triangle', 0.07);
       break;
     }

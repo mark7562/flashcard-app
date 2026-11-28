@@ -951,7 +951,10 @@ function think(p, r, now, dt, api) {
           if (b.objMove.jump) wantJump = true;
           lookYaw = dGoal < 8 || hurt || o.face ? yawTo(o.look[0] - p.x, o.look[1] - p.z) : yawTo(mx, mz);
           // 排點：靠近可能有敵人的包點時放慢腳步，把常見的躲人位置一個一個看過去（隊友看過的就不重看）
-          if (!hurt && !seen && !o.face) { const cy = clearLook(p, b, r, map, nav, now, dt, yawTo(mx, mz)); if (cy !== null) { lookYaw = cy; b.slowK = 0.75; } }
+          // 優先順序：看到敵人 > 剛被打 > 附近聽到槍聲／腳步（轉頭看聲音那邊）> 排點 > 看目標方向
+          const heard = !seen && !hurt && b.alert && now - (b.heardAt || 0) < 2500;
+          if (heard) { lookYaw = yawTo(b.alert[0] - p.x, b.alert[1] - p.z); b.slowK = 0.75; }
+          else if (!hurt && !seen && !o.face) { const cy = clearLook(p, b, r, map, nav, now, dt, yawTo(mx, mz)); if (cy !== null) { lookYaw = cy; b.slowK = 0.75; } }
         } else {
           // 到位：盯著敵人會來的方向（視線長的那幾個角度輪流看），不要一直左右擺
           const base = yawTo(o.look[0] - p.x, o.look[1] - p.z);
@@ -1266,8 +1269,11 @@ function bombObjective(p, b, r, nav, now) {
         const mates = [...r.players.values()].filter((q) => q.team === p.team && q.bot).map((q) => q.id).sort((a, c) => a - c);
         const off = plan.post === 'off' || (plan.post === 'mixed' && mates.indexOf(p.id) % 2 === 1);
         const fw = defPositions(nav).fwd[bomb.site] || [];
-        if (off && fw.length) {
-          const f = fw[Math.floor(Math.random() * fw.length)];
+        // 點外的位置要看得到炸彈（不然有人拆包也不知道）
+        const bEye = [bomb.x, bomb.y + 0.5, bomb.z];
+        const fwv = fw.filter((f) => !segmentBlocked([f[0], bomb.y + 1.6, f[1]], bEye, map.boxes));
+        if (off && fwv.length) {
+          const f = fwv[Math.floor(Math.random() * fwv.length)];
           b.postPt = [f[0], f[1]];
           b.postLook = [bomb.x, bomb.z]; // 在外面盯著炸彈：誰去拆就打誰
         } else {
@@ -1279,6 +1285,13 @@ function bombObjective(p, b, r, nav, now) {
       // 快爆炸了：跑遠一點，不要被自己的炸彈炸到
       const left0 = (bomb.explodeAt || r.phaseUntil) - now;
       if (left0 < 6500) return { goal: map.stage[bomb.site][0], look: [bomb.x, bomb.z] };
+      // 有人在拆包：從看不到炸彈的地方往炸彈走，看到炸彈就停下來打拆包的人
+      const defuser = [...r.players.values()].find((q) => q.alive && q.team !== p.team && q.actKind === 'defuse');
+      if (defuser) {
+        const seeBomb = Math.hypot(bomb.x - p.x, bomb.z - p.z) < 30 && !segmentBlocked([p.x, p.y + 1.6, p.z], [bomb.x, bomb.y + 0.6, bomb.z], map.boxes);
+        if (!seeBomb) return { goal: [bomb.x, bomb.z], look: [bomb.x, bomb.z], face: Math.hypot(bomb.x - p.x, bomb.z - p.z) < 14 };
+        return { goal: [p.x, p.z], look: [defuser.x, defuser.z], hold: true };
+      }
       return { goal: b.postPt, look: b.postLook };
     }
     // 防守方：先在集合點等隊友（最多等 8 秒、炸彈剩 22 秒就不等了），再一起回防拆彈
@@ -1398,6 +1411,11 @@ function bombObjective(p, b, r, nav, now) {
       b.holdSetAt = now;
     }
     hp = b.holdPt;
+    // 點外等回防的人：聽到自己的包點有人在下包 → 不等了，直接進去打
+    if (b.retakeHold && [...r.players.values()].some((q) => q.alive && q.team !== p.team && q.actKind === 'plant' && Math.hypot(q.x - site(role).c[0], q.z - site(role).c[1]) < 22)) {
+      if (!b.rotPt || b.rotRole !== role) { b.rotRole = role; b.rotPt = pool[Math.floor(Math.random() * pool.length)]; }
+      hp = b.rotPt;
+    }
   } else {
     const pool = role === 'mid' ? pos.mid : pos.inside[role];
     if (!b.rotPt || b.rotRole !== role) { b.rotRole = role; b.rotPt = pool[Math.floor(Math.random() * pool.length)]; }
@@ -1473,9 +1491,11 @@ function regroup(p, b, r, now, plan, alertOn, map, nav) {
     const inSite = defs.filter((q) => Math.hypot(q.x - S.c[0], q.z - S.c[1]) < 20).length;
     if (info.n - inSite < 2) return null; // 人數差不多：照原本的守法
     R = plan.rg = { site: alertOn, at: now, go: false };
-    radio(r, p, 'rg', `${alertOn} 點來了 ${info.n} 個人，人太少先退到點外，等大家會合再一起回防！`, now);
+    if (defs.length >= 3) radio(r, p, 'rg', `${alertOn} 點來了 ${info.n} 個人，人太少先退到點外，等大家會合再一起回防！`, now);
+    else radio(r, p, 'rg', `${alertOn} 點來了 ${info.n} 個人，我們只剩 ${defs.length} 個，先躲在點外，等他們下包再回防拆包！`, now);
   }
   if (R.go) return null;
+  const planting = [...r.players.values()].some((q) => q.alive && q.team !== p.team && q.actKind === 'plant');
   if (now - (b.lastSeenAt || 0) < 2500) return null; // 正在交火：不會打到一半轉身跑掉
   const pts = map.rally[alertOn];
   if (b.rgRound !== r.round || b.rgSite !== alertOn) {
@@ -1483,8 +1503,10 @@ function regroup(p, b, r, now, plan, alertOn, map, nav) {
     b.rgPt = [...pts].sort((a, c) => Math.hypot(a[0] - p.x, a[1] - p.z) - Math.hypot(c[0] - p.x, c[1] - p.z))[0];
     b.rgPt = nearPt(nav, b.rgPt[0], b.rgPt[1], 2.5);
   }
+  // 只剩 1～2 個人：湊不到 3 個，退出來也沒意義 → 躲在點外等對方下包（不下包時間到就是防守方贏），下包後再照埋包後的回防打
+  if (defs.length < 3) return { goal: b.rgPt, look: S.c, face: true };
   const ready = defs.filter((q) => pts.some((pt) => Math.hypot(q.x - pt[0], q.z - pt[1]) < 9)).length;
-  if (ready >= Math.min(3, defs.length) || now - R.at > 10000 || r.phaseUntil - now < 25000) { R.go = true; radio(r, p, 'go', `人到了，一起回防 ${alertOn}！`, now); return null; }
+  if (planting || ready >= Math.min(3, defs.length) || now - R.at > 10000 || r.phaseUntil - now < 25000) { R.go = true; radio(r, p, 'go', `人到了，一起回防 ${alertOn}！`, now); return null; }
   return { goal: b.rgPt, look: S.c, face: true }; // 面朝包點倒退著走
 }
 // ---------- 機器人丟投擲物 ----------
