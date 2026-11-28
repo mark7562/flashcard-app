@@ -1102,7 +1102,7 @@ function exitMatch() {
   me.acting = null;
   setPickups([]);
   setDrops([]); closeBuy(false); teamEcon.clear(); reqs.clear(); myReq = null; me.armor = null; me.money = 0; renderReqs();
-  for (const id of ['econ', 'teamEcon', 'armorBox', 'pickPrompt', 'btnPick', 'btnDrop']) $(id).classList.add('hidden');
+  for (const id of ['econ', 'armorBox', 'pickPrompt', 'btnPick', 'btnDrop']) $(id).classList.add('hidden');
   me.role = null; me.reserve = null; me.maxHp = 100; zInfectAt = 0;
   $('zbar').classList.add('hidden');
   playing = false;
@@ -1171,6 +1171,7 @@ function openBuy() {
   document.body.classList.add('buying');
   firing = false;
   if (document.pointerLockElement) document.exitPointerLock();
+  $('bmInfo').textContent = '';
   renderBuy();
   $('buyMenu').classList.remove('hidden');
   uiClick();
@@ -1186,36 +1187,61 @@ function sendBuy(id) {
   pendingBuy.add(id);
   send({ t: 'buy', w: id });
 }
+// 商店的欄位：同類型的放在一起（像瓦羅蘭特那樣一欄一類）
+const SHOP_COLS = [
+  ['手槍', ['pistol', 'mpistol', 'revolver', 'deagle'], '#9fc3e6'],
+  ['衝鋒槍・霰彈槍', ['smg', 'shotgun', 'autoshotgun'], '#7dffa8'],
+  ['步槍', ['burst', 'carbine', 'rifle'], '#ffbe0b'],
+  ['狙擊槍・機槍', ['dmr', 'sniper', 'lmg'], '#ff6b8b'],
+  ['投擲物', ['flash', 'smoke', 'frag', 'stun', 'molotov', 'decoy'], '#c08bff'],
+  ['裝備', ['light', 'heavy', 'regen', 'kit'], '#3d9bff'],
+];
+function itemLine(id) {
+  const info = itemInfo(id), price = WPN.priceOf(id);
+  const parts = [`<b>${info.icon} ${info.name}</b>`, price ? fmt$(price) : '免費'];
+  if (WEAPONS[id] && !WEAPONS[id].nade) parts.push(`擊殺獎金 +${fmt$(WPN.rewardOf(id))}`);
+  if (info.desc && (ECON.armor[id] || id === 'kit' || WEAPONS[id]?.nade)) parts.push(info.desc);
+  else if (info.desc) parts.push(info.desc);
+  return parts.join(' · ');
+}
+const BUY_HINT = () => `點一下購買 · 錢不夠可以按「🙏」請隊友幫買${IS_TOUCH ? '' : ` · ${keyLabel('kit')} 關閉`}`;
 function renderBuy() {
   if (!buyOpen) return;
   $('bmMoney').textContent = fmt$(me.money);
-  for (const b of $('bmTabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.tab === buyTab);
-  const grid = $('bmGrid');
-  grid.replaceChildren();
-  for (const id of WPN.SHOP[buyTab]) {
-    if (id === 'kit' && me.team === room?.attackTeam) continue;
-    const info = itemInfo(id), st = buyState(id), price = WPN.priceOf(id);
-    const el = document.createElement('div');
-    el.className = 'bm-item' + (st.own ? ' own' : st.no ? ' no' : st.poor ? ' poor' : '');
-    const reward = WEAPONS[id] && !WEAPONS[id].nade ? `擊殺 +${fmt$(WPN.rewardOf(id))}` : '';
-    el.innerHTML = '<b></b><span class="bm-p"></span><span class="bm-r"></span><span class="bm-d"></span>';
-    el.querySelector('b').textContent = `${info.icon} ${info.name}`;
-    el.querySelector('.bm-p').textContent = price ? fmt$(price) : '免費';
-    el.querySelector('.bm-r').textContent = reward;
-    el.querySelector('.bm-d').textContent = st.why || (ECON.armor[id] || id === 'kit' ? info.desc : info.nade ? '' : '');
-    if (st.poor && !st.own && !st.no) {
-      const ask = document.createElement('button');
-      ask.className = 'bm-ask';
-      ask.textContent = myReq === id ? '已請求…' : '🙏 請隊友幫買';
-      ask.addEventListener('click', (e) => { e.stopPropagation(); askFor(id); });
-      el.append(ask);
+  const cols = $('bmCols');
+  cols.replaceChildren();
+  for (const [title, ids, color] of SHOP_COLS) {
+    const col = document.createElement('div');
+    col.className = 'bm-col';
+    const h = document.createElement('h5'); h.textContent = title; col.append(h);
+    for (const id of ids) {
+      if (id === 'kit' && me.team === room?.attackTeam) continue;
+      const info = itemInfo(id), st = buyState(id), price = WPN.priceOf(id);
+      const el = document.createElement('div');
+      el.className = 'bm-card' + (st.own ? ' own' : st.no ? ' no' : st.poor ? ' poor' : '');
+      el.style.setProperty('--cc', color);
+      el.innerHTML = '<span class="n"></span><span class="p"></span>';
+      el.querySelector('.n').textContent = `${info.icon} ${info.short && info.short.length < info.name.length && info.name.length > 5 ? info.short : info.name}`;
+      el.querySelector('.p').textContent = price ? fmt$(price) : '免費';
+      if (ECON.armor[id]) el.querySelector('.p').insertAdjacentHTML('beforeend', `<small>${ECON.armor[id].max} 點</small>`);
+      if (st.poor && !st.own && !st.no) {
+        const ask = document.createElement('button');
+        ask.className = 'ask' + (myReq === id ? ' on' : '');
+        ask.textContent = myReq === id ? '已請求' : '🙏';
+        ask.title = '請隊友幫買';
+        ask.addEventListener('click', (e) => { e.stopPropagation(); askFor(myReq === id ? null : id); });
+        el.append(ask);
+      }
+      el.addEventListener('pointerenter', () => { $('bmInfo').innerHTML = st.why ? `<b>${info.name}</b> · ${st.why}` : itemLine(id); });
+      el.addEventListener('pointerleave', () => { $('bmInfo').textContent = BUY_HINT(); });
+      el.addEventListener('click', () => {
+        if (st.own || st.no) { if (st.why) toast(st.why); return; }
+        if (st.poor) { toast('錢不夠，可以按 🙏 請隊友幫忙買'); return; }
+        sendBuy(id);
+      });
+      col.append(el);
     }
-    el.addEventListener('click', () => {
-      if (st.own || st.no) return;
-      if (st.poor) { toast('錢不夠，可以請隊友幫忙買 🙏'); return; }
-      sendBuy(id);
-    });
-    grid.append(el);
+    cols.append(col);
   }
   $('bmRebuy').disabled = !lastBuys.length;
   $('bmRebuy').title = lastBuys.map((id) => itemInfo(id)?.name).join('、');
@@ -1228,7 +1254,8 @@ function renderBuy() {
     c.addEventListener('click', () => askFor(null));
     rq.append(c);
   }
-  $('bmHint').textContent = IS_TOUCH ? '' : '1~4 換分頁 · B 關閉';
+  if (!$('bmInfo').textContent) $('bmInfo').textContent = BUY_HINT();
+  renderTeamEcon(performance.now(), true);
 }
 function askFor(id) {
   myReq = id;
@@ -1250,7 +1277,6 @@ function rebuy() {
 }
 $('bmClose').addEventListener('click', (e) => { e.stopPropagation(); closeBuy(); });
 $('bmRebuy').addEventListener('click', (e) => { e.stopPropagation(); rebuy(); });
-for (const b of $('bmTabs').querySelectorAll('button')) b.addEventListener('click', (e) => { e.stopPropagation(); buyTab = b.dataset.tab; uiClick(); renderBuy(); });
 // 收入明細：左下角一行一行跳出來
 function cashLine(text, cls = '') {
   const d = document.createElement('div');
@@ -1314,29 +1340,40 @@ function applyInv(m) {
   }
   updateAmmo(); updateMoney(); updateArmor();
 }
-// 隊友的經濟（準備時間在左邊顯示，計分板也看得到）
-function renderTeamEcon(now) {
-  const show = buyWindow(now) && !buyOpen && teamEcon.size > 0;
-  $('teamEcon').classList.toggle('hidden', !show);
-  if (!show || now - (renderTeamEcon.at || 0) < 250) return;
+// 隊友的經濟：只在商店裡顯示（左邊一欄），計分板也看得到
+function renderTeamEcon(now, force = false) {
+  if (!buyOpen || (!force && now - (renderTeamEcon.at || 0) < 250)) return;
   renderTeamEcon.at = now;
-  const box = $('teamEcon');
+  const box = $('bmTeam');
   box.replaceChildren();
+  const h = document.createElement('h5'); h.textContent = '隊伍經濟'; box.append(h);
   for (const [id, e] of teamEcon) {
     const row = document.createElement('div');
-    row.className = 'te-row' + (id === me.id ? ' me' : '') + ((id === me.id ? me.alive : remotes.get(id)?.alive) ? '' : ' dead');
+    row.className = 'bm-mate' + (id === me.id ? ' me' : '') + ((id === me.id ? me.alive : remotes.get(id)?.alive) ? '' : ' dead');
     row.style.setProperty('--tc', colorOf(id));
-    const n = document.createElement('span'); n.className = 'te-name'; n.textContent = nameOf(id);
-    const mm = document.createElement('span'); mm.className = 'te-m'; mm.textContent = fmt$(e.m);
-    const g = document.createElement('span'); g.className = 'te-g';
+    row.innerHTML = '<div class="r1"><span></span><b></b></div><div class="r2"></div>';
+    row.querySelector('.r1 span').textContent = nameOf(id) + (id === me.id ? '（你）' : '');
+    row.querySelector('.r1 b').textContent = fmt$(e.m);
     const gun = WEAPONS[e.p] || WEAPONS[e.s];
     const parts = [gun ? gun.short : '—'];
     if (e.a) parts.push(ECON.armor[e.a].icon);
     if (e.k) parts.push('✂');
     for (const t of [e.t1, e.t2]) if (t) parts.push(WEAPONS[t].icon);
-    g.textContent = parts.join(' ');
-    if (!e.p) g.classList.add('none');
-    row.append(n, mm, g);
+    row.querySelector('.r2').textContent = parts.join(' ');
+    if (!e.p) row.querySelector('.r2').classList.add('none');
+    // 這個隊友正在請人幫買：直接在這裡按
+    const w = reqs.get(id);
+    if (w && id !== me.id) {
+      const q = document.createElement('div');
+      q.className = 'rq2';
+      q.append(`🙏 ${itemInfo(w).name}`);
+      const b = document.createElement('button');
+      b.textContent = `幫買 ${fmt$(WPN.priceOf(w))}`;
+      b.disabled = me.money < WPN.priceOf(w) || !me.alive;
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); fund(id); });
+      q.append(b);
+      row.append(q);
+    }
     box.append(row);
   }
 }
@@ -1484,7 +1521,7 @@ function doDrop() {
 function updateCompHud(now) {
   const on = isComp() && playing;
   $('econ').classList.toggle('hidden', !on || !!specActive);
-  if (!on) { $('teamEcon').classList.add('hidden'); $('btnDrop').classList.add('hidden'); return; }
+  if (!on) { $('btnDrop').classList.add('hidden'); return; }
   if (buyOpen) {
     if (!canBuyNow(now)) { closeBuy(true); toast(buyWindow(now) ? '離開出生區了，不能再買' : '購買時間結束'); }
     else $('bmTime').textContent = `購買時間 ${Math.max(0, Math.ceil((buyEnd - now) / 1000))} 秒`;
@@ -2144,7 +2181,6 @@ function onInput(code, down) {
   if (a === 'use') { if (down) { if (canAct()) startAct(); else doPick(); } else stopAct(); } // 爆破競賽：旁邊沒有炸彈可以埋／拆的時候 = 撿東西
   if (a === 'drop' && down) doDrop();
   if (a === 'fund' && down) fund();
-  if (buyOpen && down && (a === 'w1' || a === 'w2' || a === 'w3' || a === 'w4')) { buyTab = ['primary', 'secondary', 'throw', 'gear'][Number(a[1]) - 1]; renderBuy(); return true; }
   if (a === 'w4' && down) cycleNade();
   if (a === 'jump' && down) jumpQueued = true;
   if (a === 'reload' && down) startReload();

@@ -247,7 +247,7 @@
       </div>
     </section>
 
-    <div class="ver">v1.36</div>
+    <div class="ver">v1.37</div>
   </div>
 
   <!-- ===== 設定（標題畫面和遊戲中都能開） ===== -->
@@ -410,16 +410,12 @@
     <div id="wslots"></div>
     <!-- 爆破競賽：錢、收入明細、隊友經濟、撿東西提示、隊友的請求、商店 -->
     <div id="econ" class="hidden"><div id="cashFeed"></div><div id="money">$0</div></div>
-    <div id="teamEcon" class="hidden"></div>
     <div id="reqList"></div>
     <div id="pickPrompt" class="hidden"></div>
     <div id="buyMenu" class="hidden">
-      <div class="bm-head"><b>🛒 商店</b><span id="bmMoney"></span><span id="bmTime"></span><button id="bmClose" class="bm-x">✕</button></div>
-      <div id="bmTabs" class="bm-tabs">
-        <button data-tab="primary" class="on">主武器</button><button data-tab="secondary">手槍</button><button data-tab="throw">投擲物</button><button data-tab="gear">裝備</button>
-      </div>
-      <div id="bmGrid" class="bm-grid"></div>
-      <div class="bm-foot"><button id="bmRebuy" class="bm-btn">↻ 重複上次購買</button><span id="bmReq"></span><span id="bmHint" class="bm-hint"></span></div>
+      <div class="bm-top"><span class="bm-title">商店</span><span id="bmMoney"></span><span id="bmTime"></span><span id="bmReq"></span><span class="bm-sp"></span><button id="bmRebuy" class="bm-btn">↻ 重複上次購買</button><button id="bmClose" class="bm-x">✕</button></div>
+      <div class="bm-body"><div id="bmTeam" class="bm-team"></div><div id="bmCols" class="bm-cols"></div></div>
+      <div id="bmInfo" class="bm-info"></div>
     </div>
     <button id="kitChip" class="hidden"></button>
     <div id="kitPick" class="hidden"><div class="kp-title">換套裝 <span class="kp-x">✕</span></div><div id="kitCards" class="kitcards"></div><div id="kitHint" class="hint"></div></div>
