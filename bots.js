@@ -1380,6 +1380,10 @@ function bombObjective(p, b, r, nav, now) {
     const anchor = role !== 'mid' && b.level !== 'easy' && same[0] === p && !sure;
     if (!anchor) role = alertOn;
   }
+  // 先退再會合：確定是主攻、而且人數明顯比較少 → 不要一個一個送上去
+  // 守那個點的人先退到點外的集合點，回防的人也先到集合點；湊到 3 個人（或等太久、時間快不夠）再一起進點
+  const rg = regroup(p, b, r, now, plan, alertOn, map, nav);
+  if (rg) return rg;
   let hp;
   if (role === b.role) {
     // 守點：交火過（或被打）之後換個位置，不會一整回合站同一點
@@ -1400,6 +1404,29 @@ function bombObjective(p, b, r, nav, now) {
   const ent = map.entries[role];
   const look = b.retakeHold && role === b.role ? site(role).c : ent[(b.entryIdx ?? (b.entryIdx = Math.floor(Math.random() * ent.length))) % ent.length];
   return { goal: hp, look };
+}
+function regroup(p, b, r, now, plan, alertOn, map, nav) {
+  if (!alertOn || b.level === 'easy' || b.flank) return null;
+  const S = MAP.get(r.rules.map).sites.find((x) => x.id === alertOn);
+  const defs = [...r.players.values()].filter((q) => q.alive && q.team === p.team);
+  let R = plan.rg;
+  if (!R || R.site !== alertOn) {
+    const info = siteIntel(r, alertOn, now);
+    if (!(info.n >= 3 || info.carrier)) return null;
+    const inSite = defs.filter((q) => Math.hypot(q.x - S.c[0], q.z - S.c[1]) < 20).length;
+    if (info.n - inSite < 2) return null; // 人數差不多：照原本的守法
+    R = plan.rg = { site: alertOn, at: now, go: false };
+  }
+  if (R.go) return null;
+  const pts = map.rally[alertOn];
+  if (b.rgRound !== r.round || b.rgSite !== alertOn) {
+    b.rgRound = r.round; b.rgSite = alertOn;
+    b.rgPt = [...pts].sort((a, c) => Math.hypot(a[0] - p.x, a[1] - p.z) - Math.hypot(c[0] - p.x, c[1] - p.z))[0];
+    b.rgPt = nearPt(nav, b.rgPt[0], b.rgPt[1], 2.5);
+  }
+  const ready = defs.filter((q) => pts.some((pt) => Math.hypot(q.x - pt[0], q.z - pt[1]) < 9)).length;
+  if (ready >= Math.min(3, defs.length) || now - R.at > 10000 || r.phaseUntil - now < 25000) { R.go = true; return null; }
+  return { goal: b.rgPt, look: S.c };
 }
 // ---------- 機器人丟投擲物 ----------
 const NADE_USE = { easy: 0.25, normal: 0.65, hard: 0.95 };
