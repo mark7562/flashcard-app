@@ -11,7 +11,9 @@ const { WEAPONS } = WPN;
 // track：瞄準修正速度  head：瞄頭的機率  burst / pause：連射幾發、停多久
 // strafe：交戰時左右閃的機率  retreatHp：血量低於多少會躲  hear：聽得到多遠的槍聲
 // reactPerM：距離每多 1 公尺，反應再慢幾毫秒  spray：連射時每發多散多少（倍率）
-// range：最遠看得到多遠  error 會隨距離變大（每 rangeFalloff 公尺多一倍誤差）
+// 視野跟玩家一樣：沒被牆或煙擋住就看得到（沒有距離限制），fov：前方左右各幾弧度（玩家大約 0.96）
+// notice：遠處（25 公尺外）每多 1 公尺要多看幾毫秒才會注意到（站著不動的人更難發現）
+// error 會隨距離變大（每 rangeFalloff 公尺多一倍誤差）
 // knife：敵人貼很近時拔刀的機率  pistol：主武器打完會不會切手槍（不然就原地換彈）
 // spot：巡邏時去搶戰術位置（高台、掩體）的機率  guardMs：守點多久  jumpy：閃躲時順便跳的機率
 const MEMORY_MS = 800; // 敵人躲起來多久之內還算「在交戰」
@@ -20,17 +22,17 @@ const LEVELS = {
   easy: {
     label: '新手', react: [950, 1400], reactPerM: 16, reactPerRad: 520, turn: 2.4, error: 0.11, track: 0.5, head: 0.01,
     burst: [2, 3], pause: [650, 1100], spray: 0.25, strafe: 0, retreatHp: 0, hear: 0, flank: false,
-    fov: 0.9, range: 22, rangeFalloff: 15, speed: 4.8, spot: 0.15, guardMs: [2000, 4000], jumpy: 0, knife: 0, pistol: false,
+    fov: 0.85, notice: 30, rangeFalloff: 20, speed: 4.8, spot: 0.15, guardMs: [2000, 4000], jumpy: 0, knife: 0, pistol: false,
   },
   normal: {
     label: '普通', react: [520, 800], reactPerM: 12, reactPerRad: 320, turn: 3.8, error: 0.06, track: 0.9, head: 0.08,
     burst: [3, 5], pause: [380, 650], spray: 0.18, strafe: 0.4, retreatHp: 30, hear: 24, flank: false,
-    fov: 1.2, range: 30, rangeFalloff: 20, speed: 5.8, spot: 0.45, guardMs: [3000, 6000], jumpy: 0.1, knife: 0.25, pistol: true,
+    fov: 0.96, notice: 18, rangeFalloff: 30, speed: 5.8, spot: 0.45, guardMs: [3000, 6000], jumpy: 0.1, knife: 0.25, pistol: true,
   },
   hard: {
     label: '老手', react: [270, 420], reactPerM: 7, reactPerRad: 200, turn: 5.5, error: 0.032, track: 2, head: 0.25,
     burst: [4, 7], pause: [240, 420], spray: 0.12, strafe: 0.9, retreatHp: 35, hear: 40, flank: true,
-    fov: 1.4, range: 42, rangeFalloff: 28, speed: 6.3, spot: 0.6, guardMs: [3500, 7000], jumpy: 0.25, knife: 0.5, pistol: true,
+    fov: 1.0, notice: 10, rangeFalloff: 45, speed: 6.3, spot: 0.6, guardMs: [3500, 7000], jumpy: 0.25, knife: 0.5, pistol: true,
   },
 };
 
@@ -497,6 +499,7 @@ function damaged(p, attacker, now) {
   const b = p.bot;
   if (!p.alive) return;
   b.hurtAt = now;
+  b.hurtBy = attacker.id;
   b.hurtFrom = [attacker.x, attacker.z];
   if (WPN.isBombMode(p.room?.mode)) {
     teamSaw(p.room, p.team, attacker, now); // 隊友也知道那邊有人
@@ -649,15 +652,23 @@ function think(p, r, now, dt, api) {
 
   // ---- 視覺：找看得到的最近敵人 ----
   let seen = null, bestD = Infinity;
-  const longGun = !!WEAPONS[p.loadout.primary]?.ads?.scope; // 拿狙擊槍看得比較遠
+  const longGun = !!WEAPONS[p.loadout.primary]?.ads?.scope; // 拿狙擊槍：開鏡看遠的比較快發現
   const blind = (b.blindUntil || 0) > now; // 被閃光彈閃到：什麼都看不到
+  b.notice = b.notice || new Map(); // 每個敵人已經在視野裡看了多久
   for (const q of r.players.values()) {
-    if (blind) break;
-    if (q.team === p.team || !q.alive) continue;
+    if (q.team === p.team || !q.alive) { b.notice.delete(q.id); continue; }
     const dx = q.x - p.x, dz = q.z - p.z, dist = Math.hypot(dx, dz);
-    if (dist > c.range * (longGun ? 1.5 : 1)) continue;
-    const inView = Math.abs(angleDiff(yawTo(dx, dz), p.yaw)) < c.fov || dist < 4 || q.id === b.target;
-    if (!inView || !canSee(p, q, map.boxes, r.smokes, now)) continue;
+    // 跟玩家一樣：在畫面範圍內、沒被牆或煙擋住就看得到（沒有距離限制）
+    const inView = !blind && dist < 130 && (Math.abs(angleDiff(yawTo(dx, dz), p.yaw)) < c.fov || dist < 4 || q.id === b.target);
+    if (!inView || !canSee(p, q, map.boxes, r.smokes, now)) { b.notice.delete(q.id); continue; }
+    // 遠處的人在畫面上很小：要看一下才注意到；在跑的人比較顯眼；被他打過、剛剛還在打的人馬上認得
+    const h = q.history, n = h?.length || 0;
+    const moving = n >= 3 && Math.hypot(h[n - 1].x - h[n - 3].x, h[n - 1].z - h[n - 3].z) > 0.25;
+    const known = q.id === b.target || (q.id === b.lastTarget && now - b.lastSeenAt < 3000) || (b.hurtBy === q.id && now - (b.hurtAt || 0) < 2500);
+    const need = known || dist <= 25 ? 0 : (dist - 25) * c.notice * (moving ? 0.5 : 1) * (longGun ? 0.6 : 1);
+    const t = (b.notice.get(q.id) || 0) + dt * 1000;
+    b.notice.set(q.id, t);
+    if (t < need) continue;
     if (dist < bestD) { bestD = dist; seen = q; }
   }
 
@@ -902,6 +913,17 @@ function think(p, r, now, dt, api) {
           o.look = b.hurtFrom;
         }
       }
+      // 假打：沒看到人也朝包點開幾槍，讓防守方以為要打這邊
+      if (o.noise && !seen && W.mag && ammo > 0 && !p.reloadUntil && now >= (b.noiseAt || 0) && now >= b.nextShotAt) {
+        const ny = yawTo(o.look[0] - p.x, o.look[1] - p.z);
+        if (Math.abs(angleDiff(ny, p.yaw)) < 0.35) {
+          const jy = p.yaw + randn() * 0.05, jp = 0.03 + randn() * 0.03, cp = Math.cos(jp);
+          api.shoot(p, { d: [-Math.sin(jy) * cp, Math.sin(jp), -Math.cos(jy) * cp], o: [p.x, eyeY, p.z], s: (Math.random() * 1e9) | 0 });
+          b.noiseN = (b.noiseN || 0) + 1;
+          b.nextShotAt = now + Math.max(W.fireMs, 90);
+          if (b.noiseN >= randInt(2, 4)) { b.noiseN = 0; b.noiseAt = now + rand(900, 2000); }
+        }
+      }
       if (o.act) {
         if (!p.actKind) api.act(p, { on: true });
         lookYaw = yawTo(o.look[0] - p.x, o.look[1] - p.z);
@@ -979,7 +1001,7 @@ function think(p, r, now, dt, api) {
   // ---- 轉身 ----
   // ---- 投擲物 ----
   if (WPN.isBombMode(r.mode)) {
-    const t = nadeBrain(p, b, r, now, api, tgt || null);
+    const t = nadeBrain(p, b, r, now, api, !!seen);
     if (t) { lookYaw = t.yaw; lookPitch = t.pitch; }
     // 站在火裡：往外走
     for (const f of r.fires || []) {
@@ -1046,17 +1068,117 @@ function nearPt(nav, x, z, r) {
   }
   return [x, z];
 }
+// ---- 防守位置：從地圖上自動找（旁邊有掩體、看得到入口），每張地圖算一次 ----
+// inside：包點裡面／旁邊  fwd：包點外往進攻方那邊前壓的位置  mid：中路
+function coverNear(boxes, x, z, y) {
+  for (const b of boxes) {
+    if (b.max[1] < y + 1.0 || b.min[1] > y + 0.3) continue;
+    if (x > b.min[0] - 1.0 && x < b.max[0] + 1.0 && z > b.min[2] - 1.0 && z < b.max[2] + 1.0) return true;
+  }
+  return false;
+}
+function defPositions(nav) {
+  const map = nav.map;
+  if (map._defPos) return map._defPos;
+  const boxes = map.boxes;
+  const sample = (x1, z1, x2, z2, tries, ok) => {
+    const out = [];
+    for (let i = 0; i < tries; i++) {
+      const x = rand(x1, x2), z = rand(z1, z2);
+      const k = nav.cellOf(x, z);
+      if (!nav.ok[k] || !nav.reach[k] || nav.edge[k]) continue;
+      const y = nav.h[k];
+      if (!coverNear(boxes, x, z, y)) continue;
+      const sc = ok(x, z, y);
+      if (sc > 0) out.push({ x, z, y, sc: sc + Math.random() });
+    }
+    return out;
+  };
+  const sees = (x, z, y, pts, min, max) => pts.filter(([ex, ez]) => {
+    const d = Math.hypot(ex - x, ez - z);
+    if (d < min || d > max) return false;
+    const ey = nav.h[nav.cellOf(ex, ez)] || 0;
+    return !segmentBlocked([x, y + 1.5, z], [ex, ey + 1.2, ez], boxes);
+  }).length;
+  // 分散：彼此至少隔 3.5 公尺，最多 n 個
+  const spread = (list, n, extra = []) => {
+    const out = extra.map(([x, z]) => [x, z]);
+    for (const c of list.sort((a, b) => b.sc - a.sc)) {
+      if (out.length >= n) break;
+      if (out.some(([x, z]) => Math.hypot(x - c.x, z - c.z) < 3.5)) continue;
+      out.push([+c.x.toFixed(2), +c.z.toFixed(2)]);
+    }
+    return out;
+  };
+  const res = { inside: {}, fwd: {}, mid: [] };
+  for (const st of map.sites || []) {
+    const ent = map.entries[st.id];
+    res.inside[st.id] = spread(sample(st.x1 - 4, st.z1 - 4, st.x2 + 4, st.z2 + 4, 900, (x, z, y) => sees(x, z, y, ent, 5, 40)), 16, map.holds[st.id]);
+    // 前壓：每個入口往外 3～12 公尺（離包點中心不超過 30 公尺），看得到入口
+    const fw = [];
+    for (const [ex, ez] of ent) {
+      const dx = ex - st.c[0], dz = ez - st.c[1], dl = Math.hypot(dx, dz) || 1;
+      const ux = dx / dl, uz = dz / dl;
+      for (let i = 0; i < 160; i++) {
+        const t = rand(3, 12), l = rand(-5, 5);
+        const x = ex + ux * t - uz * l, z = ez + uz * t + ux * l;
+        if (inRect(st, x, z) || Math.hypot(x - st.c[0], z - st.c[1]) > 30) continue;
+        const k = nav.cellOf(x, z);
+        if (!nav.ok[k] || !nav.reach[k] || nav.edge[k] || !coverNear(boxes, x, z, nav.h[k])) continue;
+        if (MAP.inSpawn && map.spawnZones && map.spawnZones.some((sz) => x >= sz.x1 && x <= sz.x2 && z >= sz.z1 && z <= sz.z2)) continue;
+        fw.push({ x, z, y: nav.h[k], sc: Math.random(), look: [x + ux * 20, z + uz * 20] });
+      }
+    }
+    res.fwd[st.id] = spread(fw, 6).map(([x, z]) => { const f = fw.find((c) => Math.abs(c.x - x) < 0.01 && Math.abs(c.z - z) < 0.01); return [x, z, f ? f.look : st.c]; });
+  }
+  if (map.holds.mid) {
+    const ent = map.entries.mid || [];
+    const xs = map.holds.mid.map((h) => h[0]), zs = map.holds.mid.map((h) => h[1]);
+    res.mid = spread(sample(Math.min(...xs) - 6, Math.min(...zs) - 6, Math.max(...xs) + 6, Math.max(...zs) + 8, 500, (x, z, y) => sees(x, z, y, ent, 4, 35)), 8, map.holds.mid);
+  }
+  map._defPos = res;
+  return res;
+}
+// ---- 每回合挑一種打法（同一種不會一直重複；難度越高花樣越多） ----
+const ATK_TYPES = { easy: { together: 85, split: 10, pinch: 5, fake: 0 }, normal: { together: 40, split: 25, pinch: 15, fake: 20 }, hard: { together: 30, split: 25, pinch: 20, fake: 25 } };
+const DEF_TYPES = { easy: { standard: 70, stack: 15, push: 15, flank: 0, retake: 0 }, normal: { standard: 40, stack: 15, push: 20, flank: 15, retake: 10 }, hard: { standard: 30, stack: 15, push: 20, flank: 20, retake: 15 } };
+function teamLevel(r, team) {
+  const n = {};
+  for (const q of r.players.values()) if (q.bot && q.team === team) n[q.bot.level] = (n[q.bot.level] || 0) + 1;
+  return Object.entries(n).sort((a, b) => b[1] - a[1])[0]?.[0] || 'normal';
+}
+function pickType(table, recent) {
+  const t = { ...table };
+  // 上一回合用過的機率減半、連續兩回合用過的就不用
+  if (recent[0]) t[recent[0]] = (t[recent[0]] || 0) * (recent[0] === recent[1] ? 0 : 0.5);
+  return weighted(Object.values(t).some((v) => v > 0) ? t : table);
+}
 function teamPlan(r, now) {
   if (!r.botPlan || r.botPlan.round !== r.round) {
-    r.botPlan = { round: r.round, site: Math.random() < 0.5 ? 'A' : 'B', execAt: now + rand(5000, 16000), alert: null, alertAt: 0, start: now, stageIdx: Math.floor(Math.random() * 2), go: false };
+    const site = Math.random() < 0.5 ? 'A' : 'B', other = site === 'A' ? 'B' : 'A';
+    r.atkHist = r.atkHist || []; r.defHist = r.defHist || [];
+    const type = pickType(ATK_TYPES[teamLevel(r, r.attackTeam)] || ATK_TYPES.normal, r.atkHist);
+    const def = pickType(DEF_TYPES[teamLevel(r, 1 - r.attackTeam)] || DEF_TYPES.normal, r.defHist);
+    r.atkHist.unshift(type); r.defHist.unshift(def);
+    r.botPlan = {
+      round: r.round, site, fake: other, type, phase: 'stage', execAt: now + rand(5000, 14000), alert: null, alertAt: 0, start: now,
+      stageIdx: Math.floor(Math.random() * 2), go: false,
+      def, stack: Math.random() < 0.5 ? 'A' : 'B', // 防守方這回合的打法（堆點的話堆哪邊）
+    };
   }
   const plan = r.botPlan;
   const hurry = r.phaseUntil - now < 45000 && (!r.bomb || r.bomb.state !== 'planted'); // 時間不多了：直接衝
-  if (!plan.go && (hurry || now >= plan.execAt)) {
-    // 等隊友到齊再一起衝（最多多等 10 秒）
-    const mates = [...r.players.values()].filter((q) => q.alive && q.bot && q.team === r.attackTeam);
+  if (plan.phase === 'fake') {
+    // 假打 7 秒：然後全隊轉去真正要打的包點，在那邊的集合點重新集合
+    if (now - plan.fakeAt > 7000 || hurry) { plan.phase = 'move'; plan.go = false; plan.execAt = now; }
+  } else if (!plan.go && (hurry || now >= plan.execAt)) {
+    // 等隊友到齊再一起衝（最多多等 10 秒）；去繞後的人不用等
+    const mates = [...r.players.values()].filter((q) => q.alive && q.bot && q.team === r.attackTeam && q.bot.atkRole !== 'lurk');
     const ready = mates.filter((q) => q.bot.stagePt && Math.hypot(q.x - q.bot.stagePt[0], q.z - q.bot.stagePt[1]) < 7).length;
-    if (hurry || ready >= mates.length - 1 || now > plan.execAt + 10000) { plan.go = true; plan.execAt = now; }
+    if (hurry || ready >= mates.length - 1 || now > plan.execAt + 10000) {
+      if (plan.type === 'fake' && plan.phase === 'stage' && !hurry) { plan.phase = 'fake'; plan.fakeAt = now; plan.execAt = now; }
+      else { plan.go = true; plan.execAt = now; plan.phase = 'exec'; }
+    }
   }
   return plan;
 }
@@ -1068,21 +1190,59 @@ function bombObjective(p, b, r, nav, now) {
   if (b.objRound !== r.round) {
     // 每回合分配一次任務
     b.objRound = r.round;
-    const mates = [...r.players.values()].filter((q) => q.team === p.team && q.bot).map((q) => q.id).sort((a, c) => a - c);
+    const bots = [...r.players.values()].filter((q) => q.team === p.team && q.bot);
+    const mates = bots.map((q) => q.id).sort((a, c) => a - c);
     const idx = mates.indexOf(p.id);
-    const st = map.stage[plan.site];
-    b.stagePt = nearPt(nav, ...st[plan.stageIdx % st.length], 3); // 全隊同一個集合點，一起走同一條路
+    b.postPt = null; b.forward = false; b.flank = null; b.stageFor = null; b.lurkPt = null; b.holdSetAt = now;
+    if (attack) {
+      // ---- 進攻：一起打／4-1（一個人去另一邊繞後）／夾擊（兩條路）／假打 ----
+      const carrierId = bomb && bomb.state === 'carried' ? bomb.carrier : 0;
+      const free = bots.filter((q) => q.id !== carrierId).sort((a, c) => (c.bot.pers?.risk || 0) - (a.bot.pers?.risk || 0) || a.id - c.id).map((q) => q.id);
+      const n = bots.length, fi = free.indexOf(p.id);
+      b.atkRole = 'main';
+      if (plan.type === 'split' && n >= 3 && fi === 0) b.atkRole = 'lurk';
+      if (plan.type === 'pinch' && n >= 3 && fi >= 0 && fi >= free.length - (n >= 4 ? 2 : 1)) b.atkRole = 'pinch';
+      if (plan.type === 'fake' && fi >= 0 && fi < (n >= 5 ? 3 : 2)) b.atkRole = 'faker';
+      const st = map.stage[plan.site], ot = map.stage[plan.fake];
+      if (b.atkRole === 'lurk') b.stagePt = nearPt(nav, ...ot[Math.floor(Math.random() * ot.length)], 3);
+      else if (b.atkRole === 'pinch') b.stagePt = nearPt(nav, ...st[(plan.stageIdx + 1) % st.length], 3);
+      else if (plan.type === 'fake') b.stagePt = nearPt(nav, ...ot[plan.stageIdx % ot.length], 3);
+      else b.stagePt = nearPt(nav, ...st[plan.stageIdx % st.length], 3); // 同一個集合點，一起走同一條路
+      if (b.atkRole === 'faker' || b.atkRole === 'lurk') {
+        // 假打／繞後：去另一個包點最靠近進攻方的入口附近
+        const ent = [...map.entries[plan.fake]].sort((a, c) => Math.hypot(a[0] - b.stagePt[0], a[1] - b.stagePt[1]) - Math.hypot(c[0] - b.stagePt[0], c[1] - b.stagePt[1]));
+        const e = ent[Math.floor(Math.random() * Math.min(2, ent.length))];
+        b.fakePt = nearPt(nav, e[0], e[1], 2.5);
+        b.lurkPt = b.fakePt;
+      }
+    } else b.atkRole = null;
     b.sitePt = pointIn(nav, site(plan.site));
     // 沒拿炸彈的人：進包點後各自找掩體、盯著防守方會進來的地方
     const posts = map.post[plan.site];
     b.prePost = posts[(idx + 1) % posts.length];
     const rf = map.retakeFrom[plan.site];
     b.preLook = rf[idx % rf.length];
-    b.role = ['A', 'B', 'mid', 'A', 'B'][idx % 5];
-    const h = map.holds[b.role];
-    b.holdPt = h[(idx + Math.floor(Math.random() * h.length)) % h.length];
-    b.postPt = null;
-    b.rotate = b.role === 'mid' || Math.random() < 0.75;
+    if (!attack) {
+      // ---- 防守：標準 2-1-2／堆點／前壓／繞後／點外等回防 ----
+      const S = plan.stack, O = S === 'A' ? 'B' : 'A';
+      b.role = (plan.def === 'stack' ? [S, O, 'mid', S, S] : ['A', 'B', 'mid', 'A', 'B'])[idx % 5];
+      const pos = defPositions(nav);
+      const pool = b.role === 'mid' ? pos.mid : pos.inside[b.role];
+      b.holdPt = pool[Math.floor(Math.random() * pool.length)];
+      if (plan.def === 'retake' && b.role !== 'mid') {
+        const rl = map.rally[b.role];
+        b.holdPt = nearPt(nav, ...rl[Math.floor(Math.random() * rl.length)], 2.5);
+        b.retakeHold = true;
+      } else b.retakeHold = false;
+      // 前壓：最敢衝的 1～2 個人開局先往外壓
+      const brave = bots.filter((q) => q.bot.role !== 'mid' || q === p).sort((a, c) => (c.bot.pers?.risk || 0) - (a.bot.pers?.risk || 0)).map((q) => q.id);
+      if (plan.def === 'push' && b.role !== 'mid' && brave.indexOf(p.id) < (bots.length >= 4 ? 2 : 1) && pos.fwd[b.role]?.length) {
+        const f = pos.fwd[b.role][Math.floor(Math.random() * pos.fwd[b.role].length)];
+        b.forward = true; b.fwdPt = [f[0], f[1]]; b.fwdLook = f[2]; b.fwdUntil = now + rand(15000, 28000);
+      }
+      // 繞後：守中路的那個人等進攻方衝點，再從他們後面打
+      if (plan.def === 'flank' && b.role === 'mid') b.flank = { site: null, pt: null, reached: false };
+    }
   }
   if (bomb && bomb.state === 'planted') {
     const s = site(bomb.site);
@@ -1134,8 +1294,27 @@ function bombObjective(p, b, r, nav, now) {
         return { goal: [bomb.x, bomb.z], look: [bomb.x, bomb.z] };
       }
     }
-    const carrier = bomb && bomb.state === 'carried' && bomb.carrier === p.id;
+    const carrier = !!(bomb && bomb.state === 'carried' && bomb.carrier === p.id);
+    if (b.objRound === r.round && b.lurkRound !== r.round) { b.lurkRound = r.round; b.lurkGo = false; }
     const target = site(plan.site);
+    // 假打結束：轉去真正要打的包點集合
+    if (plan.type === 'fake' && (plan.phase === 'move' || plan.phase === 'exec') && b.stageFor !== 'real') {
+      b.stageFor = 'real';
+      const st = map.stage[plan.site];
+      b.stagePt = nearPt(nav, ...st[plan.stageIdx % st.length], 3);
+    }
+    // 繞後的人：躲在另一個包點的入口，抓回防的人；衝點 25 秒後（或時間不多）再去跟隊友會合
+    if (b.atkRole === 'lurk' && carrier === false && !(plan.go && now - plan.execAt > 25000) && r.phaseUntil - now > 30000) {
+      const near = Math.hypot(p.x - b.stagePt[0], p.z - b.stagePt[1]) < 6;
+      if (!plan.go && !near && !b.lurkGo) return { goal: b.stagePt, look: site(plan.fake).c };
+      b.lurkGo = true;
+      return { goal: b.lurkPt, look: site(plan.fake).c };
+    }
+    // 假打：幾個人衝進另一個包點的入口開槍、丟投擲物，其他人在那邊的集合點等
+    if (plan.phase === 'fake') {
+      if (b.atkRole === 'faker') return { goal: b.fakePt, look: site(plan.fake).c, noise: true };
+      return { goal: b.stagePt, look: site(plan.fake).c };
+    }
     if (!plan.go) return { goal: b.stagePt, look: target.c }; // 集合，等到齊一起衝
     if (carrier) {
       const inSite = inRect(target, p.x, p.z) || map.sites.some((s) => inRect(s, p.x, p.z));
@@ -1148,13 +1327,55 @@ function bombObjective(p, b, r, nav, now) {
     const nearSite = Math.hypot(p.x - target.c[0], p.z - target.c[1]) < 16;
     return nearSite ? { goal: b.prePost, look: b.preLook } : { goal: b.sitePt, look: [target.c[0], target.c[1] - 15] };
   }
-  // 防守方：守點；隊友在某個包點發現敵人 → 一部分人轉過去支援
+  // ---- 防守方 ----
+  const pos = defPositions(nav);
+  const alertOn = plan.alert && now - plan.alertAt < 20000 ? plan.alert : null;
+  const contact = (b.lastSeenAt || 0) > plan.start || now - (b.hurtAt || 0) < 3000;
+  // 前壓：開局在包點外面等，看到人、被打、或時間到就退回包點
+  if (b.forward) {
+    if (now < b.fwdUntil && !contact && !alertOn) return { goal: b.fwdPt, look: b.fwdLook };
+    if (!contact || now - (b.lastSeenAt || 0) > 1500) b.forward = false;
+    else return { goal: b.fwdPt, look: b.fwdLook };
+  }
+  // 繞後：先在中路等，知道進攻方打哪邊（或過了 35 秒）就繞到他們集合的地方，再從背後進包點
+  if (b.flank) {
+    const F = b.flank;
+    if (!F.site) F.site = alertOn || (now - plan.start > 35000 ? (Math.random() < 0.5 ? 'A' : 'B') : null);
+    if (!F.site) return { goal: b.holdPt, look: (map.entries.mid || [[0, 0]])[0] };
+    if (!F.pt) { const st = map.stage[F.site]; F.pt = nearPt(nav, ...st[Math.floor(Math.random() * st.length)], 3); }
+    if (!F.reached && Math.hypot(p.x - F.pt[0], p.z - F.pt[1]) > 4) return { goal: F.pt, look: site(F.site).c };
+    F.reached = true;
+    if (!F.ent) { const ent = [...map.entries[F.site]].sort((a, c) => Math.hypot(a[0] - F.pt[0], a[1] - F.pt[1]) - Math.hypot(c[0] - F.pt[0], c[1] - F.pt[1])); F.ent = ent[0]; }
+    return { goal: F.ent, look: site(F.site).c };
+  }
+  // 回防：隊友（包括真人）在某個包點跟敵人交火、陣亡 → 大部分人過去支援；
+  // 每個包點留最穩的那個人守（避免被假打騙走），新手不會留人
   let role = b.role;
-  if (plan.alert && now - plan.alertAt < 20000 && b.rotate && plan.alert !== role) role = plan.alert;
-  const hp = role === b.role ? b.holdPt : (b.rotPt && b.rotRole === role ? b.rotPt : (b.rotRole = role, b.rotPt = map.holds[role][Math.floor(Math.random() * map.holds[role].length)]));
-  // 盯著這個區域的某個入口（每個人盯不同的入口）
+  if (alertOn && alertOn !== role) {
+    const same = [...r.players.values()].filter((q) => q.alive && q.bot && q.team === p.team && q.bot.role === role && !q.bot.flank)
+      .sort((a, c) => (a.bot.pers?.risk || 0) - (c.bot.pers?.risk || 0) || a.id - c.id);
+    const anchor = role !== 'mid' && b.level !== 'easy' && same[0] === p;
+    if (!anchor) role = alertOn;
+  }
+  let hp;
+  if (role === b.role) {
+    // 守點：交火過（或被打）之後換個位置，不會一整回合站同一點
+    const pool = role === 'mid' ? pos.mid : pos.inside[role];
+    const moved = ((b.lastSeenAt || 0) > b.holdSetAt || (b.hurtAt || 0) > b.holdSetAt) && now - Math.max(b.lastSeenAt || 0, b.hurtAt || 0) > 2500 && now - b.holdSetAt > 4000;
+    if (moved && !b.retakeHold && pool.length > 1) {
+      const far = pool.filter((h) => Math.hypot(h[0] - b.holdPt[0], h[1] - b.holdPt[1]) > 4);
+      b.holdPt = (far.length ? far : pool)[Math.floor(Math.random() * (far.length || pool.length))];
+      b.holdSetAt = now;
+    }
+    hp = b.holdPt;
+  } else {
+    const pool = role === 'mid' ? pos.mid : pos.inside[role];
+    if (!b.rotPt || b.rotRole !== role) { b.rotRole = role; b.rotPt = pool[Math.floor(Math.random() * pool.length)]; }
+    hp = b.rotPt;
+  }
+  // 盯著這個區域的某個入口（每個人盯不同的入口）；在點外等回防的人盯著包點
   const ent = map.entries[role];
-  const look = ent[(b.entryIdx ?? (b.entryIdx = Math.floor(Math.random() * ent.length))) % ent.length];
+  const look = b.retakeHold && role === b.role ? site(role).c : ent[(b.entryIdx ?? (b.entryIdx = Math.floor(Math.random() * ent.length))) % ent.length];
   return { goal: hp, look };
 }
 // ---------- 機器人丟投擲物 ----------
@@ -1180,7 +1401,7 @@ function solveThrow(boxes, eye, target, kind) {
   return best;
 }
 // 每一格：要不要丟、丟到哪裡；正在丟的話回傳要看的方向
-function nadeBrain(p, b, r, now, api, enemy) {
+function nadeBrain(p, b, r, now, api, seeing) {
   const map = MAP.get(r.rules.map);
   if (b.throwing) {
     const t = b.throwing;
@@ -1202,11 +1423,13 @@ function nadeBrain(p, b, r, now, api, enemy) {
   const eye = [p.x, p.y + 1.6, p.z];
   let pick = null;
   const attack = p.team === r.attackTeam;
-  if (attack && plan && bomb && bomb.state !== 'planted' && now >= plan.execAt && now - plan.execAt < 6000 && b.stagePt && Math.hypot(b.stagePt[0] - p.x, b.stagePt[1] - p.z) < 8) {
-    // 進攻：衝點前對包點丟煙（擋住守點的人）和閃光
-    const site = map.sites.find((s) => s.id === plan.site);
+  const faking = plan && (plan.phase === 'fake' || (plan.type === 'fake' && plan.phase === 'stage'));
+  const nadeSite = faking ? plan.fake : plan?.site;
+  if (attack && plan && bomb && bomb.state !== 'planted' && b.atkRole !== 'lurk' && now >= plan.execAt && now - plan.execAt < 6000 && b.stagePt && (Math.hypot(b.stagePt[0] - p.x, b.stagePt[1] - p.z) < 8 || (plan.phase === 'fake' && b.atkRole === 'faker'))) {
+    // 進攻：衝點前對包點丟煙（擋住守點的人）和閃光（假打的時候丟在假的那邊）
+    const site = map.sites.find((s) => s.id === nadeSite);
     const decoy = want(['decoy']);
-    const other = map.sites.find((s) => s.id !== plan.site);
+    const other = map.sites.find((s) => s.id !== nadeSite);
     if (decoy && other && Math.random() < 0.5) {
       const dx = other.c[0] - p.x, dz = other.c[1] - p.z, dl = Math.hypot(dx, dz) || 1;
       pick = { slot: decoy, target: [p.x + dx / dl * 14, 0, p.z + dz / dl * 14] };
@@ -1214,7 +1437,7 @@ function nadeBrain(p, b, r, now, api, enemy) {
     const slot = pick ? null : want(['smoke']) || want(['flash', 'stun']);
     if (slot) {
       const kind = p.loadout[slot];
-      const h = map.holds[plan.site][p.id % map.holds[plan.site].length];
+      const h = map.holds[nadeSite][p.id % map.holds[nadeSite].length];
       pick = { slot, target: kind === 'smoke' ? [h[0], h[2] || 0, h[1]] : [site.c[0], 0, site.c[1]] };
     }
   } else if (bomb && bomb.state === 'planted') {
@@ -1229,12 +1452,14 @@ function nadeBrain(p, b, r, now, api, enemy) {
       if (slot) pick = { slot, target: [bomb.x, bomb.y, bomb.z] };
     }
   }
-  if (!pick && enemy && b.state === 'engage') {
-    // 交戰中：敵人躲在掩體後面、距離 8～25 公尺 → 丟手雷、火焰彈、震撼彈
-    const d = Math.hypot(enemy.x - p.x, enemy.z - p.z);
-    if (d > 8 && d < 25 && now - (b.hitAt || now) > 1500) {
+  if (!pick && !seeing && b.lastSeen && now - b.lastSeenAt > 700 && now - b.lastSeenAt < 4000) {
+    // 敵人剛躲到掩體後面（現在看不到）、距離 8～25 公尺 → 往最後看到的位置丟手雷、火焰彈、震撼彈
+    // 看得到敵人的時候專心開槍，不會在空地對槍時突然切投擲物
+    const [ex, ez, ey] = b.lastSeen;
+    const d = Math.hypot(ex - p.x, ez - p.z);
+    if (d > 8 && d < 25) {
       const slot = want(['frag', 'molotov', 'stun']);
-      if (slot) pick = { slot, target: [enemy.x, enemy.y || 0, enemy.z] };
+      if (slot) pick = { slot, target: [ex, ey || 0, ez] };
     }
   }
   if (!pick) return null;
@@ -1260,6 +1485,16 @@ function dangerNear(r, team, x, z, rad, ms, now) {
 // 自己現在有沒有危險（剛被打、或附近剛看到敵人）
 function threatened(p, b, r, now) {
   return now - (b.hurtAt || 0) < 2500 || dangerNear(r, p.team, p.x, p.z, 18, 2500, now);
+}
+// 伺服器通知：有人（包括真人）跟敵人交火、被打、陣亡 → 防守方知道那個包點有狀況
+function contact(r, a, v, now) {
+  if (!WPN.isBombMode(r.mode) || !r.botPlan) return;
+  const enemy = a.team === r.attackTeam ? a : v.team === r.attackTeam ? v : null;
+  if (!enemy) return;
+  teamSaw(r, 1 - r.attackTeam, enemy, now);
+  for (const s of MAP.get(r.rules.map).sites || []) {
+    if (Math.hypot(enemy.x - s.c[0], enemy.z - s.c[1]) < 30) { r.botPlan.alert = s.id; r.botPlan.alertAt = now; }
+  }
 }
 function bombAlert(r, p, q, now) {
   if (WPN.isBombMode(r.mode)) teamSaw(r, p.team, q, now);
@@ -1480,4 +1715,4 @@ function compPickup(p, r, now, take) {
   }
 }
 
-module.exports = { compPickup, move, followPath, jump, LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };
+module.exports = { contact, compPickup, move, followPath, jump, LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };

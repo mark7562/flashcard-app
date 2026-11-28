@@ -1440,6 +1440,7 @@ function applyDamage(p, target, dmg, headshot, weapon, now, extra = {}) {
   send(p.ws, { t: 'hit', id: target.id, head: headshot, kill: target.hp <= 0, ar: hadArmor ? 1 : undefined });
   send(target.ws, { t: 'damaged', hp: target.hp, from: p.id, fx: p.x, fz: p.z, ar: target.armor ? Math.round(target.armor.v) : undefined });
   if (target.bot) BOT.damaged(target, p, now);
+  if (isB(r)) BOT.contact(r, p, target, now); // 防守方知道哪個包點在交火（真人打的也算）
   if (target.hp > 0) return;
   if (isZ(r) && zKilled(r, p, target, now)) return; // 人類被殭屍打倒：變成殭屍，不算死
   target.alive = false;
