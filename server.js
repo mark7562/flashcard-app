@@ -193,7 +193,7 @@ function roomState(r) {
     z: isZ(r) && r.z ? { infectIn: r.z.started ? 0 : Math.max(0, r.z.infectAt - now), started: r.z.started, heroOn: r.z.heroOn } : null,
     players: [...r.players.values()].map((p) => ({
       id: p.id, name: p.name, color: p.color, team: p.team, kills: p.kills, deaths: p.deaths, alive: p.alive,
-      bot: p.bot ? p.bot.level : null, role: isZ(r) ? p.zrole || 'human' : null, out: !!p.out, pts: p.pts || 0, zi: p.zi || 0,
+      bot: p.bot ? p.bot.level : null, role: isZ(r) ? p.zrole || 'human' : null, out: !!p.out, pts: p.pts || 0, zi: p.zi || 0, as: p.assists || 0,
     })),
   };
 }
@@ -249,7 +249,7 @@ function joinRoom(p, msg) {
 function addToRoom(p, r) {
   p.room = r;
   p.team = isZ(r) ? 0 : teamCount(r, 0) <= teamCount(r, 1) ? 0 : 1; // 自動補進人少的那一隊（生化模式大家都是人類）
-  p.kills = 0; p.deaths = 0; p.pts = 0; p.zi = 0; p.zrole = null; p.out = false;
+  p.kills = 0; p.deaths = 0; p.assists = 0; p.pts = 0; p.zi = 0; p.zrole = null; p.out = false;
   p.alive = false; p.respawnAt = 0;
   r.players.set(p.id, p);
   if (isComp(r) && r.state === 'playing' && r.econ) { compReset(p); r.econDirty = true; }
@@ -297,7 +297,7 @@ function startMatch(r) {
   r.pendingEnd = null;
   r.attackTeam = 1; r.bomb = null; r.roundLog = []; r.nades = []; r.smokes = []; r.fires = []; r.knives = []; r.decoys = [];
   r.rec = []; r.recEv = []; r.best = null; r.bestScore = 0; r.pendingBest = null;
-  for (const p of r.players.values()) { p.kills = 0; p.deaths = 0; p.pts = 0; p.zi = 0; p.alive = false; p.respawnAt = 0; p.ready = !!p.bot; }
+  for (const p of r.players.values()) { p.kills = 0; p.deaths = 0; p.assists = 0; p.pts = 0; p.zi = 0; p.alive = false; p.respawnAt = 0; p.ready = !!p.bot; }
   // 上一場是爆破競賽的話身上的東西是買的（可能是空的）：換回自己的套裝
   for (const p of r.players.values()) if (p.kitPick) p.loadout = { ...p.kitPick };
   if (isComp(r)) compInit(r);
@@ -517,7 +517,9 @@ function envDamage(r, q, dmg, weapon, attackerId, now) {
   if (isComp(r)) compDeath(r, q);
   if (a && a === q) { /* 自殺 */ }
   if (r.mode === 'tdm') q.respawnAt = now + RESPAWN_MS;
-  toRoom(r, { t: 'kill', killer: attackerId || 0, victim: q.id, head: false, w: weapon, kk: a ? a.kills : 0, vd: q.deaths, score: r.score, kx: q.x, kz: q.z, khp: a ? a.hp : 0 });
+  // tk：被隊友的火燒死（不算擊殺，顯示「誤傷」）
+  const tk = a && a !== q && a.team === q.team ? 1 : undefined;
+  toRoom(r, { t: 'kill', killer: attackerId || 0, victim: q.id, head: false, w: weapon, kk: a ? a.kills : 0, vd: q.deaths, score: r.score, kx: q.x, kz: q.z, khp: a ? a.hp : 0, tk });
   recEvent(r, { k: 'kill', killer: attackerId || 0, victim: q.id, head: false, w: weapon, kx: q.x, kz: q.z });
   if (r.mode !== 'tdm') checkTeams(r);
 }
@@ -881,7 +883,7 @@ function endMatch(r, winner, reason = '') {
   toRoom(r, {
     t: 'matchEnd', winner, mode: r.mode, reason,
     score: r.mode === 'tdm' ? r.score : r.roundWins,
-    players: [...r.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, bot: !!p.bot, pts: p.pts || 0, zi: p.zi || 0 })),
+    players: [...r.players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, kills: p.kills, deaths: p.deaths, as: p.assists || 0, bot: !!p.bot, pts: p.pts || 0, zi: p.zi || 0 })),
     best, roundLog: r.roundLog,
   });
   r.rec = []; r.recEv = []; r.best = null;
@@ -938,6 +940,7 @@ function spawnAt(p, s, protect) {
   p.yaw = Math.atan2(s[0], s[2]); // 面向場地中央
   p.pitch = 0;
   p.hp = 100;
+  p.dmgLog = new Map(); // 這條命被誰打了多少（算助攻用）
   p.alive = true;
   p.respawnAt = 0;
   resetKit(p);
@@ -1436,6 +1439,13 @@ function applyDamage(p, target, dmg, headshot, weapon, now, extra = {}) {
   if (isZ(r)) dmg = zDamage(p, target, dmg);
   const hadArmor = isComp(r) && !headshot && target.armor?.v > 0;
   if (isComp(r)) dmg = armorAbsorb(target, dmg, headshot, now);
+  // 助攻：記下每個敵人對這條命打了多少（實際扣掉的血）
+  if (!isZ(r) && p.team !== target.team) {
+    const log = (target.dmgLog ||= new Map());
+    const e = log.get(p.id) || [];
+    e.push([now, Math.min(dmg, target.hp)]);
+    log.set(p.id, e);
+  }
   target.hp = Math.max(0, target.hp - dmg);
   send(p.ws, { t: 'hit', id: target.id, head: headshot, kill: target.hp <= 0, ar: hadArmor ? 1 : undefined });
   send(target.ws, { t: 'damaged', hp: target.hp, from: p.id, fx: p.x, fz: p.z, ar: target.armor ? Math.round(target.armor.v) : undefined });
@@ -1446,6 +1456,7 @@ function applyDamage(p, target, dmg, headshot, weapon, now, extra = {}) {
   target.alive = false;
   target.deaths += 1;
   p.kills += 1;
+  const assists = giveAssists(r, p, target, now);
   if (isComp(r)) {
     compDeath(r, target);
     const w = WEAPONS[weapon];
@@ -1467,7 +1478,7 @@ function applyDamage(p, target, dmg, headshot, weapon, now, extra = {}) {
     if (!mates) clutch = foes;
   }
   const ns = !!(WEAPONS[weapon]?.hipCone && p.lastHip);
-  toRoom(r, { t: 'kill', killer: p.id, rs: isZ(r) && target.team === 1 && !target.out ? target.respawnMs : undefined, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z, khp: p.hp,
+  toRoom(r, { t: 'kill', killer: p.id, rs: isZ(r) && target.team === 1 && !target.out ? target.respawnMs : undefined, victim: target.id, head: headshot, w: weapon, kk: p.kills, vd: target.deaths, score: r.score, kx: p.x, kz: p.z, khp: p.hp, as: assists.length ? assists : undefined,
     rk: p.roundKills, first: first || undefined, clutch: clutch || undefined, smoke: extra.smoke || undefined, ns: ns || undefined });
   recEvent(r, { k: 'kill', killer: p.id, victim: target.id, head: headshot, w: weapon, kx: p.x, kz: p.z, rk: p.roundKills, first: first || undefined, clutch: clutch || undefined, smoke: extra.smoke || undefined, ns: ns || undefined });
   // 精彩程度比目前最佳的高：過一下（記到倒地）再存起來
@@ -1477,6 +1488,25 @@ function applyDamage(p, target, dmg, headshot, weapon, now, extra = {}) {
   }
   if (r.mode === 'tdm' && r.score[p.team] >= r.rules.scoreLimit) endMatch(r, p.team);
   else checkTeams(r);
+}
+// 助攻：被隊友擊殺前，對他打了 40 以上傷害（回合制看這條命，死鬥只算最近 15 秒）；生化模式沒有助攻
+const ASSIST = { dmg: 40, tdmMs: 15000, money: 100 };
+function giveAssists(r, killer, target, now) {
+  const out = [];
+  if (isZ(r) || !target.dmgLog) return out;
+  for (const [id, hits] of target.dmgLog) {
+    if (id === killer.id) continue;
+    const q = r.players.get(id);
+    if (!q || q.team !== killer.team) continue;
+    const sum = hits.filter(([t]) => r.mode !== 'tdm' || now - t <= ASSIST.tdmMs).reduce((a, [, d]) => a + d, 0);
+    if (sum < ASSIST.dmg) continue;
+    q.assists = (q.assists || 0) + 1;
+    out.push(id);
+    send(q.ws, { t: 'assist', victim: target.id, dmg: Math.round(sum) });
+    if (isComp(r)) addMoney(q, ASSIST.money, `助攻 擊倒 ${target.name}`);
+  }
+  target.dmgLog = new Map();
+  return out;
 }
 function eyeOrigin(p, msg) {
   // 射擊起點：相信客戶端，但不能離伺服器記錄的位置太遠

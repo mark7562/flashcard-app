@@ -953,3 +953,10 @@ body.buying #econ { display: none; }
 body.replaying #killfeed { top: calc(9vh + 8px); }
 /* 觀戰標籤：手機上小一點、放高一點，不要跟右下角的子彈數字擠在一起 */
 @media (max-height: 520px) { #spectate { bottom: max(62px, calc(env(safe-area-inset-bottom) + 54px)); font-size: 12px; padding: 3px 10px; } }
+#killsmall.assist { color: #9fe8ff; }
+#killfeed .tk { outline: 1px solid rgba(255, 190, 11, 0.6); }
+#killfeed .tkt { margin: 0 6px 0 0; padding: 0 5px; border-radius: 3px; background: rgba(255, 190, 11, 0.25); color: #ffd34d; font-size: 0.85em; }
+#scoreboard.comp .sb-team td.money, #scoreboard.comp .sb-team th:nth-child(5) { width: 62px; color: #7dffa8; }
+#scoreboard.comp .sb-team td.gear, #scoreboard.comp .sb-team th:nth-child(6) { width: 78px; font-size: 12px; }
+#scoreboard.comp .sb-team th:nth-child(4) { color: var(--muted); }
+#scoreboard.comp .sb-team th:nth-child(4), #scoreboard.comp .sb-team td:nth-child(4) { width: 38px; color: inherit; }

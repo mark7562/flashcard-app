@@ -813,6 +813,7 @@ function showKillFx(m, own = true) {
 function feed(killer, victim, head, weapon, m = {}) {
   const div = document.createElement('div');
   if (killer === me.id || victim === me.id) div.className = 'me';
+  if (m.tk) div.classList.add('tk'); // 誤傷隊友
   const a = document.createElement('span'); a.textContent = nameOf(killer); a.style.color = teamCss(killer);
   const b = document.createElement('span'); b.textContent = nameOf(victim); b.style.color = teamCss(victim);
   // 中間：武器圖示＋名稱，爆頭再加一個骷髏頭
@@ -824,6 +825,7 @@ function feed(killer, victim, head, weapon, m = {}) {
   if (m.ns) mid.insertAdjacentHTML('beforeend', KILL_ICONS.ns);
   if (m.smoke) mid.insertAdjacentHTML('beforeend', KILL_ICONS.smoke);
   if (!killer || killer === victim) div.append(mid, b); // 被炸彈炸死、自己炸到自己
+  else if (m.tk) { const t = document.createElement('span'); t.className = 'tkt'; t.textContent = '誤傷'; div.append(a, mid, t, b); }
   else div.append(a, mid, b);
   $('killfeed').prepend(div);
   while ($('killfeed').children.length > 5) $('killfeed').lastChild.remove();
@@ -891,9 +893,9 @@ function teamTable(team, players) {
   const table = document.createElement('table');
   const head = document.createElement('tr');
   const money = isComp() && playing && team === me.team; // 爆破競賽：看得到隊友的錢
-  for (const t of money ? ['玩家', '擊殺', '死亡', '💰', '裝備'] : ['玩家', '擊殺', '死亡']) { const th = document.createElement('th'); th.textContent = t; head.append(th); }
+  for (const t of money ? ['玩家', '擊殺', '死亡', '助攻', '💰', '裝備'] : ['玩家', '擊殺', '死亡', '助攻']) { const th = document.createElement('th'); th.textContent = t; head.append(th); }
   table.append(head);
-  players.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+  players.sort((a, b) => b.kills - a.kills || (b.as || 0) - (a.as || 0) || a.deaths - b.deaths);
   for (const p of players) {
     const tr = document.createElement('tr');
     if (p.id === me.id) tr.className = 'me';
@@ -904,7 +906,8 @@ function teamTable(team, players) {
     td1.append(dot, document.createTextNode(p.name + (p.id === me.id ? '（你）' : '')));
     const td2 = document.createElement('td'); td2.textContent = p.kills;
     const td3 = document.createElement('td'); td3.textContent = p.deaths;
-    tr.append(td1, td2, td3);
+    const tdA = document.createElement('td'); tdA.textContent = p.as || 0;
+    tr.append(td1, td2, td3, tdA);
     if (money) {
       const e = teamEcon.get(p.id);
       const td4 = document.createElement('td'); td4.textContent = e ? fmt$(e.m) : '';
@@ -1576,13 +1579,14 @@ function showResults(m, later = false) {
   const s1 = document.createElement('span'); s1.className = 's1'; s1.textContent = m.score[1];
   sc.append(s0, document.createTextNode(m.mode === 'tdm' ? '  擊殺  ' : zm ? '  人類 回合 殭屍  ' : '  回合  '), s1);
   for (const p of m.players) if (p.bot && !p.name.startsWith('🤖')) p.name = `🤖${p.name}`;
-  const mvp = zm ? [...m.players].sort((a, b) => b.pts - a.pts)[0] : [...m.players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths)[0];
+  // MVP：擊殺為主，助攻算 0.3 殺
+  const mvp = zm ? [...m.players].sort((a, b) => b.pts - a.pts)[0] : [...m.players].sort((a, b) => (b.kills + 0.3 * (b.as || 0)) - (a.kills + 0.3 * (a.as || 0)) || a.deaths - b.deaths)[0];
   $('resMvp').textContent = m.reason === 'forfeit' ? (zm ? '人數不夠，對戰結束' : '對手隊伍的玩家都離開了')
     : zm && mvp ? `⭐ MVP：${mvp.name}（${mvp.pts} 分 · 擊殺 ${mvp.kills} · 感染 ${mvp.zi}）`
-    : mvp && mvp.kills > 0 ? `⭐ MVP：${mvp.name}（${mvp.kills} 殺 / ${mvp.deaths} 死）` : '';
+    : mvp && mvp.kills > 0 ? `⭐ MVP：${mvp.name}（${mvp.kills} 殺 / ${mvp.deaths} 死 / ${mvp.as || 0} 助攻）` : '';
   for (const p of m.players) {
     const r = roster.get(p.id);
-    if (r) { r.kills = p.kills; r.deaths = p.deaths; r.pts = p.pts; r.zi = p.zi; }
+    if (r) { r.kills = p.kills; r.deaths = p.deaths; r.pts = p.pts; r.zi = p.zi; r.as = p.as; }
   }
   const all = m.players.map((p) => ({ ...p, color: roster.get(p.id)?.color ?? 0xffffff }));
   if (zm) $('resTables').replaceChildren(zTable(all));
@@ -1798,6 +1802,17 @@ function handle(m) {
     case 'inv':
       applyInv(m);
       break;
+    case 'assist': {
+      // 助攻：準心下面一行小字（不跳骷髏徽章，右上的擊殺紀錄也不顯示）
+      me.ra = (me.ra || 0) + 1;
+      const el = $('killsmall');
+      el.textContent = `助攻 擊倒 ${nameOf(m.victim)}（${m.dmg} 傷害）`;
+      el.classList.add('show', 'assist');
+      clearTimeout(killFxTimer);
+      killFxTimer = setTimeout(() => el.classList.remove('show', 'assist'), 1600);
+      beep(990, 0.07, 0.07, 'triangle'); beep(1320, 0.07, 0.06, 'triangle', 0.07);
+      break;
+    }
     case 'cash':
       me.money = m.m;
       cashLine(`${m.n >= 0 ? '+' : '-'}${fmt$(Math.abs(m.n))} ${m.why}`, m.full ? 'cap' : '');
@@ -2062,9 +2077,11 @@ function handle(m) {
       const k = roster.get(m.killer), v = roster.get(m.victim);
       if (k) k.kills = m.kk;
       if (v) v.deaths = m.vd;
+      for (const id of m.as || []) { const q = roster.get(id); if (q) q.as = (q.as || 0) + 1; } // 助攻（右上不顯示，只算在計分板）
       if (room && m.score) room.score = m.score;
       feed(m.killer, m.victim, m.head, m.w, m);
-      if (m.killer === me.id && m.victim !== me.id) showKillFx(m);
+      if (m.tk) { if (m.killer === me.id) toast(`⚠ 你燒死了隊友 ${nameOf(m.victim)}`); } // 被隊友的火燒死：不跳擊殺特效
+      else if (m.killer === me.id && m.victim !== me.id) showKillFx(m);
       else if (specActive && m.killer === specActive && m.victim !== specActive) showKillFx(m, false); // 觀戰：看得到被觀戰的人的擊殺特效
       if (m.victim === me.id) {
         me.alive = false;
@@ -2082,8 +2099,9 @@ function handle(m) {
         const kn = document.createElement('span'); kn.textContent = nameOf(m.killer); kn.style.color = teamCss(m.killer);
         me.acting = null; me.nadeHold = null; effects.showArc(null);
         if (!m.killer || m.killer === me.id) $('deathby').append(m.w === 'bomb' ? '你被炸彈炸死了 💥' : `你被自己的${kw ? kw.name : '攻擊'}打倒了`);
+        else if (m.tk) $('deathby').append('你被隊友 ', kn, ` 的${kw ? kw.name : '攻擊'}${m.w === 'molotov' ? '燒死' : '打倒'}了`);
         else $('deathby').append('擊倒你的是：', kn, kw ? `（${kw.icon} ${kw.name}${m.head ? ' · 爆頭' : ''}）` : '');
-        if (m.khp !== undefined && m.killer && m.killer !== me.id) {
+        if (m.khp !== undefined && m.killer && m.killer !== me.id && !m.tk) {
           const hp = document.createElement('div');
           hp.className = 'khp' + (m.khp <= 30 ? ' low' : '');
           hp.innerHTML = '<span class="khp-bar"><i></i></span><b></b>';
@@ -2119,7 +2137,7 @@ function handle(m) {
       break;
     }
     case 'round':
-      me.rk = 0; me.rh = 0;
+      me.rk = 0; me.rh = 0; me.ra = 0;
       if (roundBuys.length) { lastBuys = roundBuys; try { localStorage.setItem('ba-lastbuy', JSON.stringify(lastBuys)); } catch {} }
       roundBuys = []; reqs.clear(); myReq = null; renderReqs();
       if (m.half) setTimeout(() => banner('🔄 下半場', `交換攻守 · 大家的錢重設成 ${fmt$(ECON.start)}，裝備重新買`, '', 3200), 100);
@@ -2148,7 +2166,7 @@ function handle(m) {
       const myClutch = m.clutch && m.clutch.id === me.id;
       if (myClutch) banner('🏆 殘局勝利！', `一個人打贏 1v${m.clutch.vs} · ${tail}`, 'gold', 4000);
       else banner(big, isBomb() && why ? `${why} · ${tail}` : tail, cls, 3500);
-      $('bannerStat').textContent = !isZ() && me.rk ? `本回合 ${me.rk} 殺${me.rh ? ` · ${me.rh} 爆頭` : ''}` : '';
+      $('bannerStat').textContent = !isZ() && (me.rk || me.ra) ? `本回合 ${me.rk || 0} 殺${me.rh ? ` · ${me.rh} 爆頭` : ''}${me.ra ? ` · ${me.ra} 助攻` : ''}` : '';
       if (myClutch) [523, 659, 784, 1047].forEach((f, i) => beep(f, 0.22, 0.12, 'triangle', i * 0.12));
       actors.clear();
       me.acting = null;
