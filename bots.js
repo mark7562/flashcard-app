@@ -650,6 +650,7 @@ function think(p, r, now, dt, api) {
   // 換彈完成
   api.finishReload(p, now);
   b.pushing = false;
+  b.slowK = 1;
 
   // ---- 視覺：找看得到的最近敵人 ----
   let seen = null, bestD = Infinity;
@@ -948,7 +949,9 @@ function think(p, r, now, dt, api) {
         if (b.objMove) {
           mx = b.objMove.mx; mz = b.objMove.mz;
           if (b.objMove.jump) wantJump = true;
-          lookYaw = dGoal < 8 || hurt ? yawTo(o.look[0] - p.x, o.look[1] - p.z) : yawTo(mx, mz);
+          lookYaw = dGoal < 8 || hurt || o.face ? yawTo(o.look[0] - p.x, o.look[1] - p.z) : yawTo(mx, mz);
+          // 排點：靠近可能有敵人的包點時放慢腳步，把常見的躲人位置一個一個看過去（隊友看過的就不重看）
+          if (!hurt && !seen && !o.face) { const cy = clearLook(p, b, r, map, nav, now, dt, yawTo(mx, mz)); if (cy !== null) { lookYaw = cy; b.slowK = 0.75; } }
         } else {
           // 到位：盯著敵人會來的方向（視線長的那幾個角度輪流看），不要一直左右擺
           const base = yawTo(o.look[0] - p.x, o.look[1] - p.z);
@@ -1027,7 +1030,7 @@ function think(p, r, now, dt, api) {
 
   // ---- 移動與物理 ----
   if (wantJump) jump(b, now);
-  const speed = (b.state === 'engage' && !W.melee ? c.speed * (b.pushing ? 0.9 : 0.6) : b.state === 'guard' ? 0 : c.speed) * (W.speed || 1) * (p.adsSince ? W.ads.speed : 1) * ((b.stunUntil || 0) > now ? 0.5 : 1);
+  const speed = (b.state === 'engage' && !W.melee ? c.speed * (b.pushing ? 0.9 : 0.6) : b.state === 'guard' ? 0 : c.speed * b.slowK) * (W.speed || 1) * (p.adsSince ? W.ads.speed : 1) * ((b.stunUntil || 0) > now ? 0.5 : 1);
   const ox = p.x, oz = p.z;
   let blocked = move(p, b, nav, mx, mz, speed, dt);
   // 被球棒／大錘打退：往後滑一小段
@@ -1405,6 +1408,60 @@ function bombObjective(p, b, r, nav, now) {
   const look = b.retakeHold && role === b.role ? site(role).c : ent[(b.entryIdx ?? (b.entryIdx = Math.floor(Math.random() * ent.length))) % ent.length];
   return { goal: hp, look };
 }
+// 一個包點裡「可能有人躲」的位置：守點位置、自動找的掩體位置、埋包後的守包位置（太近的合併）
+function clearSpots(map, nav, id) {
+  map._clr ||= {};
+  if (map._clr[id]) return map._clr[id];
+  const out = [];
+  const add = (x, z, y) => { if (!out.some((q) => Math.hypot(q[0] - x, q[2] - z) < 2.5)) out.push([x, y ?? null, z]); };
+  for (const h of map.holds?.[id] || []) add(h[0], h[1], h[2]);
+  for (const h of map.post?.[id] || []) add(h[0], h[1]);
+  for (const h of defPositions(nav).inside?.[id] || []) add(h[0], h[1]);
+  return (map._clr[id] = out);
+}
+// 排點：回傳要看的方向（沒有要排的點就回傳 null）
+// 進攻方衝點時、防守方回防時才會排；看過的點全隊共用 8 秒
+function clearLook(p, b, r, map, nav, now, dt, moveYaw) {
+  if (!WPN.isBombMode(r.mode) || b.level === 'easy' || !map.sites) return null;
+  const bomb = r.bomb, plan = r.botPlan, attack = p.team === r.attackTeam;
+  if (!plan) return null;
+  const planted = bomb && bomb.state === 'planted';
+  const site = map.sites.find((s) => Math.hypot(p.x - s.c[0], p.z - s.c[1]) < 32 &&
+    (attack ? !planted && plan.go : (planted && bomb.site === s.id) || (plan.alert === s.id && now - plan.alertAt < 20000)));
+  if (!site) { b.clrSpot = null; return null; }
+  const done = ((plan.clr ||= [new Map(), new Map()])[p.team]);
+  const spots = clearSpots(map, nav, site.id);
+  const eye = [p.x, p.y + 1.6, p.z];
+  const visible = (q) => !segmentBlocked(eye, [q[0], (q[1] ?? p.y) + 1.2, q[2]], map.boxes) && !(r.smokes?.length && NADE.segSmoke(eye, [q[0], (q[1] ?? p.y) + 1.2, q[2]], r.smokes, now));
+  let cur = b.clrSpot != null ? spots[b.clrSpot] : null;
+  if (cur && (now - (done.get(site.id + b.clrSpot) || -1e9) < 8000 || !visible(cur))) cur = b.clrSpot = null;
+  if (!cur && now >= (b.clrPickAt || 0)) {
+    b.clrPickAt = now + 250;
+    let best = -1, bd = Infinity;
+    spots.forEach((q, i) => {
+      const d = Math.hypot(q[0] - p.x, q[2] - p.z);
+      if (d < 3 || d > 30 || now - (done.get(site.id + i) || -1e9) < 8000) return;
+      if (Math.abs(angleDiff(yawTo(q[0] - p.x, q[2] - p.z), moveYaw)) > 1.75) return; // 不會一直回頭看背後
+      if (d < bd && visible(q)) { bd = d; best = i; }
+    });
+    if (best >= 0) { b.clrSpot = best; b.clrT = 0; cur = spots[best]; }
+  }
+  if (!cur) return null;
+  const y = yawTo(cur[0] - p.x, cur[2] - p.z);
+  if (Math.abs(angleDiff(p.yaw, y)) < 0.2) {
+    b.clrT = (b.clrT || 0) + dt;
+    if (b.clrT > 0.3) { done.set(site.id + b.clrSpot, now); b.clrSpot = null; }
+  }
+  return y;
+}
+// 無線電：機器人跟真人隊友講話（伺服器每一格送出去）；同一句話全隊 8 秒內只講一次
+function radio(r, p, key, text, now) {
+  const last = (r.radioLast ||= new Map());
+  const k = p.team + key;
+  if (now - (last.get(k) || -1e9) < 8000) return;
+  last.set(k, now);
+  (r.radioQ ||= []).push({ id: p.id, team: p.team, text });
+}
 function regroup(p, b, r, now, plan, alertOn, map, nav) {
   if (!alertOn || b.level === 'easy' || b.flank) return null;
   const S = MAP.get(r.rules.map).sites.find((x) => x.id === alertOn);
@@ -1416,8 +1473,10 @@ function regroup(p, b, r, now, plan, alertOn, map, nav) {
     const inSite = defs.filter((q) => Math.hypot(q.x - S.c[0], q.z - S.c[1]) < 20).length;
     if (info.n - inSite < 2) return null; // 人數差不多：照原本的守法
     R = plan.rg = { site: alertOn, at: now, go: false };
+    radio(r, p, 'rg', `${alertOn} 點來了 ${info.n} 個人，人太少先退到點外，等大家會合再一起回防！`, now);
   }
   if (R.go) return null;
+  if (now - (b.lastSeenAt || 0) < 2500) return null; // 正在交火：不會打到一半轉身跑掉
   const pts = map.rally[alertOn];
   if (b.rgRound !== r.round || b.rgSite !== alertOn) {
     b.rgRound = r.round; b.rgSite = alertOn;
@@ -1425,11 +1484,21 @@ function regroup(p, b, r, now, plan, alertOn, map, nav) {
     b.rgPt = nearPt(nav, b.rgPt[0], b.rgPt[1], 2.5);
   }
   const ready = defs.filter((q) => pts.some((pt) => Math.hypot(q.x - pt[0], q.z - pt[1]) < 9)).length;
-  if (ready >= Math.min(3, defs.length) || now - R.at > 10000 || r.phaseUntil - now < 25000) { R.go = true; return null; }
-  return { goal: b.rgPt, look: S.c };
+  if (ready >= Math.min(3, defs.length) || now - R.at > 10000 || r.phaseUntil - now < 25000) { R.go = true; radio(r, p, 'go', `人到了，一起回防 ${alertOn}！`, now); return null; }
+  return { goal: b.rgPt, look: S.c, face: true }; // 面朝包點倒退著走
 }
 // ---------- 機器人丟投擲物 ----------
-const NADE_USE = { easy: 0.25, normal: 0.65, hard: 0.95 };
+const NADE_USE = { easy: 0.4, normal: 0.85, hard: 1 };
+// 閃光／震撼：同一隊 2.5 秒內只丟一顆，而且隊友在落點附近（7 公尺內）就不丟（不會閃到自己人）
+function flashOk(r, p, t, now) {
+  const fa = (r.botPlan.flashAt ||= [0, 0]);
+  if (now - fa[p.team] < 2500) return false;
+  return ![...r.players.values()].some((q) => q !== p && q.alive && q.team === p.team && Math.hypot(q.x - t[0], q.z - t[2]) < 7);
+}
+// 隊伍最近（ms 內）在 (x, z) 附近 rad 公尺看到的敵人
+function teamSeenNear(r, team, x, z, rad, ms, now) {
+  return (r.botPlan?.seen || []).filter((s) => s.team === team && now - s.t < ms && Math.hypot(s.x - x, s.z - z) < rad);
+}
 // 找一個丟法（角度、遠近）讓投擲物落在目標附近
 function solveThrow(boxes, eye, target, kind) {
   const dx = target[0] - eye[0], dz = target[2] - eye[2];
@@ -1489,6 +1558,34 @@ function nadeBrain(p, b, r, now, api, seeing) {
       const kind = p.loadout[slot];
       const h = map.holds[nadeSite][p.id % map.holds[nadeSite].length];
       pick = { slot, target: kind === 'smoke' ? [h[0], h[2] || 0, h[1]] : [site.c[0], 0, site.c[1]] };
+      if (kind !== 'smoke' && !flashOk(r, p, pick.target, now)) pick = null;
+    }
+  } else if (attack && plan?.go && bomb && bomb.state !== 'planted' && b.entryNade !== r.round && b.atkRole !== 'lurk'
+    && Math.hypot(p.x - map.sites.find((s) => s.id === plan.site).c[0], p.z - map.sites.find((s) => s.id === plan.site).c[1]) < 22) {
+    // 進點：往看不到的守點角落丟火焰彈／手雷，把躲在裡面的人逼出來（每回合一次）
+    b.entryNade = r.round;
+    const slot = want(['molotov', 'frag']);
+    const eye2 = [p.x, p.y + 1.6, p.z];
+    const corner = slot && (map.holds[plan.site] || []).filter((h) => { const d = Math.hypot(h[0] - p.x, h[1] - p.z); return d > 7 && d < 22 && segmentBlocked(eye2, [h[0], (h[2] || p.y) + 1.2, h[1]], map.boxes); })
+      .sort((a, c) => Math.hypot(a[0] - p.x, a[1] - p.z) - Math.hypot(c[0] - p.x, c[1] - p.z))[0];
+    if (corner) pick = { slot, target: [corner[0], corner[2] || 0, corner[1]] };
+  } else if (!attack && plan && !(bomb && bomb.state === 'planted') && plan.alert && now - plan.alertAt < 6000 && b.delayNade !== r.round) {
+    // 拖延：隊友剛在入口外看到敵人（還沒衝進來）→ 往那個入口丟火焰彈／手雷
+    const S = map.sites.find((s) => s.id === plan.alert);
+    const sight = S && teamSeenNear(r, p.team, S.c[0], S.c[1], 30, 2500, now).pop();
+    const slot = sight && want(['molotov', 'frag']);
+    if (slot) {
+      const ent = map.entries[plan.alert].reduce((a, e) => (Math.hypot(e[0] - sight.x, e[1] - sight.z) < Math.hypot(a[0] - sight.x, a[1] - sight.z) ? e : a));
+      const d = Math.hypot(ent[0] - p.x, ent[1] - p.z);
+      if (d > 8 && d < 26 && Math.hypot(ent[0] - sight.x, ent[1] - sight.z) < 12) { b.delayNade = r.round; pick = { slot, target: [ent[0], 0, ent[1]] }; }
+    }
+  } else if (!attack && plan?.rg && !plan.rg.go && b.rgPt && Math.hypot(b.rgPt[0] - p.x, b.rgPt[1] - p.z) < 6 && b.rgNade !== r.round) {
+    // 先退再會合：要一起進點前，對包點丟煙、閃光
+    const S = map.sites.find((s) => s.id === plan.rg.site);
+    const slot = want(['smoke', 'flash', 'stun']);
+    if (slot) {
+      const t = [S.c[0], 0, S.c[1]];
+      if (p.loadout[slot] === 'smoke' || flashOk(r, p, t, now)) { b.rgNade = r.round; pick = { slot, target: t }; }
     }
   } else if (bomb && bomb.state === 'planted') {
     const defusing = [...r.players.values()].some((q) => q.alive && q.actKind === 'defuse');
@@ -1500,6 +1597,16 @@ function nadeBrain(p, b, r, now, api, seeing) {
       // 回防前：對炸彈附近丟煙、閃光
       const slot = want(['smoke', 'flash', 'stun']);
       if (slot) pick = { slot, target: [bomb.x, bomb.y, bomb.z] };
+      if (pick && p.loadout[slot] !== 'smoke' && !flashOk(r, p, pick.target, now)) pick = null;
+    } else if (attack && !defusing && b.postSmoke !== r.round) {
+      // 守包：看到防守方從某個入口過來 → 往那個入口丟煙擋住
+      const sight = teamSeenNear(r, p.team, bomb.x, bomb.z, 32, 3000, now).pop();
+      const slot = sight && want(['smoke']);
+      if (slot) {
+        const rf = map.retakeFrom[bomb.site].reduce((a, e) => (Math.hypot(e[0] - sight.x, e[1] - sight.z) < Math.hypot(a[0] - sight.x, a[1] - sight.z) ? e : a));
+        const d = Math.hypot(rf[0] - p.x, rf[1] - p.z);
+        if (d > 6 && d < 28) { b.postSmoke = r.round; pick = { slot, target: [rf[0], 0, rf[1]] }; }
+      }
     }
   }
   if (!pick && !seeing && b.lastSeen && now - b.lastSeenAt > 700 && now - b.lastSeenAt < 4000) {
@@ -1510,12 +1617,14 @@ function nadeBrain(p, b, r, now, api, seeing) {
     if (d > 8 && d < 25) {
       const slot = want(['frag', 'molotov', 'stun']);
       if (slot) pick = { slot, target: [ex, ey || 0, ez] };
+      if (pick && p.loadout[slot] === 'stun' && !flashOk(r, p, pick.target, now)) pick = null;
     }
   }
   if (!pick) return null;
   const sol = solveThrow(map.boxes, eye, pick.target, p.loadout[pick.slot]);
   b.nadeCd = now + 2500;
   if (!sol || sol.err > 6) return null;
+  if (r.botPlan && ['flash', 'stun'].includes(p.loadout[pick.slot])) (r.botPlan.flashAt ||= [0, 0])[p.team] = now;
   api.switchTo(p, pick.slot);
   b.throwing = { slot: pick.slot, d: sol.d, far: sol.far, yaw: sol.yaw, pitch: sol.pitch, at: now };
   return b.throwing;

@@ -1807,6 +1807,17 @@ function handle(m) {
     case 'inv':
       applyInv(m);
       break;
+    case 'radio': {
+      // 隊友機器人的無線電：左邊中間跳一行，5 秒後淡掉
+      const d = document.createElement('div');
+      const n = document.createElement('b'); n.textContent = `📻 ${nameOf(m.id)}：`; n.style.color = colorOf(m.id);
+      d.append(n, m.text);
+      $('radio').append(d);
+      while ($('radio').children.length > 3) $('radio').firstChild.remove();
+      setTimeout(() => d.remove(), 5000);
+      beep(880, 0.05, 0.08);
+      break;
+    }
     case 'ff':
       // 火焰彈燒到隊友
       toast('傷害隊友是不被允許的🆘');

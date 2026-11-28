@@ -2033,6 +2033,11 @@ function tick() {
     for (const p of r.players.values()) {
       if (p.bot && r.state === 'playing') BOT.think(p, r, now, TICK_MS / 1000, api);
     }
+    // 機器人的無線電：送給同隊的真人
+    if (r.radioQ?.length) {
+      for (const m of r.radioQ) for (const q of r.players.values()) if (!q.bot && q.team === m.team) send(q.ws, { t: 'radio', id: m.id, text: m.text });
+      r.radioQ.length = 0;
+    }
     if (r.state !== 'playing') continue;
 
     const list = [];
