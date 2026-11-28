@@ -1591,6 +1591,7 @@ function handleShoot(p, msg) {
   recEvent(r, { k: 'shot', id: p.id, e: ends[0], es: ends.length > 1 ? ends : undefined, w: w.id });
   p.lastHip = !!(w.hipCone && (msg.h || !isScoped));
   for (const q of r.players.values()) if (q.bot && q.team !== p.team) BOT.hear(q, p, now, w.quiet ? QUIET_HEAR : Infinity);
+  if (isB(r)) BOT.mateShot(r, p, ends[0], now); // 隊友（包括真人）在開槍：附近的機器人會過去幫忙
   for (const [q, h] of dmgBy) {
     if (!q.alive) continue;
     const smoke = !!(r.smokes?.length && NADE.segSmoke(o, [q.x, q.y + 1.2, q.z], r.smokes, now));

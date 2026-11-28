@@ -772,11 +772,12 @@ function think(p, r, now, dt, api) {
   if (W.mag && !p.reloadUntil && (ammo <= 0 || (!seen && b.state === 'patrol' && ammo < W.mag * 0.5))) api.reload(p);
 
   // 爆破模式：埋彈／拆彈到一半看到敵人或被打 → 停下來先打（快完成了、或不做就輸了才硬撐）
-  if (WPN.isBombMode(r.mode) && p.actKind && (b.state === 'engage' || now - (b.hurtAt || 0) < 400)) {
+  // 拆彈：只有「真的看到敵人」才停（聽到聲音、剛剛瞄到一眼的記憶不算），而且時間要夠打完再重拆；不然就硬拆
+  if (WPN.isBombMode(r.mode) && p.actKind && (p.actKind === 'plant' ? b.state === 'engage' || now - (b.hurtAt || 0) < 400 : !!seen)) {
     const total = p.actMs || (p.actKind === 'plant' ? 3000 : 6000); // 跟伺服器的埋彈、拆彈時間一樣（有拆彈器比較快）
     const remain = total - (now - (p.actAt || now));
     const bombLeft = r.bomb?.explodeAt ? r.bomb.explodeAt - now : Infinity;
-    const commit = p.actKind === 'plant' ? remain < 700 || r.phaseUntil - now < 15000 : remain < 1500 || bombLeft < remain + 2500;
+    const commit = p.actKind === 'plant' ? remain < 700 || r.phaseUntil - now < 15000 : remain < 1500 || bombLeft < total + 4000;
     if (!commit) api.act(p, { on: false });
   }
 
@@ -825,7 +826,7 @@ function think(p, r, now, dt, api) {
       }
     } else if (W.pellets && dist > 16) {
       // 霰彈槍太遠打不到：往前壓
-    } else if (vis && now >= b.reactAt && aligned && now >= b.nextShotAt && ammo > 0 && !p.reloadUntil
+    } else if (vis && now >= b.reactAt && aligned && now >= b.nextShotAt && ammo > 0 && !p.reloadUntil && !p.actKind
       && !(b.burstStop && (b.moveK || 0) > 0.25 && !b.peek && b.ground)) {
       // 急停的人還在跑：這一格先不開槍，等停下來（下一格）再開
       // 瞄準失誤：距離越遠越不準；連射越久越散（槍本身的散布另外算，跟玩家同一套）
@@ -1041,6 +1042,7 @@ function think(p, r, now, dt, api) {
 
   // ---- 移動與物理 ----
   if (b.state === 'engage' && now < (b.haltUntil || 0)) { mx = 0; mz = 0; wantJump = false; } // 急停：開槍的這一串站著打
+  if (p.actKind) { mx = 0; mz = 0; wantJump = false; } // 正在埋／拆：站著不動（不會跳起來）
   if (wantJump) jump(b, now);
   const speed = (b.state === 'engage' && !W.melee ? c.speed * (b.pushing ? 0.9 : 0.6) : b.state === 'guard' ? 0 : c.speed * b.slowK) * (W.speed || 1) * (p.adsSince ? W.ads.speed : 1) * ((b.stunUntil || 0) > now ? 0.5 : 1);
   const ox = p.x, oz = p.z;
@@ -1268,6 +1270,9 @@ function bombObjective(p, b, r, nav, now) {
       if (plan.def === 'flank' && b.role === 'mid') b.flank = { site: null, pt: null, reached: false };
     }
   }
+  // 隊友在附近打起來了：先過去支援（拿炸彈的、正在埋拆的、繞後的不會去）
+  const sup = support(p, b, r, now, !!(bomb && bomb.state === 'carried' && bomb.carrier === p.id));
+  if (sup && !(bomb && bomb.state === 'planted' && !attack && Math.hypot(bomb.x - p.x, bomb.z - p.z) < 3)) return sup;
   if (bomb && bomb.state === 'planted') {
     const s = site(bomb.site);
     if (attack) {
@@ -1314,12 +1319,14 @@ function bombObjective(p, b, r, nav, now) {
     }
     // 不管人數多少都回防（沒有經濟系統，保命沒有好處；跑回家掛機看起來也很怪）
     // 只有真的來不及拆（拆彈要 6 秒）才退到集合點（包點外面），不會跑回出生點
-    if (left < 6500 && !p.actKind && Math.hypot(bomb.x - p.x, bomb.z - p.z) > 1.3) return { goal: b.rallyPt, look: [s.c[0], s.c[1]] };
+    // 拆彈要多久（有拆彈器比較快）＋走過去的時間；真的來不及才退
+    const needMs = (p.dkit ? WPN.ECON.kit.ms : 6000) + Math.hypot(bomb.x - p.x, bomb.z - p.z) / 6 * 1000;
+    if (left < needMs - 300 && !p.actKind && Math.hypot(bomb.x - p.x, bomb.z - p.z) > 1.3) return { goal: b.rallyPt, look: [s.c[0], s.c[1]] };
     const ready = defs.filter((q) => Math.hypot(q.x - b.rallyPt[0], q.z - b.rallyPt[1]) < 8).length;
     const wait = left > 22000 && now - (r.botPlan.plantedAt || (r.botPlan.plantedAt = now)) < 8000 && ready < Math.min(2, defs.length);
     if (wait) return { goal: b.rallyPt, look: [s.c[0], s.c[1]] };
     const d = Math.hypot(bomb.x - p.x, bomb.z - p.z);
-    const lastChance = left < 9000; // 拆彈要 6 秒：快爆了就不管了，硬拆
+    const lastChance = left < (p.dkit ? WPN.ECON.kit.ms : 6000) + 3000; // 快爆了就不管了，硬拆
     if (d < 1.3 && !lastChance && !p.actKind && now - (b.hurtAt || 0) < 2000) // 自己正在被打才停（隊友在旁邊交火不影響）
       return { goal: [p.x, p.z], look: b.hurtFrom || [s.c[0], s.c[1] + 15], hold: true };
     return { goal: [bomb.x, bomb.z], look: [s.c[0], s.c[1] + 15], act: d < 1.3 ? 'defuse' : null };
@@ -1693,6 +1700,24 @@ function siteIntel(r, id, now) {
   if (r.bomb && r.bomb.state === 'dropped' && Math.hypot(r.bomb.x - s.c[0], r.bomb.z - s.c[1]) < 30) carrier = true;
   return { n, carrier };
 }
+// 伺服器通知：有人開槍（包括真人）→ 記下這一隊最近在哪裡交火、往哪裡打（附近的隊友會過去支援）
+function mateShot(r, p, end, now) {
+  if (!r.botPlan) return;
+  (r.botPlan.fight ||= [null, null])[p.team] = { id: p.id, human: !p.bot, x: p.x, z: p.z, ex: end ? end[0] : p.x, ez: end ? end[2] : p.z, t: now };
+}
+// 支援：真人隊友在附近交火（3 秒內），或隊伍只剩 1～2 個人時，自己沒有更重要的事 → 過去幫忙，看著隊友開槍的方向
+// 人越少支援範圍越大
+function support(p, b, r, now, carrier) {
+  const f = r.botPlan?.fight?.[p.team];
+  if (!f || f.id === p.id || now - f.t > 3000 || carrier || p.actKind || b.atkRole === 'lurk' || b.level === 'easy') return null;
+  const mates = [...r.players.values()].filter((q) => q.alive && q.team === p.team).length;
+  if (!f.human && mates > 2) return null; // 機器人之間本來就會互相報位置；真人隊友在打、或剩沒幾個人時才特地過去
+  const d = Math.hypot(f.x - p.x, f.z - p.z);
+  if (d < 5 || d > (mates <= 2 ? 60 : 28)) return null;
+  // 走到隊友旁邊一點（不要擠在同一個位置）
+  const k = Math.min(1, 3 / d);
+  return { goal: [f.x + (p.x - f.x) * k, f.z + (p.z - f.z) * k], look: [f.ex, f.ez] };
+}
 // 伺服器通知：真人防守方看到了敵人
 function spot(r, q, now) { if (WPN.isBombMode(r.mode)) intel(r, q, now); }
 function dangerNear(r, team, x, z, rad, ms, now) {
@@ -1972,4 +1997,4 @@ function compPickup(p, r, now, take) {
   }
 }
 
-module.exports = { spot, contact, compPickup, move, followPath, jump, LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };
+module.exports = { mateShot, spot, contact, compPickup, move, followPath, jump, LEVELS, NAMES, pickLoadout, makeBrain, resetBrain, think, hear, damaged, prepare, navFor, findPath };
