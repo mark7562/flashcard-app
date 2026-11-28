@@ -22,17 +22,17 @@ const LEVELS = {
   easy: {
     label: '新手', react: [950, 1400], reactPerM: 16, reactPerRad: 520, turn: 2.4, error: 0.11, track: 0.5, head: 0.01,
     burst: [2, 3], pause: [650, 1100], spray: 0.25, strafe: 0, retreatHp: 0, hear: 0, flank: false,
-    fov: 0.85, notice: 30, rangeFalloff: 20, speed: 4.8, spot: 0.15, guardMs: [2000, 4000], jumpy: 0, knife: 0, pistol: false,
+    fov: 0.85, notice: 30, rangeFalloff: 20, speed: 4.8, spot: 0.15, guardMs: [2000, 4000], jumpy: 0, knife: 0, pistol: false, stopShot: 0.25,
   },
   normal: {
     label: '普通', react: [520, 800], reactPerM: 12, reactPerRad: 320, turn: 3.8, error: 0.06, track: 0.9, head: 0.08,
     burst: [3, 5], pause: [380, 650], spray: 0.18, strafe: 0.4, retreatHp: 30, hear: 24, flank: false,
-    fov: 0.96, notice: 18, rangeFalloff: 30, speed: 5.8, spot: 0.45, guardMs: [3000, 6000], jumpy: 0.1, knife: 0.25, pistol: true,
+    fov: 0.96, notice: 18, rangeFalloff: 30, speed: 5.8, spot: 0.45, guardMs: [3000, 6000], jumpy: 0.1, knife: 0.25, pistol: true, stopShot: 0.8,
   },
   hard: {
     label: '老手', react: [270, 420], reactPerM: 7, reactPerRad: 200, turn: 5.5, error: 0.032, track: 2, head: 0.25,
     burst: [4, 7], pause: [240, 420], spray: 0.12, strafe: 0.9, retreatHp: 35, hear: 40, flank: true,
-    fov: 1.0, notice: 10, rangeFalloff: 45, speed: 6.3, spot: 0.6, guardMs: [3500, 7000], jumpy: 0.25, knife: 0.5, pistol: true,
+    fov: 1.0, notice: 10, rangeFalloff: 45, speed: 6.3, spot: 0.6, guardMs: [3500, 7000], jumpy: 0.25, knife: 0.5, pistol: true, stopShot: 1,
   },
 };
 
@@ -806,6 +806,9 @@ function think(p, r, now, dt, api) {
     }
     if (b.peek && (now > b.peekUntil || Math.hypot(b.peek[0] - p.x, b.peek[1] - p.z) < 0.6)) { b.peek = null; b.hitAt = now; }
     const aligned = Math.abs(angleDiff(lookYaw, p.yaw)) < 0.12 && Math.abs(lookPitch - p.pitch) < 0.12;
+    // 急停：每一串開槍前決定這串要不要先停下來（新手常忘記、老手每次都停）；要開槍時先把移動停掉
+    if ((b.sprayN || 0) === 0 && b.bsKey !== b.nextShotAt) { b.bsKey = b.nextShotAt; b.burstStop = !W.melee && Math.random() < (c.stopShot ?? 0.8); }
+    if (b.burstStop && vis && now >= b.reactAt && aligned && now >= b.nextShotAt && ammo > 0 && !p.reloadUntil && !b.peek) b.haltUntil = Math.max(b.haltUntil || 0, now + 150);
     if (W.melee) {
       // 拿刀：衝過去砍
       if (dist > 1.2) { mx += dx / dist; mz += dz / dist; }
@@ -822,19 +825,24 @@ function think(p, r, now, dt, api) {
       }
     } else if (W.pellets && dist > 16) {
       // 霰彈槍太遠打不到：往前壓
-    } else if (vis && now >= b.reactAt && aligned && now >= b.nextShotAt && ammo > 0 && !p.reloadUntil) {
-      // 距離越遠越不準；連射越久越散；在空中更不準（跟玩家一樣）
-      let err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray) * (b.ground ? 1 : 2.2);
+    } else if (vis && now >= b.reactAt && aligned && now >= b.nextShotAt && ammo > 0 && !p.reloadUntil
+      && !(b.burstStop && (b.moveK || 0) > 0.25 && !b.peek && b.ground)) {
+      // 急停的人還在跑：這一格先不開槍，等停下來（下一格）再開
+      // 瞄準失誤：距離越遠越不準；連射越久越散（槍本身的散布另外算，跟玩家同一套）
+      let err = c.error * (0.6 + dist / c.rangeFalloff) * (1 + b.sprayN * c.spray);
       // 開鏡：子彈幾乎就落在準心上（觀戰看到準心在人身上就會打中）；
       // 失誤改成「準心還沒對好就開槍」（看得到的偏差），開鏡後也要多瞄一下
       if (scopeGun) err = c.error * (W.bolt ? 0.3 : 0.42) * (0.5 + dist / (c.rangeFalloff * 3)); // 半自動狙擊連發快，準度給低一點
-      // 邊走邊開槍比較不準（跟玩家一樣：看這把槍移動時的散布、走得多快）
-      err = Math.hypot(err, W.spread[1] * 0.3 * (b.moveK || 0)) * (1 + 0.8 * (b.moveK || 0));
       if ((b.stunUntil || 0) > now) err *= 2.5; // 被震撼彈震到：很難瞄
       err *= 1 + 0.7 * Math.max(0, 1 - (now - (b.acqAt || 0)) / 450); // 剛轉過來的前幾發還沒穩
       if (W.settle && (b.moveK || 0) < 0.2) err *= Math.max(W.settle.min, 1 - W.settle.per * b.sprayN); // 輕機槍站穩越打越準
-      const jy = p.yaw + randn() * err;
-      const jp = p.pitch + randn() * err;
+      // 槍的散布：跟玩家完全一樣（站著／移動看速度／空中），開鏡再乘上瞄準倍率
+      let sp = b.ground ? W.spread[0] + (W.spread[1] - W.spread[0]) * (b.moveK || 0) : W.spread[2];
+      if (scopeGun && W.ads) sp *= W.ads.spread;
+      if (W.hipCone) sp = 0; // 狙擊槍：上面已經是開鏡的準度
+      const jy = p.yaw + randn() * err + (Math.random() - 0.5) * sp;
+      const jp = p.pitch + randn() * err + (Math.random() - 0.5) * sp;
+      if (b.burstStop) b.haltUntil = now + Math.max(W.fireMs, 60) + 140; // 這一串打完之前都站著
       b.sprayN += 1;
       const cp = Math.cos(jp);
       api.shoot(p, { d: [-Math.sin(jy) * cp, Math.sin(jp), -Math.cos(jy) * cp], o: [p.x, eyeY, p.z], s: (Math.random() * 1e9) | 0, a: scopeGun ? 1 : 0, m: +(b.moveK || 0).toFixed(2) });
@@ -1032,6 +1040,7 @@ function think(p, r, now, dt, api) {
   p.pitch += Math.max(-c.turn * stunK * dt, Math.min(c.turn * stunK * dt, lookPitch - p.pitch));
 
   // ---- 移動與物理 ----
+  if (b.state === 'engage' && now < (b.haltUntil || 0)) { mx = 0; mz = 0; wantJump = false; } // 急停：開槍的這一串站著打
   if (wantJump) jump(b, now);
   const speed = (b.state === 'engage' && !W.melee ? c.speed * (b.pushing ? 0.9 : 0.6) : b.state === 'guard' ? 0 : c.speed * b.slowK) * (W.speed || 1) * (p.adsSince ? W.ads.speed : 1) * ((b.stunUntil || 0) > now ? 0.5 : 1);
   const ox = p.x, oz = p.z;
@@ -1041,7 +1050,7 @@ function think(p, r, now, dt, api) {
     const kv = Math.hypot(b.knock.vx, b.knock.vz);
     move(p, b, nav, b.knock.vx / kv, b.knock.vz / kv, kv, dt);
   } else b.knock = null;
-  b.moveK = Math.min(1, Math.hypot(p.x - ox, p.z - oz) / (6.5 * W.speed * dt)); // 這一格走多快（0 = 站著，1 = 全速）
+  b.moveK = Math.min(1, Math.max(0, (Math.hypot(p.x - ox, p.z - oz) / dt - 0.5) / (6.5 * (W.speed || 1) - 0.5))); // 走多快（0 = 站著，1 = 全速；跟玩家同一個算法）
   if (blocked && b.state !== 'engage') {
     // 被擋住：先試著跳，跳了還是過不去就換條路
     if (b.ground && now >= b.jumpCd) jump(b, now);

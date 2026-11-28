@@ -3016,6 +3016,16 @@ function frame() {
     const px = !w.spread ? 4 : (currentSpread(w) / 2) / Math.tan(camera.fov * Math.PI / 360) * (innerHeight / 2);
     xhGap += (Math.max(4, Math.min(60, 3 + px)) - xhGap) * Math.min(1, dt * 18);
     drawCrosshair($('crosshair'), settings.xh, xhGap - 4); // 站著不動時不張開，散布越大張越開
+  } else if (spec) {
+    // 觀戰：準心照被觀戰的人走多快張開（機器人邊跑邊打就會看到準心很散）
+    const r = spec[1], w = WEAPONS[r.wid || 'rifle'] || WEAPONS.rifle, g = r.group.position;
+    if (r.lx !== undefined) { const v = Math.hypot(g.x - r.lx, g.z - r.lz) / Math.max(dt, 0.001); r.sv = (r.sv ?? v) + (v - (r.sv ?? v)) * Math.min(1, dt * 10); }
+    r.lx = g.x; r.lz = g.z;
+    const mf = Math.min(1, Math.max(0, ((r.sv || 0) - 0.5) / (SPEED * (w.speed || 1) - 0.5)));
+    const sp = w.spread ? w.spread[0] + (w.spread[1] - w.spread[0]) * mf : 0;
+    const px = !w.spread ? 4 : (sp / 2) / Math.tan(camera.fov * Math.PI / 360) * (innerHeight / 2);
+    xhGap += (Math.max(4, Math.min(60, 3 + px)) - xhGap) * Math.min(1, dt * 18);
+    drawCrosshair($('crosshair'), settings.xh, xhGap - 4);
   }
   // 走出重生區：這條命就不能再換套裝
   if (me.alive && room?.phase === 'live' && !me.leftSpawn && !MAP.inSpawn(curMap, mySide(), me.x, me.z)) me.leftSpawn = true;
