@@ -1349,18 +1349,21 @@ function meleeBase(id, hold, base, twoHand, lTo = V(-0.35, -0.25, 0.5)) {
   return o;
 }
 
+// 蝴蝶刀（照參考影片，跟爪刀同一套有手指的手）
+//   拿著：右手握拳、手背朝上，兩片握柄握在拳頭裡，刀刃從大拇指那側往左上斜伸出去
+//   刀的座標：軸心在原點，刀刃往 -x、握柄往 +x（k 轉 90 度，讓原本「刀刃往 -z」的模型躺成這樣）
+//   bb = 刀身轉幾個半圈（0 打開、1 收進兩片握柄中間、2 又打開）；bh = 另一片握柄 h1 甩開多少
 function buildButterfly() {
-  // 照參考影片：平常刀刃水平朝左（指向畫面中間），右手握著後面的握柄
-  const o = meleeBase('butterfly', [0.05, 1.25, 0.12], V(0.2, -0.215, -0.34));
-  const root = o.root;
-  root.remove(o.rhand);
-  o.rhandRest = V(0.072, -0.008, 0.0);
-  o.rhand = arm(root, o.rhandRest, V(0.14, -0.25, 0.48), [0.07, 0.068, 0.06]);
-  for (let i = 0; i < 4; i++) box(o.rhand, 0.016, 0.016, 0.016, M.glove, -0.028, 0.026 - i * 0.017, 0.026); // 握住握柄的手指
-  const k = o.knife;
-  // 真的蝴蝶刀：手握住「安全柄」h2；刀身 bl 和另一片握柄 h1 都掛在前端的軸上
-  //   bb = 刀身轉幾個半圈（0 打開往前、1 收進兩片握柄中間）
-  //   bh = 另一片握柄 h1 轉幾個半圈（0 跟 h2 合在一起、1 甩到前面）
+  const root = new THREE.Group();
+  const q0 = basisQ(V(0.88, -0.42, 0.12), V(0.3, 0.78, 0.55)); // 手背朝上、食指 → 小指往右（刀刃就往左上）
+  const { hand } = rigArm(root, V(0, 0, 0), V(0.2, -0.28, 0.42), 1, q0);
+  const knife = new THREE.Group();
+  hand.wrist.add(knife);
+  const K0 = V(-0.04, -0.026, -0.066); // 軸心在大拇指那側、拳頭裡面
+  knife.position.copy(K0);
+  const k = new THREE.Group();
+  k.rotation.y = Math.PI / 2; // 模型的 -z（刀刃）→ -x
+  knife.add(k);
   const bl = new THREE.Group();
   k.add(bl);
   // 刀刃：細長、刀尖往上翹（2D 輪廓擠出來）
@@ -1390,108 +1393,244 @@ function buildButterfly() {
     k.add(g);
   }
   box(h1, 0.006, 0.012, 0.016, M.metal2, 0, -0.006, 0.136); // 扣環
-  o.h1 = h1; o.blade = bl;
-  // 一次翻：刀身往上翻半圈、h1 往反方向甩半圈（快）
-  const flips = (t0, from, n, extra) => {
-    const out = [];
-    for (let i = 1; i <= n; i++) {
-      const bb = from + i, open = bb % 2 === 0;
-      out.push([t0 + (i - 0.5) * 0.17, { ...extra(i), bb: bb - 0.5, bh: open ? -0.5 : 0.5 }]);
-      out.push([t0 + i * 0.17, { ...extra(i), bb, bh: 0 }]);
-    }
-    return out;
+  // 檢視用的手的方向
+  const QV = basisF(V(-0.35, 1, 0.1), V(0.1, 0.1, -1)); // 手心朝鏡頭、手指往上偏左
+  const QUP = basisF(V(-0.5, 0.75, 0.35), V(0.1, -0.55, -0.85)); // 手放低、手心朝上（朝鏡頭上方）
+  const QT = basisQ(V(0.15, -1, 0.05), V(0.25, 0.05, -1)); // 比讚：手心朝鏡頭、大拇指朝上（刀刃從拳頭上面直立）
+  const o = {
+    id: 'butterfly', root, rig: { hand, knife, K0, q1: QV, qs: { wa: QUP, wc: QT } }, offRig: true, h1, blade: bl,
+    base: { p: V(0.13, -0.165, -0.3), r: [0, 0, 0] },
   };
-  // 檢視：手舉起來刀刃朝上翻好幾次 → 轉回水平再翻兩次 → 刀刃橫著亮出來
-  const UP1 = { px: -0.06, py: 0.07, pz: -0.02, rz: -1.3 }, UP2 = { px: -0.055, py: 0.075, pz: -0.02, rz: -1.15, rx: 0.2 };
-  const SIDE = { px: -0.04, py: 0.05, rz: 0.15, ry: 0.45 };
-  const R = { px: 0.07, py: -0.01, pz: 0.07, ry: -0.25 };
-  Object.assign(o, { anims: {
-    draw: { keys: [[0, { py: -0.16, rz: 0.5, bb: 1 }], [0.12, { py: -0.05, rz: 0.25, bb: 1 }], [0.22, { bb: 1.5, bh: -0.5 }], [0.32, { bb: 2 }], [0.4, { bb: 2 }]], sounds: [[0.18, 'flip'], [0.32, 'click']] },
-    // 揮法：往畫面中間刺（刀尖在前），第二下往左劃，第三下往前上方刺
-    swing0: { keys: [[0, {}], [0.05, { px: 0.03, pz: 0.03 }], [0.13, { px: -0.12, py: 0.035, pz: -0.15, ry: 0.25 }], [0.34, {}]], sounds: [[0.05, 'swish0']] },
-    swing1: { keys: [[0, {}], [0.06, { px: 0.05, py: 0.03, ry: -0.35 }], [0.15, { px: -0.15, py: -0.02, pz: -0.06, ry: 0.55, rz: 0.2 }], [0.34, {}]], sounds: [[0.06, 'swish1']] },
-    swing2: { keys: [[0, {}], [0.05, { pz: 0.04, py: -0.02 }], [0.13, { px: -0.1, py: 0.06, pz: -0.14, rz: -0.25 }], [0.34, {}]], sounds: [[0.05, 'swish2']] },
-    windup: { keys: [[0, {}], [0.22, R]], hold: true, sounds: [[0, 'windup']] },
-    strike: { keys: [[0, R], [0.1, { px: -0.13, py: 0.03, pz: -0.2, ry: 0.3 }], [0.22, { px: -0.13, py: 0.03, pz: -0.19, ry: 0.3 }], [0.5, {}]], sounds: [[0, 'heavy']] },
+  // ---- 攻擊（照影片）：右手突然舉到右上（前臂立起來、刀刃朝右上）→ 從右上斜劈過畫面中間到左下、揮出畫面
+  //      （左手同時往下退出）→ 兩手從下面回到原位。每下約 0.55 秒
+  const slash = (v) => {
+    const dy = [0, -0.03, 0.02][v], dx = [0, 0.015, -0.01][v];
+    return { keys: [[0, {}],
+      [0.07, { px: 0.07 + dx, py: 0.12 + dy, pz: 0.02, rz: 0.4, hz: -2.0, oy: -0.15 }],
+      [0.16, { px: -0.08, py: 0.01 + dy, pz: -0.08, rz: 0.15, hz: -1.2, oy: -0.3 }],
+      [0.24, { px: -0.24, py: -0.2 + dy, pz: -0.05, rz: -0.25, hz: -0.4, oy: -0.3 }],
+      [0.36, { px: -0.08, py: -0.32, rz: 0, hz: 0, oy: -0.3 }],
+      [0.55, {}]], sounds: [[0.1, 'swish' + v]] };
+  };
+  // 重擊（自己設計）：舉得更高更右、停一下蓄力 → 一刀更大的斜劈
+  const R = { px: 0.09, py: 0.17, pz: 0.03, rz: 0.5, hz: -2.2, oy: -0.2 };
+  const T = Math.PI * 2;
+  // 檢視：直立展示時刀沿著手指的方向立在大拇指那側（ky = -π/2），刀刃朝上
+  const STAND = { kr: Math.PI / 2, kz: Math.PI / 2, kpx: -0.012, kpy: -0.006, kpz: 0.02 }; // 刀刃沿著手指方向、刀面朝手心那邊
+  o.anims = {
+    draw: { keys: [[0, { py: -0.2, wz: 0.5, bb: 1 }], [0.14, { py: -0.06, bb: 1 }], [0.24, { bb: 1.5, bh: -0.5 }], [0.34, { bb: 2 }], [0.42, { bb: 2 }]], sounds: [[0.2, 'flip'], [0.34, 'click']] },
+    swing0: slash(0), swing1: slash(1), swing2: slash(2),
+    windup: { keys: [[0, {}], [0.3, R]], hold: true, sounds: [[0, 'windup']] },
+    strike: { keys: [[0, R],
+      [0.1, { px: -0.06, py: 0.03, pz: -0.1, rz: 0.15, hz: -1.2, oy: -0.3 }],
+      [0.2, { px: -0.26, py: -0.24, pz: -0.05, rz: -0.3, hz: -0.3, oy: -0.3 }],
+      [0.36, { px: -0.1, py: -0.34, oy: -0.3 }],
+      [0.6, {}]], sounds: [[0.02, 'heavy']] },
     inspect: {
-      keys: [[0, {}], [0.25, { ...UP1 }],
-        ...flips(0.25, 0, 4, (i) => (i % 2 ? UP2 : UP1)),
-        [1.05, { ...UP1, bb: 4 }],
-        [1.3, { ...SIDE, bb: 4 }], ...flips(1.3, 4, 2, () => SIDE),
-        [1.85, { px: -0.05, py: 0.05, rz: 0.1, ry: 0.6, rx: -0.2, bb: 6 }], [2.25, { px: -0.05, py: 0.05, rz: 0.12, ry: 0.62, rx: -0.2, bb: 6 }], [2.55, { bb: 6 }]],
-      sounds: [[0.34, 'flip'], [0.42, 'click'], [0.51, 'flip'], [0.59, 'click'], [0.68, 'flip'], [0.76, 'click'], [0.85, 'flip'], [0.93, 'click'], [1.38, 'flip'], [1.47, 'click'], [1.55, 'flip'], [1.64, 'click']],
-    } } });
+      keys: [[0, {}],
+        // ① 左手退出畫面，手腕轉，刀刃從左上轉成直直朝上
+        [0.22, { px: -0.02, py: 0.03, hz: -1.0, oy: -0.3 }],
+        // ② 手張開、手心朝鏡頭，刀直立在大拇指那側（刀刃在上、握柄在下），停住展示
+        [0.45, { px: -0.03, py: 0.05, wo: 1, fo: 0.85, to: 0.5, sp: 0.6, ...STAND, oy: -0.3 }],
+        [1.2, { px: -0.032, py: 0.054, wo: 1, fo: 0.85, to: 0.5, sp: 0.6, ...STAND, oy: -0.3 }],
+        // ③ 手翻回手背朝上、往右上抬，刀變水平朝左
+        [1.45, { px: 0.02, py: 0.07, hz: 0.35, oy: -0.3 }],
+        // ④ 放開一片握柄：握柄往下甩開，刀身跟著翻，整把刀合起來掛在手下面晃
+        [1.65, { px: 0.02, py: 0.07, hz: 0.35, bh: 0.6, oy: -0.3 }],
+        [1.85, { px: 0.02, py: 0.075, hz: 0.3, bh: 1, bb: 0.6, kz: -0.8, fo: 0.25, oy: -0.3 }],
+        [2.1, { px: 0.02, py: 0.08, hz: 0.25, bh: 0, bb: 1, kz: -Math.PI / 2, kpy: -0.02, fo: 0.3, oy: -0.3 }],
+        [2.2, { px: 0.02, py: 0.08, hz: 0.25, bb: 1, kz: -Math.PI / 2 - 0.25, kpy: -0.02, fo: 0.3, oy: -0.3 }],
+        // ⑤ 手腕翻成手心朝鏡頭，手指把合起來的刀直直握在掌心
+        [2.55, { px: -0.02, py: 0.05, wo: 1, fo: 0.45, bb: 1, ...STAND, oy: -0.3 }],
+        [2.85, { px: -0.02, py: 0.045, wo: 1, fo: 0.4, bb: 1, ...STAND, oy: -0.3 }],
+        // ⑥ 手放低、手心朝上，合起來的刀躺在掌心
+        [3.15, { px: -0.03, py: -0.01, wo: 1, wa: 1, fo: 0.6, bb: 1, ...STAND, oy: -0.3 }],
+        [3.45, { px: -0.03, py: -0.015, wo: 1, wa: 1, fo: 0.6, bb: 1, ...STAND, oy: -0.3 }],
+        // ⑦ 往上一拋：刀直立飛起、在空中翻一圈，手掌張開接住
+        [3.62, { px: -0.03, py: 0.01, wo: 1, wa: 1, fo: 1, bb: 1, ...STAND, kpy: -0.09, kr: Math.PI * 1.5, oy: -0.3 }],
+        [3.8, { px: -0.03, py: 0.0, wo: 1, wa: 1, fo: 1, bb: 1, ...STAND, kpy: -0.12, kr: Math.PI / 2 + T * 0.8, oy: -0.3 }],
+        [3.95, { px: -0.03, py: -0.01, wo: 1, wa: 1, fo: 0.8, bb: 1, ...STAND, kr: Math.PI / 2 + T, oy: -0.3 }],
+        // ⑧ 接住握拳，手轉成手背朝上（刀還是合著）
+        [4.35, { px: 0.0, py: 0.03, fo: 0, bb: 1, kr: T, oy: -0.3 }],
+        // ⑨ 甩開：刀打開成水平朝左
+        [4.55, { px: 0.01, py: 0.04, hz: 0.3, bb: 1.5, bh: -0.5, kr: T, oy: -0.3 }],
+        [4.75, { px: 0.01, py: 0.04, hz: 0.3, bb: 2, kr: T, oy: -0.3 }],
+        // ⑩ 手攤開，打開的刀在手背上方水平轉一圈（從左往右繞）
+        [4.95, { px: 0.0, py: 0.05, hz: 0.2, fo: 0.7, bb: 2, kr: T, kpy: 0.06, kpx: 0.03, rs: 0.3, oy: -0.3 }],
+        [5.2, { px: 0.0, py: 0.055, hz: 0.2, fo: 0.75, bb: 2, kr: T, kpy: 0.065, kpx: 0.03, rs: 0.75, oy: -0.3 }],
+        [5.4, { px: 0.0, py: 0.05, hz: 0.2, fo: 0.4, bb: 2, kr: T, kpy: 0.03, kpx: 0.01, rs: 1, oy: -0.3 }],
+        // ⑪ 握住，轉成比讚的樣子：手心朝鏡頭、大拇指朝上，刀刃直立在拳頭上面
+        [5.7, { px: -0.03, py: 0.04, wc: 1, fo: 0, bb: 2, kr: T, rs: 1, oy: -0.3 }],
+        [6.2, { px: -0.032, py: 0.045, wc: 1, fo: 0, bb: 2, kr: T, rs: 1, oy: -0.3 }],
+        // ⑫ 手腕轉回原本拿著的樣子，左手回來
+        [6.5, { bb: 2, kr: T, rs: 1, oy: -0.1 }], [6.7, { bb: 2, kr: T, rs: 1 }]],
+      sounds: [[0.3, 'flip'], [1.6, 'flip'], [1.95, 'flip'], [2.12, 'click'], [3.6, 'whoosh'], [3.95, 'click'], [4.5, 'flip'], [4.75, 'click'], [5.0, 'flip'], [5.3, 'flip'], [5.65, 'click']],
+    },
+  };
   return o;
 }
 
-// 爪刀（照參考影片）：右手握拳、指節朝鏡頭；刀柄直的握在拳頭裡，刀刃從拳頭上面（虎口）立起來，
-// 往上彎成月牙、刀尖朝右上；環在拳頭下面（小指那邊）
-// 檢視：手掌翻開，刀掛在食指上往下垂，食指勾著環轉三圈，最後翻手腕給你看刀刃
-//   ringPivot 的支點在環的中心，rs = 轉幾圈（在畫面這個平面上轉）
+// ---------- 有手指的手（爪刀、蝴蝶刀用）----------
+// 手的座標：手腕在原點，手掌往 -z 伸（指節在 z = -0.084），手背朝 +y、手心朝 -y；
+// 右手（side = 1）食指在 -x、小指在 +x，大拇指在 -x 那側；左手（side = -1）左右相反
+// 姿勢：fo = 四指張開多少（0 握拳、1 全開）、io = 食指再多張開多少（負的 = 多彎）、to = 大拇指張開多少、sp = 手指分開
+function handRig(side = 1) {
+  const wrist = new THREE.Group();
+  box(wrist, 0.078, 0.026, 0.086, M.glove, 0, 0, -0.042); // 手掌
+  box(wrist, 0.07, 0.006, 0.05, M.cuff, 0, 0.014, -0.045); // 手背的護片
+  const fingers = [];
+  const L = [[0.033, 0.03], [0.036, 0.032], [0.034, 0.03], [0.027, 0.024]];
+  for (let i = 0; i < 4; i++) {
+    const k = new THREE.Group();
+    k.position.set(side * (-0.029 + i * 0.0193), 0.001, -0.084);
+    wrist.add(k);
+    box(k, 0.0175, 0.021, L[i][0], M.glove, 0, 0, -L[i][0] / 2);
+    box(k, 0.018, 0.008, 0.012, M.cuff, 0, 0.009, -0.004); // 指節的護片
+    const j = new THREE.Group();
+    j.position.z = -L[i][0];
+    k.add(j);
+    box(j, 0.016, 0.019, L[i][1], M.glove, 0, 0, -L[i][1] / 2);
+    fingers.push({ k, j, i });
+  }
+  // 大拇指：從手掌側邊靠手腕的地方長出來，平常斜斜往前
+  const tb = new THREE.Group();
+  tb.position.set(side * -0.038, -0.006, -0.03);
+  wrist.add(tb);
+  box(tb, 0.02, 0.02, 0.032, M.glove, 0, 0, -0.016);
+  const tj = new THREE.Group();
+  tj.position.z = -0.032;
+  tb.add(tj);
+  box(tj, 0.018, 0.018, 0.026, M.glove, 0, 0, -0.013);
+  const pose = (fo = 0, io = 0, to = 0, sp = 0) => {
+    for (const f of fingers) {
+      const c = Math.max(-0.15, Math.min(1, 1 - fo - (f.i === 0 ? io : 0)));
+      f.k.rotation.set(-c * 1.5, side * (1.5 - f.i) * 0.07 * sp, 0);
+      f.j.rotation.x = -c * 1.6;
+    }
+    const t = Math.max(0, Math.min(1, 1 - to));
+    tb.rotation.set(-0.2 - t * 0.5, side * (0.75 - t * 1.0), side * (-0.3 - t * 0.6));
+    tj.rotation.x = -t * 0.9;
+  };
+  pose();
+  return { wrist, pose, side };
+}
+// 有手指的手臂：袖子從手腕往 to 伸（袖子不跟著手腕轉），hand.wrist 可以轉；q0 = 手平常的方向
+function rigArm(parent, at, to, side, q0) {
+  const g = new THREE.Group();
+  g.position.copy(at);
+  parent.add(g);
+  const dir = to.clone().sub(at), len = dir.length();
+  dir.normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(Z_AXIS, dir);
+  const cuff = box(g, 0.07, 0.07, 0.05, M.cuff); cuff.quaternion.copy(q); cuff.position.copy(dir.clone().multiplyScalar(0.03));
+  const sl = box(g, 0.082, 0.082, len, M.sleeve); sl.quaternion.copy(q); sl.position.copy(dir.clone().multiplyScalar(0.05 + len / 2));
+  const hand = handRig(side);
+  g.add(hand.wrist);
+  hand.q0 = q0;
+  hand.wrist.quaternion.copy(q0);
+  return { g, hand };
+}
+// 用兩個方向算出手的方向：x = 手的 x 軸（食指 → 小指）指向哪裡，y = 手背大概朝哪裡
+// 用「手指朝哪裡、手背大概朝哪裡」算手的方向
+function basisF(f, back) {
+  const Z = f.clone().normalize().negate(), X = back.clone().cross(Z).normalize(), Y = Z.clone().cross(X).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+}
+function basisQ(x, y) {
+  const X = x.clone().normalize(), Z = X.clone().cross(y).normalize(), Y = Z.clone().cross(X).normalize();
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+}
+
+// 爪刀（照參考影片）
+//   握法：食指套在環裡，刀柄橫躺在其他三根手指裡，刀刃從小指那側出來往上彎、刀尖朝左上；
+//         拳頭的手背朝鏡頭、小指那側朝右上
+//   檢視：拳頭張開、手心朝鏡頭，刀掛在食指上斜躺在掌心、刀刃往左下垂（停一下給你看）
+//         → 食指勾著環轉、手腕翻過去 → 刀甩上來 → 握回拳頭
+//   刀的座標：環的中心在原點，刀柄往 +x，刀刃從 +x 那端往 -z 彎（跟手掌同一個平面）
 function buildKarambit() {
-  const o = meleeBase('karambit', [-0.3, 0.15, -0.12], V(0.17, -0.19, -0.36));
-  const root = o.root;
-  root.remove(o.rhand);
-  // 握拳的右手：手背對著鏡頭，前臂從右下方伸過來
-  o.rhandRest = V(0.0, -0.004, 0.022);
-  o.rhand = arm(root, o.rhandRest, V(0.13, -0.4, 0.4), [0.066, 0.078, 0.062]);
-  for (let i = 0; i < 4; i++) box(o.rhand, 0.016, 0.017, 0.016, M.glove, -0.025 + i * 0.016, 0.03 - i * 0.004, 0.026); // 指節
-  box(o.rhand, 0.022, 0.03, 0.04, M.glove, -0.036, 0.022, -0.004); // 大拇指扣在上面
-  const RING = V(0, -0.068, 0);
-  const pivot = new THREE.Group();
-  pivot.position.copy(RING);
-  o.knife.add(pivot);
-  const k = new THREE.Group();
-  k.position.set(-RING.x, -RING.y, -RING.z);
-  pivot.add(k);
-  o.ringPivot = pivot;
-  // 刀刃：2D 月牙（u 往上、v 往右），左邊凸的是刀背，右邊凹的是刀口
+  const root = new THREE.Group();
+  const q0 = basisQ(V(0.5, 0.85, 0.12), V(0.3, 0.05, 1));
+  // 檢視時手張開的方向：手心朝鏡頭、手指往左上（食指在右邊、小指在左下）
+  const QOPEN = basisQ(V(-0.62, -0.78, 0.05), V(0.15, 0.05, -1));
+  const { hand } = rigArm(root, V(0, 0, 0), V(0.17, -0.3, 0.42), 1, q0);
+  const knife = new THREE.Group();
+  hand.wrist.add(knife);
+  const K0 = V(-0.03, -0.03, -0.074); // 刀在手裡的位置（環套在食指上）
+  knife.position.copy(K0);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.0045, 8, 22), M.steel);
+  ring.rotation.x = Math.PI / 2;
+  knife.add(ring);
+  box(knife, 0.05, 0.016, 0.024, M.dark, 0.038, 0, 0); // 刀柄（幾乎整段被拳頭包住）
+  for (let i = 0; i < 3; i++) box(knife, 0.006, 0.018, 0.026, M.wrap, 0.024 + i * 0.014, 0, 0); // 防滑紋
+  box(knife, 0.007, 0.02, 0.03, M.dark, 0.064, 0, -0.002); // 護手
+  // 刀刃：2D 輪廓（u 往 +x、w 往 -z），外側凸的是刀背、內側凹的是刀口
   const sh = new THREE.Shape();
-  sh.moveTo(0, -0.013);
-  sh.quadraticCurveTo(0.11, -0.03, 0.15, 0.055); // 刀背
-  sh.lineTo(0.148, 0.062); // 刀尖
-  sh.quadraticCurveTo(0.085, 0.01, 0.0, 0.014); // 刀口（凹）
-  sh.lineTo(0, -0.013);
+  sh.moveTo(0, -0.012);
+  sh.quadraticCurveTo(0.1, -0.016, 0.092, 0.08); // 刀背
+  sh.lineTo(0.085, 0.077); // 刀尖
+  sh.quadraticCurveTo(0.05, 0.012, 0, 0.012); // 刀口
+  sh.lineTo(0, -0.012);
   const geo = new THREE.ExtrudeGeometry(sh, { depth: 0.004, bevelEnabled: true, bevelThickness: 0.0015, bevelSize: 0.0015, bevelSegments: 1 });
   geo.translate(0, 0, -0.002);
-  // (u, v, 厚度) → (x = v 往右, y = u 往上, z = -厚度)
-  geo.applyMatrix4(new THREE.Matrix4().set(0, 1, 0, 0, 1, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1));
+  geo.applyMatrix4(new THREE.Matrix4().set(1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1)); // (u, w, 厚度) → (x, 厚度, -w)
   const blade = new THREE.Mesh(geo, M.steel);
-  blade.position.set(0, 0.052, 0);
-  k.add(blade);
-  box(k, 0.002, 0.07, 0.005, M.metal2, -0.004, 0.09, 0.0); // 刀背的光澤線
-  // 刀柄：直的黑色握把（大部分被拳頭包住），上面有護手
-  box(k, 0.026, 0.11, 0.024, M.dark, 0, 0, 0);
-  for (let i = 0; i < 3; i++) box(k, 0.03, 0.006, 0.026, M.wrap, 0, -0.03 + i * 0.026, 0);
-  box(k, 0.034, 0.012, 0.03, M.dark, 0.002, 0.054, 0); // 護手
-  // 環：銀色圓環（面對鏡頭）
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.019, 0.0048, 8, 22), M.steel);
-  ring.position.copy(RING);
-  k.add(ring);
-  // 揮法：都是很快的直拳往畫面中間刺（刀刃在前），三下角度不同；重擊是收拳後往前刺再往上勾
-  const R = { px: 0.05, py: -0.035, pz: 0.07, rx: 0.3, rz: -0.25 };
-  Object.assign(o, { anims: {
-    draw: { keys: [[0, { py: -0.2, rz: 0.5, rs: 0 }], [0.28, { py: -0.02, rs: 1 }], [0.4, { rs: 1 }]], sounds: [[0.05, 'flip'], [0.33, 'click']] },
-    swing0: { keys: [[0, {}], [0.05, { pz: 0.035, py: -0.01 }], [0.13, { px: -0.07, py: 0.045, pz: -0.13, rx: 0.1 }], [0.38, {}]], sounds: [[0.05, 'swish0']] },
-    swing1: { keys: [[0, {}], [0.05, { pz: 0.035, px: 0.02 }], [0.13, { px: -0.05, py: 0.03, pz: -0.14, rx: 0.08, rz: 0.15 }], [0.38, {}]], sounds: [[0.05, 'swish1']] },
-    swing2: { keys: [[0, {}], [0.05, { pz: 0.03, px: 0.03, rz: -0.3 }], [0.14, { px: -0.09, py: 0.035, pz: -0.1, rz: 0.2, ry: -0.2 }], [0.38, {}]], sounds: [[0.05, 'swish2']] },
-    windup: { keys: [[0, {}], [0.26, R]], hold: true, sounds: [[0, 'windup']] },
-    strike: { keys: [[0, R], [0.09, { px: -0.07, py: 0.03, pz: -0.17, rx: 0.1 }], [0.2, { px: -0.08, py: 0.08, pz: -0.15, rx: -0.15, kr: -0.6 }], [0.3, { px: -0.08, py: 0.08, pz: -0.14, rx: -0.15, kr: -0.6 }], [0.6, {}]], sounds: [[0, 'heavy']] },
+  blade.position.x = 0.066;
+  knife.add(blade);
+  const o = {
+    id: 'karambit', root, rig: { hand, knife, K0, q1: QOPEN }, offRig: true,
+    base: { p: V(0.095, -0.15, -0.28), r: [0, 0, 0] },
+  };
+  // ---- 攻擊（照參考影片）：左手先往畫面中間出拳、右手同時往右下收 → 右手從畫面下方往上刺到準心（刀刃朝上、前臂直立）
+  //      → 停一下 → 回原位（左手從左下回來）。整套約 0.6 秒，下一刀會直接打斷收尾
+  //   ox/oy/oz = 左手位移；rz 讓右前臂立起來（root 的原點在手腕）
+  const jab = (v) => {
+    const sx = [0, 0.012, -0.012][v], sy = [0, -0.008, 0.01][v], tw = [0, 0.12, -0.1][v];
+    return { keys: [[0, {}],
+      [0.06, { px: 0.05, py: -0.16, rz: 0.25, hz: -0.25, ox: 0.13, oy: 0.05, oz: -0.13 }],
+      [0.12, { px: -0.02, py: -0.2, rz: 0.4, hz: -0.4, ox: 0.14, oy: 0.05, oz: -0.14 }],
+      [0.2, { px: -0.085 + sx, py: 0.015 + sy, pz: -0.07, rz: 0.45, hz: -0.5, wz: tw, ox: 0.02, oy: -0.22 }],
+      [0.4, { px: -0.083 + sx, py: 0.018 + sy, pz: -0.068, rz: 0.45, hz: -0.5, wz: tw, ox: 0, oy: -0.24 }],
+      [0.62, {}]], sounds: [[0.04, 'swish' + v], [0.16, 'swish' + ((v + 1) % 3)]] };
+  };
+  // 重擊（自己設計、跟輕擊同一套動作語言）：右手收到右下蓄力、左手舉起來護在前面
+  //   → 放開：左手往下收，右手從下往上衝過準心再往上勾（刀尖往上帶）→ 停一下 → 回原位
+  const R = { px: 0.07, py: -0.14, pz: 0.06, rz: 0.3, hz: -0.3, wx: 0.3, ox: 0.06, oy: 0.05, oz: -0.05 };
+  // 檢視：手心朝鏡頭、手指往左上張開；刀翻過來（kr = π）刀刃往左下垂；左手先退到畫面外（oy）
+  const OPEN = { px: -0.03, py: 0.06, pz: 0.0, wo: 1, fo: 1, io: 0.45, to: 1, sp: 1, kr: Math.PI, kpy: -0.008, kpz: 0.02, oy: -0.3 };
+  const open = (extra) => ({ ...OPEN, ...extra });
+  const T = Math.PI * 2;
+  o.anims = {
+    draw: { keys: [[0, { py: -0.2, wz: 0.6 }], [0.32, { py: -0.01 }], [0.4, {}]], sounds: [[0.05, 'flip'], [0.33, 'click']] },
+    swing0: jab(0), swing1: jab(1), swing2: jab(2),
+    windup: { keys: [[0, {}], [0.28, R]], hold: true, sounds: [[0, 'windup']] },
+    strike: { keys: [[0, R],
+      [0.08, { px: -0.06, py: -0.03, pz: -0.08, rz: 0.45, hz: -0.5, oy: -0.2 }],
+      [0.16, { px: -0.09, py: 0.06, pz: -0.11, rz: 0.5, hz: -0.55, wx: -0.6, oy: -0.25 }],
+      [0.36, { px: -0.088, py: 0.065, pz: -0.105, rz: 0.5, hz: -0.55, wx: -0.62, oy: -0.25 }],
+      [0.65, {}]], sounds: [[0, 'heavy']] },
     inspect: {
       keys: [[0, {}],
-        // 手掌翻開往左上抬，刀從環上翻下來掛著（刀刃往下垂）
-        [0.3, { px: -0.045, py: 0.07, pz: -0.03, rz: 0.22, rx: 0.1, rs: 0.5 }],
-        [0.85, { px: -0.05, py: 0.075, pz: -0.03, rz: 0.25, rx: 0.1, rs: 0.5 }],
-        // 食指勾著環轉三圈（越轉越快）
-        [1.1, { px: -0.045, py: 0.07, pz: -0.03, rz: 0.22, rx: 0.1, rs: 1.2 }],
-        [1.3, { px: -0.045, py: 0.07, pz: -0.03, rz: 0.22, rx: 0.1, rs: 2.2 }],
-        [1.5, { px: -0.045, py: 0.07, pz: -0.03, rz: 0.22, rx: 0.1, rs: 3.3 }],
-        [1.62, { px: -0.06, py: 0.06, pz: -0.03, rz: 0.15, rs: 4 }],
-        // 握回來，翻手腕看刀刃
-        [1.95, { px: -0.04, py: 0.04, ry: -0.7, rz: -0.2, rs: 4 }], [2.3, { px: -0.04, py: 0.04, ry: -0.75, rz: -0.25, rs: 4 }], [2.6, { rs: 4 }]],
-      sounds: [[0.25, 'flip'], [1.05, 'flip'], [1.3, 'flip'], [1.5, 'flip'], [1.62, 'click']],
+        // ① 翻手：左手退出畫面；右手手腕往外翻（先手背朝左上、手指朝左），一邊翻一邊張開，刀從手裡掉出來掛在食指上
+        [0.22, { px: -0.015, py: 0.03, wo: 0.45, fo: 0.25, kr: 0.9, oy: -0.15 }],
+        [0.5, open({ fo: 0.75, kr: 2.6 })], [0.62, open({})],
+        // ② 展示約 2 秒（手微微晃）
+        [1.3, open({ px: -0.024, py: 0.064 })], [2.0, open({ px: -0.028, py: 0.058, wz: 0.05 })], [2.55, open({})],
+        // ③ 甩一下：刀以環為軸往上甩到水平朝左，再落回左下
+        [2.66, open({ rs: -0.22 })], [2.78, open({ rs: 0 })],
+        // ④ 手指收起來握成拳，刀刃從拳頭下面往下垂
+        [3.08, { px: -0.03, py: 0.1, wo: 0.25, fo: 0, kr: Math.PI, ky: Math.PI, hz: 1.1, oy: -0.3 }],
+        // ⑤ 翻腕把刀甩上來（刀刃從下面經過水平甩到上面）
+        [3.24, { px: -0.03, py: 0.09, wo: 0.15, fo: 0.05, wz: -0.5, kr: Math.PI * 1.5, ky: Math.PI * 1.5, hz: 0.5, oy: -0.3 }],
+        [3.4, { px: -0.025, py: 0.07, wo: 0.1, fo: 0.15, wz: -0.2, kr: T, ky: T, oy: -0.3 }],
+        // ⑥ 張開手、手指朝上，刀掛在食指上繞著食指轉兩圈（從鏡頭看會轉成側面一條線）
+        [3.6, open({ wo: 0.85, fo: 1, io: 0.15, kr: T + Math.PI / 2, ky: T, rs: 0, py: 0.07 })],
+        [3.8, open({ wo: 0.85, fo: 1, io: 0.15, kr: T + Math.PI / 2, ky: T, rs: 1, py: 0.075 })],
+        [4.0, open({ wo: 0.85, fo: 1, io: 0.15, kr: T + Math.PI / 2, ky: T, rs: 2, py: 0.07 })],
+        // ⑦ 抓住刀握回拳頭，回到原本拿著的樣子，左手回到畫面
+        [4.3, { px: -0.01, py: 0.02, wo: 0.15, fo: 0.15, kr: T, ky: T, rs: 2, oy: -0.12 }], [4.6, { kr: T, ky: T, rs: 2 }]],
+      sounds: [[0.3, 'flip'], [2.62, 'flip'], [3.05, 'click'], [3.3, 'flip'], [3.7, 'flip'], [3.95, 'flip'], [4.32, 'click']],
     },
-  } });
+  };
   return o;
 }
 
@@ -2232,8 +2371,13 @@ export function createViewModels(camera, playSound) {
   for (let i = 0; i < 4; i++) box(offArm, 0.015, 0.016, 0.02, M.glove, -0.022 + i * 0.015, 0.022, -0.03); // 指節
   box(offArm, 0.02, 0.03, 0.045, M.glove, 0.034, 0.0, -0.008); // 大拇指
   off.visible = false;
-  for (const k of ['knife', 'butterfly', 'karambit', 'baton', 'tknife']) W[k].offHand = true;
+  for (const k of ['knife', 'baton', 'tknife']) W[k].offHand = true;
+  // 有手指的左手（爪刀、蝴蝶刀）：手指微彎，靠在右手左邊（照參考影片）
+  const offR = rigArm(vm, V(0, 0, 0), V(-0.25, -0.28, 0.3), -1, basisF(V(1, 0.3, -0.35), V(-0.3, 0.65, 0.7)));
+  offR.hand.pose(0.05, 0, 0.25, 0); // 左手握拳（照參考影片）
+  offR.g.visible = false;
   for (const w of Object.values(W)) if (w.trail) vm.add(w.trail);
+  const rigE = new THREE.Euler(), rigQ = new THREE.Quaternion();
   const light = new THREE.PointLight(0xffc860, 0, 6);
   vm.add(light);
 
@@ -2398,6 +2542,25 @@ export function createViewModels(camera, playSound) {
         b.r[2] * na + p('rz') + (cur.kick && kt < 120 ? (Math.random() - 0.5) * 0.01 : 0),
       );
       off.visible = !!cur.offHand;
+      offR.g.visible = !!cur.offRig;
+      if (cur.offRig) {
+        const dy = action?.name === 'draw' ? p('py') * 0.6 : 0;
+        offR.g.position.set(-0.17 - Math.sin(st.bob) * 0.01 + p('ox'), -0.19 + Math.abs(Math.sin(st.bob)) * 0.008 + dy + p('oy'), -0.3 + p('oz'));
+      }
+      // 有手指的手：手腕轉（wx/wy/wz）、手指（fo/io/to/sp）、刀在手裡的位置和角度（kp*／kr/ky/kz），rs = 刀繞著環轉幾圈
+      if (cur.rig) {
+        const h = cur.rig.hand;
+        rigE.set(p('wx'), p('wy'), p('wz'));
+        h.wrist.quaternion.copy(h.q0);
+        if (cur.rig.q1 && p('wo')) h.wrist.quaternion.slerp(cur.rig.q1, p('wo')); // wo = 轉到「手張開」的方向多少
+        if (cur.rig.qs) for (const n in cur.rig.qs) if (p(n)) h.wrist.quaternion.slerp(cur.rig.qs[n], p(n)); // 其他檢視姿勢的手的方向（wa、wc…）
+        h.wrist.quaternion.multiply(rigQ.setFromEuler(rigE));
+        if (p('hz')) h.wrist.quaternion.premultiply(rigQ.setFromAxisAngle(Z_AXIS, p('hz'))); // hz：在畫面上轉手（抵銷前臂立起來的角度，刀刃保持朝上）
+        h.pose(p('fo'), p('io'), p('to'), p('sp'));
+        const kn = cur.rig.knife, K0 = cur.rig.K0;
+        kn.position.set(K0.x + p('kpx'), K0.y + p('kpy'), K0.z + p('kpz'));
+        kn.rotation.set(p('kr'), p('ky') + p('rs') * Math.PI * 2, p('kz'));
+      }
       if (cur.offHand) {
         const dy = action?.name === 'draw' ? p('py') * 0.6 : 0;
         off.position.set(-0.16 - Math.sin(st.bob) * 0.01 + p('ox'), -0.25 + Math.abs(Math.sin(st.bob)) * 0.008 + dy + p('oy'), -0.36 + p('oz'));
