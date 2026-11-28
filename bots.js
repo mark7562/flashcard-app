@@ -1911,6 +1911,8 @@ function compThink(p, r, now, api) {
     }
   }
 }
+// 一把槍對這個機器人值多少：價格＋愛用的槍加分（用同一個分數比，才不會兩把槍換來換去）
+function gunScore(p, r, w) { return (PRICE[w] || 0) + (sideP(p, r).fav.includes(w) ? 2500 : 0); }
 // 地上值得撿的東西（比手上的好、或那一格是空的），最近的那件
 function lootTarget(p, r, maxD) {
   let best = null, bd = maxD;
@@ -1923,8 +1925,7 @@ function lootTarget(p, r, maxD) {
     else if (W?.nade) want = (!p.loadout.throw1 || !p.loadout.throw2) && p.loadout.throw1 !== d.w && p.loadout.throw2 !== d.w;
     else if (W) {
       const cur = p.loadout[W.slot];
-      const fav = sideP(p, r).fav;
-      want = !cur || (PRICE[d.w] || 0) > (PRICE[cur] || 0) + 400 || (fav.includes(d.w) && !fav.includes(cur));
+      want = !cur || gunScore(p, r, d.w) > gunScore(p, r, cur) + 400;
     }
     if (want) { bd = dist; best = d; }
   }
@@ -1957,9 +1958,7 @@ function compPickup(p, r, now, take) {
     if (!W || W.nade || W.melee) continue;
     const cur = p.loadout[W.slot];
     if (!cur) continue; // 空的欄位伺服器會自動撿
-    const fav = sideP(p, r).fav;
-    const better = (PRICE[d.w] || 0) > (PRICE[cur] || 0) + 400 || (fav.includes(d.w) && !fav.includes(cur));
-    if (better) { take(d); break; }
+    if (gunScore(p, r, d.w) > gunScore(p, r, cur) + 400) { take(d); b.lootCd = now + 2500; break; } // 換完冷卻一下
   }
 }
 
