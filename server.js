@@ -1713,12 +1713,19 @@ function handleMelee(p, msg) {
     }
     return;
   }
-  if (!target) return;
+  if (!target) { p.combo = null; return; }
   // 對方面向的方向跟「對方 → 我」相反，就是從背後砍
   const fx = -Math.sin(target.yaw), fz = -Math.cos(target.yaw);
   const ax = p.x - target.x, az = p.z - target.z, al = Math.hypot(ax, az) || 1;
   const back = (fx * ax + fz * az) / al < -0.3;
   let dmg = back ? w.back : w.body;
+  // 爪刀連擊：輕擊連續砍中同一個人（間隔不超過 combo.ms），每下多一點傷害；砍空、換人、重擊都重算
+  if (w0.combo) {
+    const c = w0.combo, prev = p.combo;
+    const n = !heavy && prev && prev.id === target.id && now - prev.at <= c.ms ? Math.min(c.max, prev.n + 1) : 0;
+    p.combo = heavy ? null : { id: target.id, at: now, n };
+    if (!back) dmg += n * c.add;
+  }
   if (w.head && headHit) dmg = Math.max(dmg, w.head); // 斧頭、大錘的重擊打頭
   applyDamage(p, target, dmg, !!(w.head && headHit), w0.id, now);
   if (!target.alive) return;

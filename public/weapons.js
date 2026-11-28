@@ -159,6 +159,13 @@
       heavy: { body: 62, back: 100, range: 1.9, windMs: 220, fireMs: 800 },
       desc: '揮得最快、距離最短；從背後一刀擊倒',
     },
+    karambit: {
+      id: 'karambit', slot: 'melee', name: '爪刀', short: '爪刀', icon: '🌙', melee: true,
+      fireMs: 420, range: 2.1, body: 45, back: 100, speed: 1.1,
+      combo: { add: 10, max: 2, ms: 900 }, // 連擊：連續砍中同一個人，每下 +10（45 → 55 → 65），停手 0.9 秒就重算
+      heavy: { body: 65, back: 100, range: 2.0, windMs: 260, fireMs: 950 },
+      desc: '連擊：連續砍中同一個人越砍越痛（45 → 55 → 65，兩下接上就擊倒）；重擊往前勾刺 65；從背後一刀擊倒',
+    },
     bat: {
       id: 'bat', slot: 'melee', name: '球棒', short: '球棒', icon: '⚾', melee: true,
       fireMs: 650, range: 2.6, body: 45, back: 55, speed: 1.0,
@@ -222,7 +229,7 @@
   const CHOICES = {
     primary: ['rifle', 'carbine', 'burst', 'ak', 'aks', 'smg', 'mac10', 'shotgun', 'sawedoff', 'autoshotgun', 'lmg', 'sniper', 'dmr'],
     secondary: ['pistol', 'tt33', 'mpistol', 'deagle', 'revolver'],
-    melee: ['knife', 'butterfly', 'bat', 'axe', 'hammer', 'baton', 'katana', 'tknife'],
+    melee: ['knife', 'butterfly', 'karambit', 'bat', 'axe', 'hammer', 'baton', 'katana', 'tknife'],
     throw1: ['frag', 'flash', 'smoke', 'molotov', 'stun', 'decoy'], throw2: ['frag', 'flash', 'smoke', 'molotov', 'stun', 'decoy'],
   };
   const SLOT_OF = { primary: 'primary', secondary: 'secondary', melee: 'melee', throw1: 'throw', throw2: 'throw' };

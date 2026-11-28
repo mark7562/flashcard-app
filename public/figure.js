@@ -182,6 +182,9 @@ export function makeFigure(color, name = null, opts = {}) {
   // 近戰
   const melee = (parts) => { const g = new THREE.Group(); for (const a of parts) part(g, ...a); return g; };
   const butterfly = melee([[0.012, 0.05, 0.22, steel, 0, 0, -0.16], [0.03, 0.04, 0.16, chrome, 0, 0, 0.03]]);
+  // 爪刀：黑色刀柄＋往右彎的銀色刀刃（三段拼出弧線）＋尾端的環
+  const karambit = melee([[0.035, 0.11, 0.035, dark, 0, 0, -0.02], [0.03, 0.03, 0.006, steel, 0, -0.07, -0.02]]);
+  for (const [y, z, rx] of [[0.08, -0.02, -0.15], [0.125, -0.035, -0.55], [0.155, -0.07, -1.05]]) part(karambit, 0.01, 0.05, 0.03, steel, 0.0, y, z, rx); // 刀刃從拳頭上面立起來、往前彎
   const bat = melee([[0.035, 0.035, 0.3, tapeM, 0, 0, 0.0], [0.07, 0.07, 0.6, wood, 0, 0, -0.42]]);
   const axe = melee([[0.035, 0.04, 0.7, wood, 0, 0, -0.2], [0.03, 0.18, 0.14, steel, 0, 0.06, -0.52]]);
   const hammer = melee([[0.035, 0.035, 0.8, wood, 0, 0, -0.25], [0.14, 0.14, 0.3, dark, 0, 0, -0.66, Math.PI / 2]]);
@@ -194,9 +197,9 @@ export function makeFigure(color, name = null, opts = {}) {
   const claw = melee([[0.1, 0.06, 0.12, zSkin, 0, 0, -0.04], [0.012, 0.012, 0.12, bone, -0.03, 0, -0.14], [0.012, 0.012, 0.13, bone, 0, 0, -0.15], [0.012, 0.012, 0.12, bone, 0.03, 0, -0.14]]);
   const heroGlow = new THREE.MeshBasicMaterial({ color: 0xfff0a0 });
   const herosword = melee([[0.02, 0.06, 1.2, heroGlow, 0, 0.01, -0.68], [0.1, 0.03, 0.03, accent, 0, 0, -0.06], [0.035, 0.045, 0.24, dark, 0, 0, 0.08]]);
-  arm.add(claw, herosword, gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, ak, aks, mac10, sawedoff, tt33, butterfly, bat, axe, hammer, baton, katana, tknife);
+  arm.add(claw, herosword, gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, ak, aks, mac10, sawedoff, tt33, butterfly, karambit, bat, axe, hammer, baton, katana, tknife);
   const NADE_COLORS = { frag: 0x3d5a2a, flash: 0x9aa3ad, smoke: 0x5b6b5a, molotov: 0x8a5a2a, stun: 0x2f6fd6, decoy: 0xf2c230 };
-  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, ak, aks, mac10, sawedoff, tt33, butterfly, bat, axe, hammer, baton, katana, tknife, claw, herosword };
+  const weapons = { rifle: gun, pistol, knife, smg, shotgun, sniper, dmr, deagle, nade, lmg, burst, carbine, autoshotgun, mpistol, revolver, ak, aks, mac10, sawedoff, tt33, butterfly, karambit, bat, axe, hammer, baton, katana, tknife, claw, herosword };
   for (const m of [body, head]) m.castShadow = true;
   group.add(body, head, visor, arm);
 

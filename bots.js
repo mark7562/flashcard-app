@@ -54,7 +54,7 @@ function weighted(table) {
 function pickLoadout(level) {
   const t = KIT_WEIGHTS[level] || KIT_WEIGHTS.normal;
   const nades = { flash: 3, smoke: 3, frag: 2.5, molotov: 2, stun: 1.5, decoy: 1 };
-  const melee = { knife: 3, butterfly: 1, bat: 1, axe: 1, hammer: 0.7, baton: 1, katana: 1, tknife: 0.7 };
+  const melee = { knife: 3, butterfly: 1, karambit: 1, bat: 1, axe: 1, hammer: 0.7, baton: 1, katana: 1, tknife: 0.7 };
   return WPN.clean({ primary: weighted(t.primary), secondary: weighted(t.secondary), melee: weighted(melee), throw1: weighted(nades), throw2: weighted(nades) });
 }
 
